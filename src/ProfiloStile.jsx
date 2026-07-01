@@ -1,7 +1,9 @@
 import { useReducer, useEffect } from 'react'
 import { Sparkles, RefreshCw, Edit3, Check, AlertTriangle, FlaskConical, GitMerge, RotateCcw } from 'lucide-react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import { getRelazioni, getProfiloStileCompleto, saveProfiloStile, USE_MOCK } from './dataService'
-import { analizzaStile, aggiornaProfiloIncrementale, preparaAnteprimaAnonimizzazione, USE_MOCK_AI } from './geminiService'
+import { analizzaStile, aggiornaProfiloIncrementale, pianificaInvioRelazioni, USE_MOCK_AI } from './geminiService'
 
 // ── Reducer ────────────────────────────────────────────────
 const INIT = {
@@ -21,6 +23,7 @@ const INIT = {
   previewRelazioni: [],       // relazioni originali da analizzare dopo conferma
   previewItems:     [],       // relazioni anonimizzate per anteprima utente
   previewChecked:   false,
+  previewStats:     null,     // riepilogo invio/coda e stima chars
 }
 
 function reducer(state, action) {
@@ -46,6 +49,7 @@ function reducer(state, action) {
       previewMode: action.mode,
       previewRelazioni: action.relazioni,
       previewItems: action.items,
+      previewStats: action.stats,
       previewChecked: false,
       msg: null,
     }
@@ -55,6 +59,7 @@ function reducer(state, action) {
       previewMode: null,
       previewRelazioni: [],
       previewItems: [],
+      previewStats: null,
       previewChecked: false,
     }
     case 'PREVIEW_CHECK': return { ...state, previewChecked: action.value }
@@ -66,6 +71,7 @@ function reducer(state, action) {
         previewMode: null,
         previewRelazioni: [],
         previewItems: [],
+        previewStats: null,
         previewChecked: false,
         msg: null,
       }
@@ -97,27 +103,12 @@ function renderPreviewTokens(line) {
   })
 }
 
-// ── Render Markdown minimale ───────────────────────────────
-function renderMd(md) {
-  return md.split('\n').map((line, i) => {
-    if (line.startsWith('# '))  return <h1 key={i} style={{ fontFamily: 'var(--font-serif)', fontSize: 20, marginBottom: 8, marginTop: i > 0 ? 20 : 0, color: 'var(--accent-dk)' }}>{line.slice(2)}</h1>
-    if (line.startsWith('## ')) return <h2 key={i} style={{ fontSize: 14, fontWeight: 600, marginTop: 18, marginBottom: 6 }}>{line.slice(3)}</h2>
-    if (line.startsWith('### '))return <h3 key={i} style={{ fontSize: 13, fontWeight: 600, marginTop: 12, marginBottom: 4 }}>{line.slice(4)}</h3>
-    if (line.startsWith('- '))  return <li key={i} style={{ marginLeft: 16, marginBottom: 3, fontSize: 13 }}>{line.slice(2)}</li>
-    if (line.match(/^\d+\. /)) return <li key={i} style={{ marginLeft: 16, marginBottom: 3, fontSize: 13, listStyleType: 'decimal' }}>{line.replace(/^\d+\. /, '')}</li>
-    if (line.startsWith('|'))   return <div key={i} style={{ fontFamily: 'monospace', fontSize: 12, borderBottom: '1px solid var(--border)', padding: '4px 0' }}>{line}</div>
-    if (line.startsWith('> '))  return <div key={i} style={{ borderLeft: '3px solid var(--accent)', paddingLeft: 10, color: 'var(--text-muted)', fontSize: 12.5, margin: '8px 0' }}>{line.slice(2)}</div>
-    if (line === '')            return <div key={i} style={{ height: 6 }} />
-    return <p key={i} style={{ fontSize: 13, lineHeight: 1.7, marginBottom: 4 }}>{line}</p>
-  })
-}
-
 // ── Componente principale ──────────────────────────────────
 export default function ProfiloStile() {
   const [state, dispatch] = useReducer(reducer, INIT)
   const { profilo, updatedAt, numAnalizzate, nuoveCount, totalCount,
           loading, analyzing, editing, draft, saving, msg,
-          previewOpen, previewMode, previewRelazioni, previewItems, previewChecked } = state
+      previewOpen, previewMode, previewRelazioni, previewItems, previewChecked, previewStats } = state
 
   useEffect(() => { load() }, [])
 
@@ -127,31 +118,49 @@ export default function ProfiloStile() {
       getRelazioni(),
     ])
 
-    // Conta quante relazioni sono state create dopo l'ultimo aggiornamento del profilo
-    const ultimoAgg = profiloObj?.updated_at ? new Date(profiloObj.updated_at) : null
-    const nuove = ultimoAgg
-      ? relazioni.filter(r => new Date(r.created_at) > ultimoAgg)
-      : relazioni
+    // Coda incrementale stabile: relazione più vecchia non ancora analizzata → più nuova.
+    const relazioniOrdinate = [...relazioni].sort((a, b) =>
+      new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime()
+    )
+    const giaAnalizzate = Math.min(profiloObj?.num_relazioni_analizzate || 0, relazioniOrdinate.length)
+    const nuove = relazioniOrdinate.slice(giaAnalizzate)
 
     dispatch({ type: 'LOADED', payload: {
       profilo:       profiloObj?.documento_stile || '',
       updatedAt:     profiloObj?.updated_at || null,
-      numAnalizzate: profiloObj?.num_relazioni_analizzate || 0,
+      numAnalizzate: giaAnalizzate,
       nuoveCount:    nuove.length,
-      totalCount:    relazioni.length,
+      totalCount:    relazioniOrdinate.length,
     }})
   }
 
   // ── Analisi completa (da zero) ─────────────────────────
   async function handleAnalizzaCompleta() {
     try {
-      const relazioni = await getRelazioni()
+      const relazioni = [...await getRelazioni()].sort((a, b) =>
+        new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime()
+      )
       if (relazioni.length === 0) {
         dispatch({ type: 'MSG', msg: { type: 'warn', text: 'Nessuna relazione trovata. Importa prima alcune relazioni.' } })
         return
       }
-      const anteprima = await preparaAnteprimaAnonimizzazione(relazioni)
-      dispatch({ type: 'PREVIEW_OPEN', mode: 'completa', relazioni, items: anteprima })
+      const piano = await pianificaInvioRelazioni(relazioni, 'RELAZIONE')
+      if (piano.conteggioDaInviare === 0) {
+        dispatch({ type: 'MSG', msg: { type: 'warn', text: 'Nessuna relazione disponibile per l\'invio in questo passaggio.' } })
+        return
+      }
+      dispatch({
+        type: 'PREVIEW_OPEN',
+        mode: 'completa',
+        relazioni: piano.relazioniDaInviare,
+        items: piano.anteprimaDaInviare,
+        stats: {
+          inviate: piano.conteggioDaInviare,
+          inCoda: piano.conteggioInCoda,
+          charsCorpus: piano.charsCorpus,
+          totaleFase: relazioni.length,
+        },
+      })
     } catch (e) {
       dispatch({ type: 'ANALISI_ERR', text: 'Errore durante l\'analisi: ' + e.message })
     }
@@ -160,19 +169,35 @@ export default function ProfiloStile() {
   // ── Aggiornamento incrementale ─────────────────────────
   async function handleAggiornamento() {
     try {
-      const relazioni  = await getRelazioni()
-      const ultimoAgg  = updatedAt ? new Date(updatedAt) : null
-      const nuove      = ultimoAgg
-        ? relazioni.filter(r => new Date(r.created_at) > ultimoAgg)
-        : relazioni
+      const relazioni = [...await getRelazioni()].sort((a, b) =>
+        new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime()
+      )
+      const giaAnalizzate = Math.min(numAnalizzate, relazioni.length)
+      const nuove = relazioni.slice(giaAnalizzate)
 
       if (nuove.length === 0) {
         dispatch({ type: 'MSG', msg: { type: 'warn', text: 'Nessuna relazione nuova da integrare.' } })
         return
       }
 
-      const anteprima = await preparaAnteprimaAnonimizzazione(nuove)
-      dispatch({ type: 'PREVIEW_OPEN', mode: 'incrementale', relazioni: nuove, items: anteprima })
+      const piano = await pianificaInvioRelazioni(nuove, 'NUOVA RELAZIONE')
+      if (piano.conteggioDaInviare === 0) {
+        dispatch({ type: 'MSG', msg: { type: 'warn', text: 'Nessuna relazione disponibile per l\'invio in questo passaggio.' } })
+        return
+      }
+
+      dispatch({
+        type: 'PREVIEW_OPEN',
+        mode: 'incrementale',
+        relazioni: piano.relazioniDaInviare,
+        items: piano.anteprimaDaInviare,
+        stats: {
+          inviate: piano.conteggioDaInviare,
+          inCoda: piano.conteggioInCoda,
+          charsCorpus: piano.charsCorpus,
+          totaleFase: nuove.length,
+        },
+      })
     } catch (e) {
       dispatch({ type: 'ANALISI_ERR', text: 'Errore durante l\'aggiornamento: ' + e.message })
     }
@@ -185,23 +210,27 @@ export default function ProfiloStile() {
     try {
       if (previewMode === 'incrementale') {
         const risultato = await aggiornaProfiloIncrementale(profilo, previewRelazioni)
-        await saveProfiloStile(risultato, totalCount)
+        const nuovoNumAnalizzate = Math.min(totalCount, numAnalizzate + (risultato.relazioniUsate || previewRelazioni.length))
+        await saveProfiloStile(risultato.testo, nuovoNumAnalizzate)
+        const rimaste = Math.max(0, totalCount - nuovoNumAnalizzate)
         dispatch({
           type: 'ANALISI_DONE',
-          profilo: risultato,
-          num: totalCount,
-          msg: `Profilo aggiornato con ${previewRelazioni.length} nuova/e relazione/i. Corpus totale: ${totalCount}.`,
+          profilo: risultato.testo,
+          num: nuovoNumAnalizzate,
+          msg: `Profilo aggiornato con ${risultato.relazioniUsate || previewRelazioni.length} relazione/i in questo invio.${rimaste > 0 ? ` In coda per il prossimo invio: ${rimaste}.` : ''}`,
         })
         return
       }
 
       const risultato = await analizzaStile(previewRelazioni)
-      await saveProfiloStile(risultato, previewRelazioni.length)
+      const nuovoNumAnalizzate = risultato.relazioniUsate || previewRelazioni.length
+      await saveProfiloStile(risultato.testo, nuovoNumAnalizzate)
+      const rimaste = Math.max(0, totalCount - nuovoNumAnalizzate)
       dispatch({
         type: 'ANALISI_DONE',
-        profilo: risultato,
-        num: previewRelazioni.length,
-        msg: `Profilo generato analizzando ${previewRelazioni.length} relazioni.`,
+        profilo: risultato.testo,
+        num: nuovoNumAnalizzate,
+        msg: `Profilo generato analizzando ${nuovoNumAnalizzate} relazione/i.${rimaste > 0 ? ` In coda per i prossimi invii: ${rimaste}.` : ''}`,
       })
     } catch (e) {
       dispatch({ type: 'ANALISI_ERR', text: 'Errore durante l\'analisi: ' + e.message })
@@ -280,8 +309,8 @@ export default function ProfiloStile() {
           <div className="alert alert-info" style={{ marginBottom: 16 }}>
             <GitMerge size={15} style={{ flexShrink: 0 }} />
             <span>
-              Hai <strong>{nuoveCount}</strong> relazione/i importata/e dopo l'ultimo aggiornamento del profilo
-              ({updatedAt ? new Date(updatedAt).toLocaleDateString('it-IT') : '—'}).
+              Hai <strong>{nuoveCount}</strong> relazione/i in coda non ancora analizzate.
+              Ultimo aggiornamento profilo: {updatedAt ? new Date(updatedAt).toLocaleDateString('it-IT') : '—'}.
               Usa <em>Integra</em> per aggiornare solo con le nuove, o <em>Rigenera da zero</em> per rianalizzare tutto.
             </span>
           </div>
@@ -316,6 +345,14 @@ export default function ProfiloStile() {
               Prima di inviare i testi a Gemini, verifica questa anteprima anonimizzata e conferma esplicitamente.
               Se annulli, non verrà effettuata alcuna chiamata esterna.
             </p>
+
+            {previewStats && (
+              <div className="alert alert-info" style={{ marginBottom: 12 }}>
+                <span>
+                  Pronte per questo invio: <strong>{previewStats.inviate}</strong> su {previewStats.totaleFase}. In coda dopo l'invio: <strong>{previewStats.inCoda}</strong>. Dimensione corpus stimata: <strong>{Math.round((previewStats.charsCorpus || 0) / 1000)}k</strong> caratteri.
+                </span>
+              </div>
+            )}
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxHeight: 360, overflow: 'auto', paddingRight: 4, marginBottom: 12 }}>
               {previewItems.map((item, idx) => (
@@ -418,8 +455,10 @@ export default function ProfiloStile() {
                 {updatedAt && ` · aggiornato il ${new Date(updatedAt).toLocaleDateString('it-IT')}`}
               </span>
             </div>
-            <div style={{ lineHeight: 1.7 }}>
-              {renderMd(profilo)}
+            <div className="markdown-profile">
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                {profilo}
+              </ReactMarkdown>
             </div>
           </div>
         )}

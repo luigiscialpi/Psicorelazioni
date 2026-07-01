@@ -1,5 +1,7 @@
 import { useReducer, useEffect } from 'react'
 import { Search, FileText, Calendar, Tag, Edit3, Eye, X, User } from 'lucide-react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import { getRelazioni, getRelazioneById, getPazienteById, USE_MOCK } from './dataService'
 
 const INIT = {
@@ -151,8 +153,10 @@ export default function Archivio({ onApriInWizard }) {
                 <button className="btn btn-ghost btn-sm" onClick={() => dispatch({ type: 'CHIUDI' })}><X size={16} /></button>
               </div>
 
-              <div style={{ fontSize: 13, lineHeight: 1.7, whiteSpace: 'pre-wrap', color: 'var(--text)', marginBottom: 20, maxHeight: 400, overflowY: 'auto', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: 14 }}>
-                {aperta.testo_markdown}
+              <div className="markdown-profile" style={{ marginBottom: 20, maxHeight: 400, overflowY: 'auto', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: 14 }}>
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                  {aperta.testo_markdown || ''}
+                </ReactMarkdown>
               </div>
 
               <div style={{ display: 'flex', gap: 8 }}>

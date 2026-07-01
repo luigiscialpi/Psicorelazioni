@@ -16,22 +16,178 @@ import { anonimizzaTesto } from './anonimizza'
 const API_KEY = import.meta.env.VITE_GEMINI_API_KEY || ''
 const USE_MOCK_AI = !API_KEY || API_KEY === 'YOUR_GEMINI_KEY'
 
-const ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${API_KEY}`
+// Fallback predefinito basato sui modelli testuali comunemente disponibili nel piano senza costi.
+// Nota: la disponibilita reale dipende sempre da progetto, quota e stato account in AI Studio.
+const DEFAULT_FREE_MODEL_FALLBACK = [
+  'gemini-2.5-flash',
+  'gemini-2.5-flash-lite',
+  'gemini-3.5-flash',
+  'gemini-3.1-flash-lite',
+]
 
-async function callGemini(systemPrompt, userPrompt) {
+const MODEL_CONFIG = import.meta.env.VITE_GEMINI_MODELS
+  ? String(import.meta.env.VITE_GEMINI_MODELS)
+  : import.meta.env.VITE_GEMINI_MODEL ||
+    DEFAULT_FREE_MODEL_FALLBACK.join(',')
+
+const MODEL_CANDIDATES = MODEL_CONFIG
+  .split(',')
+  .map(m => m.trim())
+  .filter(Boolean)
+  .filter((m, idx, arr) => arr.indexOf(m) === idx)
+
+function buildEndpoint(modelName) {
+  return `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${API_KEY}`
+}
+
+function erroreQuotaEsaurita(status, dettaglio) {
+  if (status !== 429) return false
+  const d = String(dettaglio || '').toLowerCase()
+  return d.includes('quota exceeded') || d.includes('resource_exhausted') || d.includes('free_tier')
+}
+
+function erroreModelloNonDisponibile(status, dettaglio) {
+  if (status !== 400 && status !== 404) return false
+  const d = String(dettaglio || '').toLowerCase()
+  return (
+    d.includes('model') && (d.includes('not found') || d.includes('not supported') || d.includes('not available'))
+  )
+}
+const MAX_CORPUS_CHARS = 240000
+const MAX_RELATION_CHARS = 90000
+
+export const CORPUS_LIMITI = {
+  maxCorpusChars: MAX_CORPUS_CHARS,
+  maxRelazioneChars: MAX_RELATION_CHARS,
+}
+
+function estraiMessaggioErroreGemini(payload) {
+  if (!payload || typeof payload !== 'object') return null
+  const err = payload.error
+  if (!err) return null
+  const parti = [err.message, err.status, err.code].filter(Boolean)
+  const dettagli = Array.isArray(err.details)
+    ? err.details
+      .map(d => d?.description || d?.reason || d?.message)
+      .filter(Boolean)
+    : []
+  return [...parti, ...dettagli].join(' | ') || null
+}
+
+function troncaTestoPerCorpus(testo, maxChars = MAX_RELATION_CHARS) {
+  const value = String(testo || '')
+  if (value.length <= maxChars) return value
+  return `${value.slice(0, maxChars)}\n\n[...CONTENUTO TRONCATO AUTOMATICAMENTE PER LIMITI PAYLOAD...]`
+}
+
+function costruisciCorpus(relazioni, labelPrefix = 'RELAZIONE') {
+  let used = 0
+  const chunks = []
+  const indiciUsati = []
+
+  for (let i = 0; i < relazioni.length; i++) {
+    const r = relazioni[i]
+    const header = `--- ${labelPrefix} ${i + 1} (${r.tipo_relazione || 'tipo non specificato'}) ---\n`
+    const body = troncaTestoPerCorpus(r.testo_anonimizzato)
+    const chunk = `${header}${body}`
+    const nextUsed = used + chunk.length + 2
+
+    if (nextUsed > MAX_CORPUS_CHARS) break
+    chunks.push(chunk)
+    indiciUsati.push(i)
+    used = nextUsed
+  }
+
+  if (chunks.length === 0 && relazioni.length > 0) {
+    const r = relazioni[0]
+    chunks.push(`--- ${labelPrefix} 1 (${r.tipo_relazione || 'tipo non specificato'}) ---\n${troncaTestoPerCorpus(r.testo_anonimizzato, Math.max(10000, MAX_CORPUS_CHARS - 2000))}`)
+    indiciUsati.push(0)
+  }
+
+  return {
+    corpus: chunks.join('\n\n'),
+    charsCorpus: chunks.join('\n\n').length,
+    usate: chunks.length,
+    totali: relazioni.length,
+    indiciUsati,
+  }
+}
+
+async function callGemini(systemPrompt, userPrompt, options = {}) {
+  const {
+    maxOutputTokens = 4096,
+    temperature = 0.7,
+    thinkingBudget = 0,
+  } = options
+
   const body = {
     system_instruction: { parts: [{ text: systemPrompt }] },
     contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
-    generationConfig: { temperature: 0.7, maxOutputTokens: 4096 },
+    generationConfig: {
+      temperature,
+      maxOutputTokens,
+      thinkingConfig: { thinkingBudget },
+    },
   }
-  const res = await fetch(ENDPOINT, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  })
-  if (!res.ok) throw new Error(`Gemini API error: ${res.status}`)
-  const data = await res.json()
-  return data.candidates?.[0]?.content?.parts?.[0]?.text || ''
+  let lastErr = null
+
+  for (let modelIndex = 0; modelIndex < MODEL_CANDIDATES.length; modelIndex++) {
+    const modelName = MODEL_CANDIDATES[modelIndex]
+    const endpoint = buildEndpoint(modelName)
+    const maxAttempts = 3
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+
+      let data = null
+      let raw = ''
+      try {
+        data = await res.json()
+      } catch {
+        try { raw = await res.text() } catch { raw = '' }
+      }
+
+      if (res.ok) {
+        const candidate = data?.candidates?.[0]
+        const text = candidate?.content?.parts?.[0]?.text || ''
+
+        if (candidate?.finishReason === 'MAX_TOKENS') {
+          lastErr = new Error(`Gemini response truncated [${modelName}] per limite token output. Riduci il corpus o aumenta maxOutputTokens.`)
+          if (attempt < maxAttempts) continue
+          throw lastErr
+        }
+
+        return text
+      }
+
+      const dettaglio = estraiMessaggioErroreGemini(data) || raw || 'Errore sconosciuto'
+      lastErr = new Error(`Gemini API error ${res.status} [${modelName}]: ${dettaglio}`)
+
+      if (erroreQuotaEsaurita(res.status, dettaglio) && modelIndex < MODEL_CANDIDATES.length - 1) {
+        // Prova automaticamente il modello successivo se questo e in quota zero.
+        break
+      }
+
+      if (erroreModelloNonDisponibile(res.status, dettaglio) && modelIndex < MODEL_CANDIDATES.length - 1) {
+        // Se il modello non esiste/non e disponibile in questo account, passa al successivo.
+        break
+      }
+
+      if ((res.status === 429 || res.status >= 500) && attempt < maxAttempts) {
+        const waitMs = 4000 * Math.pow(2, attempt - 1)
+        await new Promise(r => setTimeout(r, waitMs))
+        continue
+      }
+
+      throw lastErr
+    }
+  }
+
+  throw lastErr || new Error('Gemini API error: richiesta non completata')
 }
 
 async function anonimizzaRelazioniPerAnalisi(relazioni) {
@@ -56,13 +212,31 @@ export async function preparaAnteprimaAnonimizzazione(relazioni) {
   return anonimizzaRelazioniPerAnalisi(relazioni)
 }
 
+export async function pianificaInvioRelazioni(relazioni, labelPrefix = 'RELAZIONE') {
+  const relazioniAnonimizzate = await anonimizzaRelazioniPerAnalisi(relazioni)
+  const piano = costruisciCorpus(relazioniAnonimizzate, labelPrefix)
+  const relazioniDaInviare = piano.indiciUsati.map(i => relazioni[i]).filter(Boolean)
+  const anteprimaDaInviare = piano.indiciUsati.map(i => relazioniAnonimizzate[i]).filter(Boolean)
+
+  return {
+    relazioniAnonimizzate,
+    relazioniDaInviare,
+    anteprimaDaInviare,
+    conteggioDaInviare: relazioniDaInviare.length,
+    conteggioInCoda: Math.max(0, relazioni.length - relazioniDaInviare.length),
+    charsCorpus: piano.charsCorpus,
+    limiti: CORPUS_LIMITI,
+  }
+}
+
 // ── ANALISI STILE ──────────────────────────────────────────
 export async function analizzaStile(relazioni) {
   const relazioniAnonimizzate = await anonimizzaRelazioniPerAnalisi(relazioni)
+  const { corpus, usate, totali, charsCorpus } = costruisciCorpus(relazioniAnonimizzate, 'RELAZIONE')
 
   if (USE_MOCK_AI) {
     await new Promise(r => setTimeout(r, 1800))
-    return `# PROFILO DI STILE — Valutazioni neuropsicologiche
+    const testo = `# PROFILO DI STILE — Valutazioni neuropsicologiche
 Ultimo aggiornamento: ${new Date().toISOString().slice(0,10)} | Relazioni analizzate: ${relazioniAnonimizzate.length} | Versione: 1
 
 ## 1. Struttura standard (ORDINE INVARIABILE)
@@ -108,16 +282,28 @@ Ultimo aggiornamento: ${new Date().toISOString().slice(0,10)} | Relazioni analiz
 - Relazioni di rivalutazione/follow-up più mirate: 700-1000 parole
 - Le sezioni con tabelle hanno paragrafi narrativi brevi (3-5 frasi) subito dopo ogni tabella
 `
+    return { testo, relazioniUsate: usate, relazioniTotali: totali, charsCorpus }
   }
 
-  const corpus = relazioniAnonimizzate.map((r, i) =>
-    `--- RELAZIONE ${i+1} (${r.tipo_relazione || 'tipo non specificato'}) ---\n${r.testo_anonimizzato}`
-  ).join('\n\n')
-
-  return callGemini(
+  const testo = await callGemini(
     `Sei un assistente specializzato nell'analisi dello stile di scrittura di relazioni di valutazione neuropsicologica e dell'apprendimento in età evolutiva (tipo WISC-IV, NEPSY-II, DSA/ADHD, L.170/2010).
 Analizza il corpus di relazioni fornite e produci un Profilo di Stile dettagliato in formato Markdown.
-Il documento deve avere esattamente queste sezioni numerate:
+Il documento deve rispettare ESATTAMENTE questa struttura, senza testo extra:
+
+# PROFILO DI STILE — [Titolo breve]
+Ultimo aggiornamento: YYYY-MM-DD | Relazioni analizzate: N | Versione: 1
+
+## 1. Struttura standard (ORDINE INVARIABILE)
+## 2. Registro linguistico
+## 3. Formule ricorrenti (DA RIPRODURRE ESATTAMENTE)
+## 4. Come vengono trattate le tabelle di punteggio
+## 5. Terminologia preferita vs da evitare
+## 6. Lunghezza e ritmo
+
+Niente preamboli, niente frasi tipo "Il presente profilo...", niente conclusioni finali.
+Mantieni il testo sintetico e operativo (massimo ~900 parole).
+
+Contenuti obbligatori:
 1. Struttura standard (ordine delle sezioni, comprese quelle ricorrenti come anamnesi, osservazione, valutazione cognitiva, approfondimento neuropsicologico, apprendimenti, questionari, conclusioni, riferimenti normativi)
 2. Registro linguistico (persona, tono, costrutti grammaticali preferiti)
 3. Formule ricorrenti (frasi-cornice da riprodurre esattamente, in particolare quelle che introducono ciascun indice/test)
@@ -125,8 +311,14 @@ Il documento deve avere esattamente queste sezioni numerate:
 5. Terminologia preferita vs da evitare (tabella)
 6. Lunghezza e ritmo (indicazioni quantitative)
 Rispondi SOLO con il documento Markdown, senza introduzioni.`,
-    `Analizza queste ${relazioniAnonimizzate.length} relazioni di valutazione neuropsicologica e produci il Profilo di Stile:\n\n${corpus}`
+    `Analizza queste ${usate} relazioni di valutazione neuropsicologica e produci il Profilo di Stile.${usate < totali ? ` Nota: il corpus è stato ridotto automaticamente da ${totali} a ${usate} relazioni per limiti payload.` : ''}\n\n${corpus}`,
+    {
+      maxOutputTokens: 3072,
+      temperature: 0.3,
+      thinkingBudget: 0,
+    }
   )
+  return { testo, relazioniUsate: usate, relazioniTotali: totali, charsCorpus }
 }
 
 // ── GENERAZIONE RELAZIONE ──────────────────────────────────
@@ -272,22 +464,20 @@ Istruzione aggiuntiva: ${istruzione}`
 // aggiornamento). Molto più efficiente con Gemini gratuito.
 export async function aggiornaProfiloIncrementale(profiloEsistente, nuoveRelazioni) {
   const relazioniAnonimizzate = await anonimizzaRelazioniPerAnalisi(nuoveRelazioni)
+  const { corpus, usate, totali, charsCorpus } = costruisciCorpus(relazioniAnonimizzate, 'NUOVA RELAZIONE')
 
   if (USE_MOCK_AI) {
     await new Promise(r => setTimeout(r, 1400))
     // In mock: aggiunge solo una riga di nota in fondo al profilo
     const dataNow = new Date().toISOString().slice(0, 10)
-    return profiloEsistente
+    const testo = profiloEsistente
       .replace(/Relazioni analizzate: \d+/, `Relazioni analizzate: ${profiloEsistente.match(/Relazioni analizzate: (\d+)/)?.[1] ?? '?'} + ${relazioniAnonimizzate.length} nuove`)
       .replace(/Ultimo aggiornamento: [\d-]+/, `Ultimo aggiornamento: ${dataNow}`)
       + `\n\n> *Aggiornamento incrementale del ${dataNow}: analizzate ${relazioniAnonimizzate.length} nuove relazioni. Nessuna modifica sostanziale rilevata rispetto al profilo precedente (demo).*`
+    return { testo, relazioniUsate: usate, relazioniTotali: totali, charsCorpus }
   }
 
-  const corpus = relazioniAnonimizzate.map((r, i) =>
-    `--- NUOVA RELAZIONE ${i + 1} (${r.tipo_relazione || 'tipo non specificato'}) ---\n${r.testo_anonimizzato}`
-  ).join('\n\n')
-
-  return callGemini(
+  const testo = await callGemini(
     `Sei un assistente specializzato nell'analisi dello stile di scrittura di relazioni di valutazione neuropsicologica.
 Hai già un Profilo di Stile esistente. Vengono aggiunte nuove relazioni al corpus.
 Il tuo compito è AGGIORNARE il profilo integrando eventuali pattern nuovi o correggendo quelli già presenti.
@@ -298,11 +488,12 @@ Rispondi SOLO con il documento Markdown aggiornato, senza introduzioni.`,
     `=== PROFILO DI STILE ATTUALE ===
 ${profiloEsistente}
 
-=== NUOVE RELAZIONI DA INTEGRARE (${relazioniAnonimizzate.length}) ===
+=== NUOVE RELAZIONI DA INTEGRARE (${usate}${usate < totali ? ` di ${totali}, corpus ridotto automaticamente` : ''}) ===
 ${corpus}
 
 Aggiorna il profilo integrando le osservazioni dalle nuove relazioni.`
   )
+  return { testo, relazioniUsate: usate, relazioniTotali: totali, charsCorpus }
 }
 
 export { USE_MOCK_AI }
