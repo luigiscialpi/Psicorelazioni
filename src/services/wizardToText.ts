@@ -9,8 +9,8 @@
 import {
   ANAMNESI_REMOTA_VOCI, ANAMNESI_RECENTE_VOCI,
   OSSERVAZIONE_ADATTAMENTO_VOCI, OSSERVAZIONE_ATTEGGIAMENTO_VOCI,
-} from './anamnesiVoci'
-import { WISC_IV_CAMPI, NEPSY_II_DOMINI, fasciaWISC, fasciaScalare } from './testDefinitions'
+} from '../components/constants/anamnesiVoci'
+import { WISC_IV_CAMPI, NEPSY_II_DOMINI, fasciaWISC, fasciaScalare } from '../components/constants/testDefinitions'
 
 // Converte le voci selezionate (+ eventuali dettagli) in una frase discorsiva
 function vociToTesto(vociSelezionate, vociDisponibili, dettagli = {}) {

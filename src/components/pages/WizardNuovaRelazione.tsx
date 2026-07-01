@@ -1,13 +1,18 @@
 import { useReducer, useEffect, useRef } from 'react'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { ChevronRight, ChevronLeft, Save, FlaskConical, Check, ShieldAlert } from 'lucide-react'
-import { getProfiloStile, getRelazioneById, getPazienteById, getSessioneById, upsertSessione, USE_MOCK } from './dataService'
-import { WISC_IV_CAMPI, NEPSY_II_DOMINI, fasciaWISC, fasciaScalare } from './testDefinitions'
-import { estraiRequisitiDaProfilo, haRiferimentiSubtestCompilati } from './profileAlignment'
+import { getProfiloStile } from '../../data/profiloData'
+import { getRelazioneById } from '../../data/relazioniData'
+import { getPazienteById } from '../../data/pazientiData'
+import { getSessioneById, upsertSessione } from '../../data/sessioniData'
+import { USE_MOCK } from '../../core/config'
+import type { UnknownRecord } from '../../core/types'
+import { WISC_IV_CAMPI, NEPSY_II_DOMINI, fasciaWISC, fasciaScalare } from '../constants/testDefinitions'
+import { estraiRequisitiDaProfilo, haRiferimentiSubtestCompilati } from '../../services/profileAlignment'
 import {
   ANAMNESI_REMOTA_VOCI, ANAMNESI_RECENTE_VOCI,
   OSSERVAZIONE_ADATTAMENTO_VOCI, OSSERVAZIONE_ATTEGGIAMENTO_VOCI,
-} from './anamnesiVoci'
+} from '../constants/anamnesiVoci'
 
 // ─────────────────────────────────────────────────────────────
 // Wizard calibrato sulla struttura reale di relazioni di
@@ -738,7 +743,7 @@ export default function WizardNuovaRelazione() {
           const sessione = await getSessioneById(sessionId)
           if (sessione?.risposte_wizard) {
             const payload = normalizzaDatiIniziali({
-              ...sessione.risposte_wizard,
+              ...(sessione.risposte_wizard as UnknownRecord),
               _sessionId: sessione.id,
             })
             if (live) {

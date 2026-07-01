@@ -3,15 +3,57 @@
 // Ogni formato ha pipeline diversa, ma l'output è sempre lo stesso:
 // { markdown: string, warning?: string }
 // ============================================================
-import mammoth from 'mammoth'
-import * as pdfjsLib from 'pdfjs-dist'
+import type { ExtractedText, FileKind } from '../core/types'
 
-const mammothAny = mammoth as any
+type MammothNode = {
+  value?: string
+  isBold?: boolean
+  styleId?: string
+  styleName?: string
+}
+
+type MammothWithTransforms = {
+  transforms: {
+    getDescendantsOfType(node: MammothNode, type: string): MammothNode[]
+    paragraph(transform: (paragraph: MammothNode) => unknown): unknown
+  }
+  convertToMarkdown(
+    input: { arrayBuffer: ArrayBuffer },
+    options: { styleMap: string[]; transformDocument: unknown },
+  ): Promise<{ value: string }>
+}
+
+type TurndownConstructor = new (options: Record<string, unknown>) => {
+  addRule(name: string, rule: { filter: string | string[]; replacement: () => string }): void
+  remove(filters: string[]): void
+  turndown(input: Element): string
+}
+
+type PandocResult = {
+  stdout?: string
+  files?: Record<string, string | Blob>
+}
+
+type PdfTextItem = {
+  str: string
+  height: number
+  transform: number[]
+  dir: string
+  width: number
+  fontName: string
+  hasEOL: boolean
+}
+
+type PdfLine = {
+  y: number
+  prevY: number | null
+  height: number
+  parts: string[]
+}
 
 // Il worker è servito come asset statico da /public (vedi SETUP.md)
-pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs'
 
-export function getFileKind(filename: string) {
+export function getFileKind(filename: string): FileKind {
   const ext = filename.toLowerCase().split('.').pop()
   if (ext === 'docx') return 'docx'
   if (ext === 'doc')  return 'doc'
@@ -42,28 +84,6 @@ const DOCX_STYLE_MAP = [
   "p[style-name='Subtitle'] => h2:fresh",
   "p[style-name='Sottotitolo'] => h2:fresh",
 ]
-
-// Promuove un paragrafo a intestazione se tutto il suo testo è in grassetto
-// e la riga è breve: è il pattern tipico dei titoli scritti a mano.
-function promuoviTitoliGrassetto(paragraph: any) {
-  // Non toccare i paragrafi che hanno già uno stile (potrebbero essere titoli veri)
-  if (paragraph.styleId || paragraph.styleName) return paragraph
-
-  const runs = mammothAny.transforms.getDescendantsOfType(paragraph, 'run')
-  const texts = mammothAny.transforms.getDescendantsOfType(paragraph, 'text')
-  const testo = texts.map((t: any) => t.value || '').join('').trim()
-
-  if (!testo || testo.length > 90) return paragraph
-  if (runs.length === 0) return paragraph
-
-  const tuttoGrassetto = runs.every((r: any) => r.isBold)
-  if (!tuttoGrassetto) return paragraph
-
-  // Evita di trasformare frasi vere e proprie (che terminano con punteggiatura)
-  if (/[.!?;:]$/.test(testo)) return paragraph
-
-  return { ...paragraph, styleId: 'Heading2', styleName: 'Heading 2' }
-}
 
 // Normalizza il Markdown prodotto: righe vuote multiple, spazi finali,
 // e i grassetti "vuoti" (**  **) che Mammoth può lasciare.
@@ -117,7 +137,7 @@ function promuoviTitoliDaStile(container: Element) {
   }
 }
 
-function creaTurndownService(TurndownService: any) {
+function creaTurndownService(TurndownService: TurndownConstructor) {
   const td = new TurndownService({
     headingStyle: 'atx',
     bulletListMarker: '-',
@@ -152,7 +172,7 @@ async function extractDocxConDocxPreview(file: File) {
     throw new Error('Impossibile inizializzare docx-preview.')
   }
 
-  const TurndownService = TurndownMod.default || TurndownMod
+  const TurndownService = TurndownMod.default
   if (!TurndownService) throw new Error('Impossibile inizializzare Turndown.')
 
   const host = document.createElement('div')
@@ -210,7 +230,7 @@ async function extractDocxConPandocWasm(file: File) {
     'input.docx': file,
   }
 
-  const result: any = await convert(options, null, files)
+  const result: PandocResult = await convert(options, null, files)
   const out = result?.files?.['out.md'] ?? result?.stdout ?? ''
 
   let markdown = ''
@@ -226,18 +246,38 @@ async function extractDocxConPandocWasm(file: File) {
 }
 
 async function extractDocxConMammoth(file: File) {
+  const mammoth = (await import('mammoth')).default as unknown as MammothWithTransforms
   const buffer = await file.arrayBuffer()
-  const result = await mammothAny.convertToMarkdown(
+
+  function promuoviTitoliGrassetto(paragraph: MammothNode): MammothNode {
+    if (paragraph.styleId || paragraph.styleName) return paragraph
+
+    const runs = mammoth.transforms.getDescendantsOfType(paragraph, 'run')
+    const texts = mammoth.transforms.getDescendantsOfType(paragraph, 'text')
+    const testo = texts.map((t: MammothNode) => t.value || '').join('').trim()
+
+    if (!testo || testo.length > 90) return paragraph
+    if (runs.length === 0) return paragraph
+
+    const tuttoGrassetto = runs.every((r: MammothNode) => r.isBold)
+    if (!tuttoGrassetto) return paragraph
+
+    if (/[.!?;:]$/.test(testo)) return paragraph
+
+    return { ...paragraph, styleId: 'Heading2', styleName: 'Heading 2' }
+  }
+
+  const result = await mammoth.convertToMarkdown(
     { arrayBuffer: buffer },
     {
       styleMap: DOCX_STYLE_MAP,
-      transformDocument: mammothAny.transforms.paragraph(promuoviTitoliGrassetto),
+      transformDocument: mammoth.transforms.paragraph(promuoviTitoliGrassetto),
     },
   )
   return ripulisciMarkdown(result.value)
 }
 
-async function extractDocx(file: File) {
+async function extractDocx(file: File): Promise<ExtractedText> {
   try {
     const markdown = await extractDocxConPandocWasm(file)
     if (markdown && markdown.length >= 40) {
@@ -276,7 +316,9 @@ async function extractDocx(file: File) {
 //      grande della media → titolo Markdown);
 //   3) unisce le righe in paragrafi, spezzando dove il salto verticale è
 //      ampio (riga vuota) e ricongiungendo le parole sillabate a fine riga.
-async function extractPdf(file: File) {
+async function extractPdf(file: File): Promise<ExtractedText> {
+  const pdfjsLib = await import('pdfjs-dist')
+  pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs'
   const buffer = await file.arrayBuffer()
   const pdf = await pdfjsLib.getDocument({ data: buffer }).promise
 
@@ -287,11 +329,11 @@ async function extractPdf(file: File) {
     const content = await page.getTextContent()
 
     // 1) Raggruppa gli items in righe { y, height, text, gap }
-    const righe: any[] = []
+    const righe: PdfLine[] = []
     let lastY: number | null = null
-    let current: any = null
+    let current: PdfLine | null = null
 
-    for (const item of content.items as any[]) {
+    for (const item of content.items.filter((value): value is PdfTextItem => 'str' in value && 'transform' in value)) {
       const y = item.transform[5]
       const h = item.height || Math.abs(item.transform[3]) || 0
 
@@ -381,7 +423,7 @@ async function extractPdf(file: File) {
 }
 
 // ── DOC legacy (non supportato lato client) ────────────────
-async function extractDoc(_file?: File) {
+async function extractDoc(_file?: File): Promise<never> {
   throw new Error(
     'Il formato .doc (Word 97-2003) non può essere letto direttamente dal browser. ' +
     'Apri il file in Word, scegli "Salva con nome" → formato .docx, poi ricarica qui il nuovo file.'
@@ -389,7 +431,7 @@ async function extractDoc(_file?: File) {
 }
 
 // ── Entry point unico ──────────────────────────────────────
-export async function extractText(file: File) {
+export async function extractText(file: File): Promise<ExtractedText> {
   const kind = getFileKind(file.name)
   switch (kind) {
     case 'docx': return extractDocx(file)

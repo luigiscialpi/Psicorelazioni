@@ -1,6 +1,7 @@
 import { useEffect, useReducer } from 'react'
 import { Save, BadgeCheck } from 'lucide-react'
-import { getProfiloProfessionista, saveProfiloProfessionista, USE_MOCK } from './dataService'
+import { getProfiloProfessionista, saveProfiloProfessionista } from '../../data/profiloData'
+import { USE_MOCK } from '../../core/config'
 
 const INIT = {
   loading: true,

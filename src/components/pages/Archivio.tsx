@@ -3,27 +3,13 @@ import { useNavigate } from 'react-router-dom'
 import { Search, FileText, Calendar, Tag, Edit3, X, User } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { getRelazioni, getPazienteById } from './dataService'
-
-const INIT: any = {
-  relazioni: [], loading: true, query: '', filtroTipo: '',
-  aperta: null,         // relazione attualmente visualizzata in dettaglio
-  pazienteAperta: null, // anagrafica della relazione aperta (per mostrarla, mai per Gemini)
-}
-
-function reducer(state: any, action: any) {
-  switch (action.type) {
-    case 'LOADED':      return { ...state, relazioni: action.data, loading: false }
-    case 'QUERY':       return { ...state, query: action.value }
-    case 'FILTRO_TIPO': return { ...state, filtroTipo: action.value }
-    case 'APRI':        return { ...state, aperta: action.relazione, pazienteAperta: action.paziente }
-    case 'CHIUDI':       return { ...state, aperta: null, pazienteAperta: null }
-    default: return state
-  }
-}
+import { getRelazioni } from '../../data/relazioniData'
+import { getPazienteById } from '../../data/pazientiData'
+import { ARCHIVIO_INIT, archivioReducer } from '../state/archivioState'
+import type { Relazione } from '../../core/types'
 
 const MESI = ['gen','feb','mar','apr','mag','giu','lug','ago','set','ott','nov','dic']
-function formatData(iso: string) {
+function formatData(iso?: string | null) {
   if (!iso) return '—'
   const d = new Date(iso)
   return `${d.getDate()} ${MESI[d.getMonth()]} ${d.getFullYear()}`
@@ -31,7 +17,7 @@ function formatData(iso: string) {
 
 export default function Archivio() {
   const navigate = useNavigate()
-  const [state, dispatch] = useReducer(reducer, INIT)
+  const [state, dispatch] = useReducer(archivioReducer, ARCHIVIO_INIT)
   const { relazioni, loading, query, filtroTipo, aperta, pazienteAperta } = state
 
   useEffect(() => { load() }, [])
@@ -41,12 +27,12 @@ export default function Archivio() {
     dispatch({ type: 'LOADED', data })
   }
 
-  async function handleApri(relazione: any) {
+  async function handleApri(relazione: Relazione) {
     const paziente = relazione.paziente_id ? await getPazienteById(relazione.paziente_id) : null
     dispatch({ type: 'APRI', relazione, paziente })
   }
 
-  function handleModifica(relazione: any) {
+  function handleModifica(relazione: Relazione) {
     if (!relazione.wizard_snapshot) {
       alert('Questa relazione non ha uno snapshot del wizard salvato (probabilmente importata da DOCX) — non può essere riaperta per la modifica, ma puoi comunque consultarla.')
       return
@@ -56,14 +42,14 @@ export default function Archivio() {
     navigate(`/modifica?relazioneId=${encodeURIComponent(relazione.id)}`)
   }
 
-  const filtrate = relazioni.filter(r => {
+  const filtrate = relazioni.filter((r: Relazione) => {
     const matchQuery = !query || (r.titolo || '').toLowerCase().includes(query.toLowerCase()) ||
       (r.testo_markdown || '').toLowerCase().includes(query.toLowerCase())
     const matchTipo = !filtroTipo || r.tipo_relazione === filtroTipo
     return matchQuery && matchTipo
   })
 
-  const tipiDisponibili = [...new Set<string>(relazioni.map((r: any) => r.tipo_relazione).filter(Boolean))]
+  const tipiDisponibili = [...new Set<string>(relazioni.map((r: Relazione) => r.tipo_relazione).filter(Boolean) as string[])]
 
   return (
     <>

@@ -13,8 +13,9 @@
 import {
   Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell,
   Header, Footer, AlignmentType, BorderStyle, WidthType, ShadingType,
-  VerticalAlign, PageNumber, NumberFormat, UnderlineType,
+  PageNumber, NumberFormat, UnderlineType,
 } from 'docx'
+import type { AnagraficaPaziente, ProfiloProfessionista } from '../core/types'
 
 // ── Costanti layout ────────────────────────────────────────
 const FONT        = 'Times New Roman'
@@ -37,7 +38,24 @@ type ParagraphOptions = {
   spaceAfter?: number
 }
 
-function para(text: string, opts: ParagraphOptions = {}) {
+type InlineRun = {
+  text: string
+  bold: boolean
+}
+
+type MarkdownBlock =
+  | { type: 'text'; content: string }
+  | { type: 'table'; content: string }
+
+type ExportDocxInput = {
+  testo: string
+  data?: string
+  nomeStudio?: string
+  anagrafica?: AnagraficaPaziente | null
+  professionista?: ProfiloProfessionista | null
+}
+
+function para(text: string, opts: ParagraphOptions = {}): Paragraph {
   const {
     bold = false, underline = false, center = false, indent = false,
     size = SIZE_BODY, spaceBefore = 0, spaceAfter = 120,
@@ -59,18 +77,18 @@ function para(text: string, opts: ParagraphOptions = {}) {
   })
 }
 
-function emptyLine(spaceAfter = 120) {
+function emptyLine(spaceAfter = 120): Paragraph {
   return new Paragraph({ spacing: { after: spaceAfter }, children: [new TextRun('')] })
 }
 
-function formatDataIt(value) {
+function formatDataIt(value?: string | null): string {
   if (!value) return ''
   const d = new Date(value)
   if (Number.isNaN(d.getTime())) return ''
   return d.toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit', year: 'numeric' })
 }
 
-function deAnonimizzaTesto(md, anagrafica) {
+function deAnonimizzaTesto(md: string, anagrafica?: AnagraficaPaziente | null): string {
   const fullName = [anagrafica?.nome, anagrafica?.cognome].filter(Boolean).join(' ').trim()
   const birthDate = formatDataIt(anagrafica?.data_nascita)
   const scuolaClasse = String(anagrafica?.scuola_classe || '').trim()
@@ -85,10 +103,10 @@ function deAnonimizzaTesto(md, anagrafica) {
 // ── Parser Markdown minimale → array di Paragraph ─────────
 // Gestisce: ## titoli, **grassetto** inline, testo normale,
 // blocchi monospace (tabelle incollate dal software di scoring)
-function markdownToParagraphs(md) {
+function markdownToParagraphs(md: string): Paragraph[] {
   if (!md) return []
   const lines  = md.split('\n')
-  const result = []
+  const result: Paragraph[] = []
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]
@@ -138,11 +156,11 @@ function markdownToParagraphs(md) {
 }
 
 // Parser inline per **grassetto**
-function parseInline(text) {
-  const parts = []
+function parseInline(text: string): InlineRun[] {
+  const parts: InlineRun[] = []
   const re    = /\*\*(.+?)\*\*/g
   let last    = 0
-  let m
+  let m: RegExpExecArray | null
   while ((m = re.exec(text)) !== null) {
     if (m.index > last) parts.push({ text: text.slice(last, m.index), bold: false })
     parts.push({ text: m[1], bold: true })
@@ -156,16 +174,16 @@ function parseInline(text) {
 // Se il Markdown contiene una sezione "| Scala | Indici/QI |..."
 // la converte in una vera Table Word con intestazione in grassetto.
 // Altrimenti il testo viene riportato in monospace come fallback.
-function parseMarkdownTable(text) {
+function parseMarkdownTable(text: string): Table | null {
   const lines = text
     .split('\n')
-    .map(l => l.trim())
-    .filter(l => /^\|.*\|$/.test(l))
+    .map((line: string) => line.trim())
+    .filter((line: string) => /^\|.*\|$/.test(line))
   if (lines.length < 2) return null
 
   const rows = lines
-    .filter(l => !l.match(/^\|[-\s|]+\|$/)) // rimuovi righe separatore
-    .map(l => l.split('|').slice(1, -1).map(c => c.trim()))
+    .filter((line: string) => !line.match(/^\|[-\s|]+\|$/)) // rimuovi righe separatore
+    .map((line: string) => line.split('|').slice(1, -1).map((cell: string) => cell.trim()))
 
   if (!rows.length) return null
 
@@ -202,21 +220,21 @@ function parseMarkdownTable(text) {
   })
 }
 
-function isTableLine(line) {
+function isTableLine(line: string): boolean {
   const l = String(line || '').trim()
   return /^\|.*\|$/.test(l)
 }
 
-function isTableSeparatorLine(line) {
+function isTableSeparatorLine(line: string): boolean {
   const l = String(line || '').trim()
-  return /^\|[\-:\s|]+\|$/.test(l)
+  return /^\|[-:\s|]+\|$/.test(l)
 }
 
-function splitMarkdownBlocks(md) {
+function splitMarkdownBlocks(md: string): MarkdownBlock[] {
   const lines = String(md || '').split('\n')
-  const blocks = []
-  let textBuffer = []
-  let tableBuffer = []
+  const blocks: MarkdownBlock[] = []
+  let textBuffer: string[] = []
+  let tableBuffer: string[] = []
 
   const flushText = () => {
     if (textBuffer.length === 0) return
@@ -263,9 +281,9 @@ function splitMarkdownBlocks(md) {
 }
 
 // ── Intestazione fissa dello studio ───────────────────────
-function splitHeaderLines(nomeStudio, professionista) {
+function splitHeaderLines(nomeStudio?: string, professionista?: ProfiloProfessionista | null): string[] {
   if (professionista && (professionista.nome_completo || professionista.titolo || professionista.specializzazione)) {
-    const lines = []
+    const lines: string[] = []
     const nome = String(professionista.nome_completo || '').trim()
     const titolo = String(professionista.titolo || '').trim()
     const specializzazione = String(professionista.specializzazione || '').trim()
@@ -294,11 +312,11 @@ function splitHeaderLines(nomeStudio, professionista) {
 
   return (nomeStudio || 'Dr.ssa [Nome Cognome]\nPsicologa\nEsperta in Psicopatologia dell\'Apprendimento')
     .split('\n')
-    .map(x => x.trim())
+    .map((line: string) => line.trim())
     .filter(Boolean)
 }
 
-function makeHeader(nomeStudio, professionista) {
+function makeHeader(nomeStudio?: string, professionista?: ProfiloProfessionista | null): Header {
   const [nome = 'Dr.ssa [Nome Cognome]', ...resto] = splitHeaderLines(nomeStudio, professionista)
   return new Header({
     children: [
@@ -322,7 +340,7 @@ function makeHeader(nomeStudio, professionista) {
   })
 }
 
-function firmaProfessionistaParagraphs(professionista) {
+function firmaProfessionistaParagraphs(professionista?: ProfiloProfessionista | null): Paragraph[] {
   if (!professionista) return []
   const nome = String(professionista.nome_completo || '').trim()
   const titolo = String(professionista.titolo || '').trim()
@@ -343,7 +361,7 @@ function firmaProfessionistaParagraphs(professionista) {
 }
 
 // ── Footer con numero pagina ───────────────────────────────
-function makeFooter() {
+function makeFooter(): Footer {
   return new Footer({
     children: [
       new Paragraph({
@@ -362,7 +380,7 @@ function makeFooter() {
 // Costruisce il paragrafo di apertura con l'anagrafica reale —
 // dati che non sono mai stati inviati a Gemini, ricomposti qui
 // solo lato client al momento dell'export.
-function anagraficaParagraph(anagrafica) {
+function anagraficaParagraph(anagrafica?: AnagraficaPaziente | null): Paragraph | null {
   if (!anagrafica) return null
   const { nome, cognome, data_nascita, scuola_classe } = anagrafica
   const nomeCompleto = [nome, cognome].filter(Boolean).join(' ')
@@ -372,7 +390,7 @@ function anagraficaParagraph(anagrafica) {
     ? new Date(data_nascita).toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit', year: 'numeric' })
     : null
 
-  const parti = []
+  const parti: string[] = []
   if (nomeCompleto) parti.push(nomeCompleto)
   if (dataFmt)      parti.push(`nato/a il ${dataFmt}`)
   if (scuola_classe) parti.push(scuola_classe)
@@ -385,12 +403,12 @@ function anagraficaParagraph(anagrafica) {
   })
 }
 
-export async function esportaDocx({ testo, data, nomeStudio, anagrafica, professionista }: any) {
+export async function esportaDocx({ testo, data, nomeStudio, anagrafica, professionista }: ExportDocxInput): Promise<Blob> {
   const oggi = data || new Date().toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit', year: 'numeric' })
   const testoPulito = deAnonimizzaTesto(testo, anagrafica)
 
   // Separa in blocchi testuali/tabellari senza duplicare righe tabella.
-  const blocchi = []
+  const blocchi: Array<Paragraph | Table> = []
 
   for (const block of splitMarkdownBlocks(testoPulito)) {
     if (block.type === 'text') {
@@ -453,7 +471,7 @@ export async function esportaDocx({ testo, data, nomeStudio, anagrafica, profess
 }
 
 // ── Trigger download nel browser ───────────────────────────
-export function scaricaDocx(blob, nomeFile = 'relazione.docx') {
+export function scaricaDocx(blob: Blob, nomeFile = 'relazione.docx'): void {
   const url = URL.createObjectURL(blob)
   const a   = document.createElement('a')
   a.href     = url

@@ -1,9 +1,11 @@
 import { useReducer, useEffect } from 'react'
-import { Sparkles, RefreshCw, Edit3, Check, AlertTriangle, FlaskConical, GitMerge, RotateCcw } from 'lucide-react'
+import { Sparkles, Edit3, Check, AlertTriangle, FlaskConical, GitMerge, RotateCcw } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { getRelazioni, getProfiloStileCompleto, saveProfiloStile, USE_MOCK } from './dataService'
-import { analizzaStile, aggiornaProfiloIncrementale, pianificaInvioRelazioni, USE_MOCK_AI } from './geminiService'
+import { getRelazioni } from '../../data/relazioniData'
+import { getProfiloStileCompleto, saveProfiloStile } from '../../data/profiloData'
+import { USE_MOCK } from '../../core/config'
+import { analizzaStile, aggiornaProfiloIncrementale, pianificaInvioRelazioni, USE_MOCK_AI } from '../../services/geminiService'
 
 // ── Reducer ────────────────────────────────────────────────
 const INIT = {

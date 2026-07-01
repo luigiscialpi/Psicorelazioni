@@ -1,3 +1,5 @@
+import type { AnagraficaPaziente, UnknownRecord } from '../core/types'
+
 function escapeRegExp(value: unknown) {
   return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
@@ -17,9 +19,26 @@ function sostituisciParolaIsolata(testo: string, parola: string) {
   return testo.replace(re, '$1[PAZIENTE]')
 }
 
-export function anonimizzaTesto(testoMarkdown: unknown, metadatiRelazione: any = {}) {
+function isRecord(value: unknown): value is UnknownRecord {
+  return typeof value === 'object' && value !== null
+}
+
+function getString(value: unknown): string {
+  return typeof value === 'string' ? value : ''
+}
+
+function estraiPaziente(metadatiRelazione: unknown): AnagraficaPaziente {
+  if (!isRecord(metadatiRelazione)) return {}
+  const paziente = isRecord(metadatiRelazione.paziente) ? metadatiRelazione.paziente : metadatiRelazione
+  return {
+    nome: getString(paziente.nome),
+    cognome: getString(paziente.cognome),
+  }
+}
+
+export function anonimizzaTesto(testoMarkdown: unknown, metadatiRelazione: unknown = {}) {
   let testo = String(testoMarkdown || '')
-  const paziente = metadatiRelazione?.paziente || metadatiRelazione || {}
+  const paziente = estraiPaziente(metadatiRelazione)
   const nome = paziente?.nome || ''
   const cognome = paziente?.cognome || ''
 
@@ -30,13 +49,13 @@ export function anonimizzaTesto(testoMarkdown: unknown, metadatiRelazione: any =
 
   // 1b) Nome paziente nel testo libero: "Nome Cognome, nato/a il ..."
   testo = testo.replace(
-    /(^|[\n\r]\s*|[.!?]\s+)([A-ZÀ-ÖØ-Ý][A-Za-zÀ-ÖØ-öø-ÿ'’.-]+(?:[ \t]+(?:[A-ZÀ-ÖØ-Ý][A-Za-zÀ-ÖØ-öø-ÿ'’.-]+|de|di|del|della|dello|da|de[ \t]+[A-ZÀ-ÖØ-Ý][A-Za-zÀ-ÖØ-öø-ÿ'’.-]+)){1,3})(\s*,?\s*nat[oa]\s+(?:il\s+)?(?:\d{1,2}[\/.-]\d{1,2}[\/.-]\d{2,4}|\[DATA\]))/gim,
+     /(^|[\n\r]\s*|[.!?]\s+)([A-ZÀ-ÖØ-Ý][A-Za-zÀ-ÖØ-öø-ÿ'’.-]+(?:[ \t]+(?:[A-ZÀ-ÖØ-Ý][A-Za-zÀ-ÖØ-öø-ÿ'’.-]+|de|di|del|della|dello|da|de[ \t]+[A-ZÀ-ÖØ-Ý][A-Za-zÀ-ÖØ-öø-ÿ'’.-]+)){1,3})(\s*,?\s*nat[oa]\s+(?:il\s+)?(?:\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4}|\[DATA\]))/gim,
     '$1[PAZIENTE]$3'
   )
 
   // 2) Date di nascita dopo "nato/nata (il)"
   testo = testo.replace(
-    /(\bnat[oa]\s+(?:il\s+)?)(\d{1,2}[\/.-]\d{1,2}[\/.-]\d{2,4})\b/gi,
+     /(\bnat[oa]\s+(?:il\s+)?)(\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4})\b/gi,
     '$1[DATA]'
   )
 

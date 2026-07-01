@@ -1,6 +1,6 @@
 import { LayoutDashboard, Upload, FileText, Clock, BookOpen, Settings, UserRound, LogOut, FlaskConical } from 'lucide-react'
 import { NavLink, useLocation } from 'react-router-dom'
-import { supabase } from './supabase'
+import { supabase } from '../../core/supabase'
 
 const NAV = [
   { id: 'dashboard', path: '/dashboard', label: 'Pannello', icon: LayoutDashboard },

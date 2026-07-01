@@ -1,7 +1,10 @@
 import { useEffect, useReducer } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { FileText, Upload, TrendingUp, Clock, Trash2 } from 'lucide-react'
-import { getRelazioni, getPazienti, getSessioniInCorso, getProfiloProfessionista, deleteSessione } from './dataService'
+import { FileText, Upload, Clock, Trash2 } from 'lucide-react'
+import { getRelazioni } from '../../data/relazioniData'
+import { getPazienti } from '../../data/pazientiData'
+import { getSessioniInCorso, deleteSessione } from '../../data/sessioniData'
+import { getProfiloProfessionista } from '../../data/profiloData'
 
 const init = { stats: { totale: 0, questo_mese: 0, pazienti: 0 }, recenti: [], sospese: [], greeting: 'Benvenuta — buon lavoro', loading: true }
 

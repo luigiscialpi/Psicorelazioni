@@ -1,24 +1,29 @@
-import { useReducer, useRef, useCallback, type ChangeEvent } from 'react'
+import { useReducer, useRef, useCallback, type ChangeEvent, type DragEvent } from 'react'
 import { Upload, FileText, CheckCircle, AlertCircle, X, Save, Eye, EyeOff, FlaskConical, AlertTriangle } from 'lucide-react'
-import { insertRelazione, upsertPaziente, USE_MOCK } from './dataService'
-import { supabase } from './supabase'
-import { extractText, getFileKind } from './fileExtractor'
+import { insertRelazione } from '../../data/relazioniData'
+import { upsertPaziente } from '../../data/pazientiData'
+import { USE_MOCK } from '../../core/config'
+import { supabase } from '../../core/supabase'
+import { extractText, getFileKind } from '../../services/fileExtractor'
+import { createDefaultImportMeta, createImportedFileEntry, filesReducer } from '../state/importRelazioniState'
+import type { FileKind, ImportedFileEntry, ImportRelazioneMeta, ImportableFileKind } from '../../core/types'
 
 const TIPI_RELAZIONE = ['', 'valutazione-completa', 'rivalutazione', 'approfondimento', 'certificazione-dsa', 'altro']
-const uid = () => Math.random().toString(36).slice(2)
 
 // Content-type corretto per Supabase Storage in base al formato originale
-const CONTENT_TYPES = {
+const CONTENT_TYPES: Record<ImportableFileKind, string> = {
   docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   pdf:  'application/pdf',
-} as Record<string, string>
+  doc:  'application/msword',
+}
 
-function FileKindBadge({ kind }: any) {
-  const labels = { docx: 'DOCX', pdf: 'PDF', doc: 'DOC' }
+function FileKindBadge({ kind }: { kind: FileKind }) {
+  const labels: Record<FileKind, string> = { docx: 'DOCX', pdf: 'PDF', doc: 'DOC', unsupported: '?' }
   const colors = {
     docx: { bg: 'var(--accent-lt)', fg: 'var(--accent-dk)' },
     pdf:  { bg: '#FEE2E2', fg: '#991B1B' },
     doc:  { bg: '#FEF3C7', fg: '#92400E' },
+    unsupported: { bg: '#F3F4F6', fg: '#4B5563' },
   }
   const c = colors[kind] || colors.doc
   return (
@@ -28,29 +33,16 @@ function FileKindBadge({ kind }: any) {
   )
 }
 
-// ── Reducer per la lista file ──────────────────────────────
-function filesReducer(state: any[], action: any) {
-  switch (action.type) {
-    case 'ADD':
-      return [...state, action.entry]
-    case 'UPDATE':
-      return state.map(f => f.id === action.id ? { ...f, ...action.patch } : f)
-    case 'REMOVE':
-      return state.filter(f => f.id !== action.id)
-    default:
-      return state
-  }
+type FileItemProps = {
+  file: ImportedFileEntry
+  onRemove: (id: string) => void
+  onSave: (id: string, meta: ImportRelazioneMeta) => Promise<void>
 }
 
-function FileItem({ file, onRemove, onSave }: any) {
+function FileItem({ file, onRemove, onSave }: FileItemProps) {
   const [meta, dispatchMeta] = useReducer(
-    (s, a) => ({ ...s, [a.k]: a.v }),
-    {
-      titolo: file.name.replace(/\.(docx?|pdf)$/i, ''),
-      anno: new Date().getFullYear(),
-      tipo_relazione: '',
-      codice_paziente: '',
-    }
+    (state: ImportRelazioneMeta, action: { key: keyof ImportRelazioneMeta; value: string | number }) => ({ ...state, [action.key]: action.value }),
+    createDefaultImportMeta(file.name)
   )
   const [showPreview, togglePreview] = useReducer(s => !s, false)
 
@@ -105,26 +97,26 @@ function FileItem({ file, onRemove, onSave }: any) {
           <div className="meta-row" style={{ marginBottom: 10 }}>
             <div className="form-group" style={{ marginBottom: 0 }}>
               <label className="form-label">Titolo</label>
-              <input className="form-input" value={meta.titolo} onChange={e => dispatchMeta({ k: 'titolo', v: e.target.value })} />
+              <input className="form-input" value={meta.titolo} onChange={e => dispatchMeta({ key: 'titolo', value: e.target.value })} />
             </div>
             <div className="form-group" style={{ marginBottom: 0 }}>
               <label className="form-label">Anno</label>
               <input className="form-input" type="number" min="2000" max="2100" value={meta.anno}
-                onChange={e => dispatchMeta({ k: 'anno', v: parseInt(e.target.value) })} />
+                onChange={e => dispatchMeta({ key: 'anno', value: parseInt(e.target.value, 10) })} />
             </div>
           </div>
 
           <div className="meta-row" style={{ marginBottom: 10 }}>
             <div className="form-group" style={{ marginBottom: 0 }}>
               <label className="form-label">Tipo relazione</label>
-              <select className="form-select" value={meta.tipo_relazione} onChange={e => dispatchMeta({ k: 'tipo_relazione', v: e.target.value })}>
+              <select className="form-select" value={meta.tipo_relazione} onChange={e => dispatchMeta({ key: 'tipo_relazione', value: e.target.value })}>
                 {TIPI_RELAZIONE.map(t => <option key={t} value={t}>{t || '— seleziona —'}</option>)}
               </select>
             </div>
             <div className="form-group" style={{ marginBottom: 0 }}>
               <label className="form-label">Codice paziente <span>(facoltativo)</span></label>
               <input className="form-input" placeholder="PAZ-001" value={meta.codice_paziente}
-                onChange={e => dispatchMeta({ k: 'codice_paziente', v: e.target.value.toUpperCase() })} />
+                onChange={e => dispatchMeta({ key: 'codice_paziente', value: e.target.value.toUpperCase() })} />
             </div>
           </div>
 
@@ -144,24 +136,25 @@ function FileItem({ file, onRemove, onSave }: any) {
 }
 
 export default function ImportRelazioni() {
-  const [files, dispatchFiles] = useReducer(filesReducer, [] as any[])
+  const [files, dispatchFiles] = useReducer(filesReducer, [] as ImportedFileEntry[])
   const [dragOver, toggleDrag] = useReducer(s => !s, false)
   const inputRef = useRef<HTMLInputElement>(null)
 
   async function convertFile(fileObj: File) {
-    const id = uid()
     const kind = getFileKind(fileObj.name)
-    dispatchFiles({ type: 'ADD', entry: { id, name: fileObj.name, kind, status: 'converting', markdown: '', file: fileObj } })
+    const entry = createImportedFileEntry(fileObj, kind)
+    dispatchFiles({ type: 'ADD', entry })
 
     try {
-      const { markdown, warning } = await extractText(fileObj) as any
-      dispatchFiles({ type: 'UPDATE', id, patch: { status: 'ready', markdown, warning } })
-    } catch (err: any) {
-      dispatchFiles({ type: 'UPDATE', id, patch: { status: 'error', errorMsg: err.message } })
+      const { markdown, warning } = await extractText(fileObj)
+      dispatchFiles({ type: 'UPDATE', id: entry.id, patch: { status: 'ready', markdown, warning } })
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Errore sconosciuto durante la conversione.'
+      dispatchFiles({ type: 'UPDATE', id: entry.id, patch: { status: 'error', errorMsg: message } })
     }
   }
 
-  const onDrop = useCallback((e: any) => {
+  const onDrop = useCallback((e: DragEvent<HTMLDivElement>) => {
     e.preventDefault()
     toggleDrag()
     Array.from(e.dataTransfer.files as FileList).filter((f: File) => f.name.match(/\.(docx?|pdf)$/i)).forEach(convertFile)
@@ -175,7 +168,7 @@ export default function ImportRelazioni() {
 
   function removeFile(id: string) { dispatchFiles({ type: 'REMOVE', id }) }
 
-  async function saveFile(id: string, meta: any) {
+  async function saveFile(id: string, meta: ImportRelazioneMeta) {
     const fileEntry = files.find(f => f.id === id)
     if (!fileEntry) return
 
@@ -193,7 +186,7 @@ export default function ImportRelazioni() {
       if (!USE_MOCK) {
         storagePath = `${Date.now()}_${fileEntry.name}`
         await supabase.storage.from('docx-originali').upload(storagePath, fileEntry.file, {
-          contentType: CONTENT_TYPES[fileEntry.kind] || 'application/octet-stream',
+          contentType: fileEntry.kind === 'docx' || fileEntry.kind === 'pdf' ? CONTENT_TYPES[fileEntry.kind] : 'application/octet-stream',
         })
       }
 
@@ -209,9 +202,10 @@ export default function ImportRelazioni() {
       })
 
       dispatchFiles({ type: 'UPDATE', id, patch: { status: 'saved' } })
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error(err)
-      dispatchFiles({ type: 'UPDATE', id, patch: { status: 'error', errorMsg: 'Errore durante il salvataggio: ' + err.message } })
+      const message = err instanceof Error ? err.message : 'errore sconosciuto'
+      dispatchFiles({ type: 'UPDATE', id, patch: { status: 'error', errorMsg: 'Errore durante il salvataggio: ' + message } })
     }
   }
 

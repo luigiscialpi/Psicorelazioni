@@ -11,8 +11,99 @@ import {
   wiscToMarkdownTable, wiscToNarrativa, nepsyToMarkdownTable, nepsyToNarrativa,
   notaRangeWisc, notaRangeNepsy,
 } from './wizardToText'
-import { getPazienteById } from './dataService'
+import { getPazienteById } from '../data/pazientiData'
 import { anonimizzaTesto } from './anonimizza'
+import type { Paziente, Relazione, UnknownRecord } from '../core/types'
+
+type GeminiCallOptions = {
+  maxOutputTokens?: number
+  temperature?: number
+  thinkingBudget?: number
+}
+
+type GeminiErrorDetail = {
+  description?: string
+  reason?: string
+  message?: string
+}
+
+type GeminiErrorPayload = {
+  error?: {
+    message?: string
+    status?: string
+    code?: string | number
+    details?: GeminiErrorDetail[]
+  }
+}
+
+type GeminiResponse = GeminiErrorPayload & {
+  candidates?: Array<{
+    finishReason?: string
+    content?: {
+      parts?: Array<{ text?: string }>
+    }
+  }>
+}
+
+type CorpusPlan = {
+  corpus: string
+  charsCorpus: number
+  usate: number
+  totali: number
+  indiciUsati: number[]
+}
+
+type AiResult = {
+  testo: string
+  relazioniUsate: number
+  relazioniTotali: number
+  charsCorpus: number
+}
+
+type ScoreMap = Record<string, string | number | boolean | null | undefined>
+
+type WizardPayload = UnknownRecord & {
+  anagrafica?: unknown
+  sezioni_attive?: string[]
+  tipo_invio?: string
+  motivo_invio?: string
+  anamnesi?: UnknownRecord
+  osservazione?: UnknownRecord & { note?: string }
+  cognitivo?: UnknownRecord & {
+    punteggi?: ScoreMap
+    includi_nota_range?: boolean
+    riferimenti_subtest?: string
+    eta_valutazione?: string
+    strumenti_utilizzati?: string
+    note_cliniche?: string
+  }
+  nepsy?: UnknownRecord & {
+    punteggi?: ScoreMap
+    includi_nota_range?: boolean
+    strumenti_utilizzati?: string
+    note_cliniche?: string
+  }
+  apprendimenti?: UnknownRecord & {
+    strumenti?: string
+    punteggi_grezzi?: string
+    lettura?: string
+    scrittura?: string
+    matematica?: string
+  }
+  questionari?: UnknownRecord & {
+    tipo?: string
+    punteggi_grezzi?: string
+    note_cliniche?: string
+  }
+  conclusioni?: UnknownRecord & {
+    diagnosi?: string
+    codice_icd?: string
+    consigli_paziente?: string
+    consigli_scuola?: string
+    strumenti_compensativi?: string
+    misure_dispensative?: string
+  }
+}
 
 const API_KEY = import.meta.env.VITE_GEMINI_API_KEY || ''
 const USE_MOCK_AI = !API_KEY || API_KEY === 'YOUR_GEMINI_KEY'
@@ -33,9 +124,9 @@ const MODEL_CONFIG = import.meta.env.VITE_GEMINI_MODELS
 
 const MODEL_CANDIDATES = MODEL_CONFIG
   .split(',')
-  .map(m => m.trim())
+  .map((m: string) => m.trim())
   .filter(Boolean)
-  .filter((m, idx, arr) => arr.indexOf(m) === idx)
+  .filter((m: string, idx: number, arr: string[]) => arr.indexOf(m) === idx)
 
 function buildEndpoint(modelName: string) {
   return `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${API_KEY}`
@@ -62,29 +153,29 @@ export const CORPUS_LIMITI = {
   maxRelazioneChars: MAX_RELATION_CHARS,
 }
 
-function estraiMessaggioErroreGemini(payload: any) {
+function estraiMessaggioErroreGemini(payload: unknown): string | null {
   if (!payload || typeof payload !== 'object') return null
-  const err = payload.error
+  const err = (payload as GeminiErrorPayload).error
   if (!err) return null
   const parti = [err.message, err.status, err.code].filter(Boolean)
   const dettagli = Array.isArray(err.details)
     ? err.details
-      .map(d => d?.description || d?.reason || d?.message)
+      .map((d: GeminiErrorDetail) => d?.description || d?.reason || d?.message)
       .filter(Boolean)
     : []
   return [...parti, ...dettagli].join(' | ') || null
 }
 
-function troncaTestoPerCorpus(testo: unknown, maxChars = MAX_RELATION_CHARS) {
+function troncaTestoPerCorpus(testo: unknown, maxChars = MAX_RELATION_CHARS): string {
   const value = String(testo || '')
   if (value.length <= maxChars) return value
   return `${value.slice(0, maxChars)}\n\n[...CONTENUTO TRONCATO AUTOMATICAMENTE PER LIMITI PAYLOAD...]`
 }
 
-function costruisciCorpus(relazioni: any[], labelPrefix = 'RELAZIONE') {
+function costruisciCorpus(relazioni: Relazione[], labelPrefix = 'RELAZIONE'): CorpusPlan {
   let used = 0
-  const chunks = []
-  const indiciUsati = []
+  const chunks: string[] = []
+  const indiciUsati: number[] = []
 
   for (let i = 0; i < relazioni.length; i++) {
     const r = relazioni[i]
@@ -114,7 +205,7 @@ function costruisciCorpus(relazioni: any[], labelPrefix = 'RELAZIONE') {
   }
 }
 
-async function callGemini(systemPrompt: string, userPrompt: string, options: any = {}) {
+async function callGemini(systemPrompt: string, userPrompt: string, options: GeminiCallOptions = {}): Promise<string> {
   const {
     maxOutputTokens = 4096,
     temperature = 0.7,
@@ -130,7 +221,7 @@ async function callGemini(systemPrompt: string, userPrompt: string, options: any
       thinkingConfig: { thinkingBudget },
     },
   }
-  let lastErr = null
+  let lastErr: Error | null = null
 
   for (let modelIndex = 0; modelIndex < MODEL_CANDIDATES.length; modelIndex++) {
     const modelName = MODEL_CANDIDATES[modelIndex]
@@ -144,10 +235,10 @@ async function callGemini(systemPrompt: string, userPrompt: string, options: any
         body: JSON.stringify(body),
       })
 
-      let data = null
+      let data: GeminiResponse | null = null
       let raw = ''
       try {
-        data = await res.json()
+        data = await res.json() as GeminiResponse
       } catch {
         try { raw = await res.text() } catch { raw = '' }
       }
@@ -180,7 +271,7 @@ async function callGemini(systemPrompt: string, userPrompt: string, options: any
 
       if ((res.status === 429 || res.status >= 500) && attempt < maxAttempts) {
         const waitMs = 4000 * Math.pow(2, attempt - 1)
-        await new Promise(r => setTimeout(r, waitMs))
+        await new Promise<void>(resolve => setTimeout(resolve, waitMs))
         continue
       }
 
@@ -191,9 +282,9 @@ async function callGemini(systemPrompt: string, userPrompt: string, options: any
   throw lastErr || new Error('Gemini API error: richiesta non completata')
 }
 
-async function anonimizzaRelazioniPerAnalisi(relazioni) {
-  return Promise.all((relazioni || []).map(async (r) => {
-    let paziente = null
+async function anonimizzaRelazioniPerAnalisi(relazioni: Relazione[]): Promise<Relazione[]> {
+  return Promise.all((relazioni || []).map(async (r: Relazione) => {
+    let paziente: Paziente | null = null
     if (r?.paziente_id) {
       try {
         paziente = await getPazienteById(r.paziente_id)
@@ -209,15 +300,15 @@ async function anonimizzaRelazioniPerAnalisi(relazioni) {
   }))
 }
 
-export async function preparaAnteprimaAnonimizzazione(relazioni) {
+export async function preparaAnteprimaAnonimizzazione(relazioni: Relazione[]): Promise<Relazione[]> {
   return anonimizzaRelazioniPerAnalisi(relazioni)
 }
 
-export async function pianificaInvioRelazioni(relazioni, labelPrefix = 'RELAZIONE') {
+export async function pianificaInvioRelazioni(relazioni: Relazione[], labelPrefix = 'RELAZIONE') {
   const relazioniAnonimizzate = await anonimizzaRelazioniPerAnalisi(relazioni)
   const piano = costruisciCorpus(relazioniAnonimizzate, labelPrefix)
-  const relazioniDaInviare = piano.indiciUsati.map(i => relazioni[i]).filter(Boolean)
-  const anteprimaDaInviare = piano.indiciUsati.map(i => relazioniAnonimizzate[i]).filter(Boolean)
+  const relazioniDaInviare = piano.indiciUsati.map((i: number) => relazioni[i]).filter(Boolean)
+  const anteprimaDaInviare = piano.indiciUsati.map((i: number) => relazioniAnonimizzate[i]).filter(Boolean)
 
   return {
     relazioniAnonimizzate,
@@ -231,12 +322,12 @@ export async function pianificaInvioRelazioni(relazioni, labelPrefix = 'RELAZION
 }
 
 // ── ANALISI STILE ──────────────────────────────────────────
-export async function analizzaStile(relazioni) {
+export async function analizzaStile(relazioni: Relazione[]): Promise<AiResult> {
   const relazioniAnonimizzate = await anonimizzaRelazioniPerAnalisi(relazioni)
   const { corpus, usate, totali, charsCorpus } = costruisciCorpus(relazioniAnonimizzate, 'RELAZIONE')
 
   if (USE_MOCK_AI) {
-    await new Promise(r => setTimeout(r, 1800))
+    await new Promise<void>(resolve => setTimeout(resolve, 1800))
     const testo = `# PROFILO DI STILE — Valutazioni neuropsicologiche
 Ultimo aggiornamento: ${new Date().toISOString().slice(0,10)} | Relazioni analizzate: ${relazioniAnonimizzate.length} | Versione: 1
 
@@ -329,9 +420,9 @@ Rispondi SOLO con il documento Markdown, senza introduzioni.`,
 // prima di costruire qualunque prompt o chiamata a Gemini. Quei dati
 // vengono ricomposti nel documento finale solo lato client, in
 // RisultatoGenerazione.tsx + exportDocx.ts, mai visti dall'AI.
-export async function generaRelazione(profiloStile, wizardCompleto, esempi = []) {
+export async function generaRelazione(profiloStile: string, wizardCompleto: WizardPayload, esempi: Relazione[] = []): Promise<string> {
   // Payload "pulito" — SENZA anagrafica reale
-  const { anagrafica, ...wizard } = wizardCompleto
+  const { anagrafica: _anagrafica, ...wizard } = wizardCompleto
 
   // Precalcola testo/tabelle dalle strutture dati del wizard
   const anamnesiRemotaTxt   = wizard.anamnesi ? anamnesiRemotaToTesto(wizard.anamnesi) : ''
@@ -347,7 +438,7 @@ export async function generaRelazione(profiloStile, wizardCompleto, esempi = [])
   const nepsyNarrativa      = wizard.nepsy ? nepsyToNarrativa(wizard.nepsy.punteggi || {}) : ''
 
   if (USE_MOCK_AI) {
-    await new Promise(r => setTimeout(r, 2200))
+    await new Promise<void>(resolve => setTimeout(resolve, 2200))
     const sez = wizard.sezioni_attive || []
     let out = `# Relazione di Valutazione Neuropsicologica
 
@@ -419,7 +510,7 @@ Si rilascia alla famiglia per gli usi consentiti dalla Legge 170/2010.
   }
 
   const esempiFewShot = esempi.length > 0
-    ? esempi.map((e, i) => `--- ESEMPIO ${i+1} ---\n${e.testo_markdown}`).join('\n\n')
+    ? esempi.map((e: Relazione, i: number) => `--- ESEMPIO ${i+1} ---\n${e.testo_markdown}`).join('\n\n')
     : ''
 
   // Payload testuale pronto — tabelle e narrativa già precalcolate,
@@ -472,9 +563,9 @@ ${esempiFewShot ? `=== ESEMPI DI RIFERIMENTO ===\n${esempiFewShot}` : ''}`,
 }
 
 // ── RIGENERA SEZIONE ───────────────────────────────────────
-export async function rigeneraSezione(profiloStile, sezione, testo, istruzione) {
+export async function rigeneraSezione(profiloStile: string, sezione: string, testo: string, istruzione: string): Promise<string> {
   if (USE_MOCK_AI) {
-    await new Promise(r => setTimeout(r, 1200))
+    await new Promise<void>(resolve => setTimeout(resolve, 1200))
     return testo + '\n\n*[Sezione rigenerata con istruzione: ' + istruzione + ']*'
   }
 
@@ -498,12 +589,12 @@ Istruzione aggiuntiva: ${istruzione}`
 // Invece di rianalizzare tutto il corpus, integra il profilo
 // esistente con le sole relazioni nuove (aggiunte dopo l'ultimo
 // aggiornamento). Molto più efficiente con Gemini gratuito.
-export async function aggiornaProfiloIncrementale(profiloEsistente, nuoveRelazioni) {
+export async function aggiornaProfiloIncrementale(profiloEsistente: string, nuoveRelazioni: Relazione[]): Promise<AiResult> {
   const relazioniAnonimizzate = await anonimizzaRelazioniPerAnalisi(nuoveRelazioni)
   const { corpus, usate, totali, charsCorpus } = costruisciCorpus(relazioniAnonimizzate, 'NUOVA RELAZIONE')
 
   if (USE_MOCK_AI) {
-    await new Promise(r => setTimeout(r, 1400))
+    await new Promise<void>(resolve => setTimeout(resolve, 1400))
     // In mock: aggiunge solo una riga di nota in fondo al profilo
     const dataNow = new Date().toISOString().slice(0, 10)
     const testo = profiloEsistente

@@ -1,12 +1,12 @@
 import { useReducer, useEffect, useCallback } from 'react'
 import { Navigate, useLocation, useNavigate } from 'react-router-dom'
 import { FileDown, RotateCcw, Save, FlaskConical, RefreshCw, ShieldCheck } from 'lucide-react'
-import {
-  getProfiloStile, getRelazioniSimilari, insertRelazione, updateRelazione,
-  upsertPazienteAnagrafica, getProfiloProfessionista, USE_MOCK,
-} from './dataService'
-import { generaRelazione, USE_MOCK_AI } from './geminiService'
-import { esportaDocx, scaricaDocx } from './exportDocx'
+import { getProfiloStile, getProfiloProfessionista } from '../../data/profiloData'
+import { getRelazioniSimilari, insertRelazione, updateRelazione } from '../../data/relazioniData'
+import { upsertPazienteAnagrafica } from '../../data/pazientiData'
+import { USE_MOCK } from '../../core/config'
+import { generaRelazione, USE_MOCK_AI } from '../../services/geminiService'
+import { esportaDocx, scaricaDocx } from '../../services/exportDocx'
 
 function reducer(state, action) {
   switch (action.type) {
