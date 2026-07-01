@@ -16,6 +16,36 @@ import {
   PageNumber, NumberFormat, UnderlineType,
 } from 'docx'
 import type { AnagraficaPaziente, ProfiloProfessionista } from '../core/types'
+import { fasciaWISC, fasciaScalare, WISC_IV_CAMPI, NEPSY_II_DOMINI } from '../components/constants/testDefinitions'
+import { notaRangeWisc, notaRangeNepsy } from './wizardToText'
+
+// ── Tipi per input strutturato ──────────────────────────────
+type ScoreMap = Record<string, string | number | boolean | null | undefined>
+
+type CognitivoBlock = {
+  punteggi?: ScoreMap
+  includi_nota_range?: boolean
+  riferimenti_subtest?: string
+  eta_valutazione?: string
+  strumenti_utilizzati?: string
+  note_cliniche?: string
+}
+
+type NepsyBlock = {
+  punteggi?: ScoreMap
+  includi_nota_range?: boolean
+  note_cliniche?: string
+}
+
+type ExportDocxInput = {
+  testo: string
+  data?: string
+  nomeStudio?: string
+  anagrafica?: AnagraficaPaziente | null
+  professionista?: ProfiloProfessionista | null
+  cognitivo?: CognitivoBlock
+  nepsy?: NepsyBlock
+}
 
 // ── Costanti layout ────────────────────────────────────────
 const FONT        = 'Times New Roman'
@@ -41,18 +71,6 @@ type ParagraphOptions = {
 type InlineRun = {
   text: string
   bold: boolean
-}
-
-type MarkdownBlock =
-  | { type: 'text'; content: string }
-  | { type: 'table'; content: string }
-
-type ExportDocxInput = {
-  testo: string
-  data?: string
-  nomeStudio?: string
-  anagrafica?: AnagraficaPaziente | null
-  professionista?: ProfiloProfessionista | null
 }
 
 function para(text: string, opts: ParagraphOptions = {}): Paragraph {
@@ -98,6 +116,21 @@ function deAnonimizzaTesto(md: string, anagrafica?: AnagraficaPaziente | null): 
   if (birthDate) out = out.replace(/\[DATA\]/g, birthDate)
   if (scuolaClasse) out = out.replace(/\[SCUOLA\]/g, scuolaClasse)
   return out
+}
+
+// Parser inline per **grassetto**
+function parseInline(text: string): InlineRun[] {
+  const parts: InlineRun[] = []
+  const re    = /\*\*(.+?)\*\*/g
+  let last    = 0
+  let m: RegExpExecArray | null
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last) parts.push({ text: text.slice(last, m.index), bold: false })
+    parts.push({ text: m[1], bold: true })
+    last = m.index + m[0].length
+  }
+  if (last < text.length) parts.push({ text: text.slice(last), bold: false })
+  return parts.length ? parts : [{ text, bold: false }]
 }
 
 // ── Parser Markdown minimale → array di Paragraph ─────────
@@ -153,131 +186,6 @@ function markdownToParagraphs(md: string): Paragraph[] {
   }
 
   return result
-}
-
-// Parser inline per **grassetto**
-function parseInline(text: string): InlineRun[] {
-  const parts: InlineRun[] = []
-  const re    = /\*\*(.+?)\*\*/g
-  let last    = 0
-  let m: RegExpExecArray | null
-  while ((m = re.exec(text)) !== null) {
-    if (m.index > last) parts.push({ text: text.slice(last, m.index), bold: false })
-    parts.push({ text: m[1], bold: true })
-    last = m.index + m[0].length
-  }
-  if (last < text.length) parts.push({ text: text.slice(last), bold: false })
-  return parts.length ? parts : [{ text, bold: false }]
-}
-
-// ── Tabella WISC da testo strutturato ─────────────────────
-// Se il Markdown contiene una sezione "| Scala | Indici/QI |..."
-// la converte in una vera Table Word con intestazione in grassetto.
-// Altrimenti il testo viene riportato in monospace come fallback.
-function parseMarkdownTable(text: string): Table | null {
-  const lines = text
-    .split('\n')
-    .map((line: string) => line.trim())
-    .filter((line: string) => /^\|.*\|$/.test(line))
-  if (lines.length < 2) return null
-
-  const rows = lines
-    .filter((line: string) => !line.match(/^\|[-\s|]+\|$/)) // rimuovi righe separatore
-    .map((line: string) => line.split('|').slice(1, -1).map((cell: string) => cell.trim()))
-
-  if (!rows.length) return null
-
-  const colCount = rows[0].length
-  const colW     = Math.floor(CONTENT_W / colCount)
-  const colWidths = Array(colCount).fill(colW)
-
-  const border = { style: BorderStyle.SINGLE, size: 4, color: '999999' }
-  const borders = { top: border, bottom: border, left: border, right: border }
-
-  const tableRows = rows.map((row, ri) =>
-    new TableRow({
-      children: row.map(cell =>
-        new TableCell({
-          borders,
-          width:   { size: colW, type: WidthType.DXA },
-          margins: { top: 80, bottom: 80, left: 120, right: 120 },
-          shading: ri === 0 ? { fill: 'E8E8E8', type: ShadingType.CLEAR } : undefined,
-          children: [
-            new Paragraph({
-              alignment: AlignmentType.CENTER,
-              children: [new TextRun({ text: cell, font: FONT, size: SIZE_BODY, bold: ri === 0 })],
-            }),
-          ],
-        })
-      ),
-    })
-  )
-
-  return new Table({
-    width:        { size: CONTENT_W, type: WidthType.DXA },
-    columnWidths: colWidths,
-    rows:         tableRows,
-  })
-}
-
-function isTableLine(line: string): boolean {
-  const l = String(line || '').trim()
-  return /^\|.*\|$/.test(l)
-}
-
-function isTableSeparatorLine(line: string): boolean {
-  const l = String(line || '').trim()
-  return /^\|[-:\s|]+\|$/.test(l)
-}
-
-function splitMarkdownBlocks(md: string): MarkdownBlock[] {
-  const lines = String(md || '').split('\n')
-  const blocks: MarkdownBlock[] = []
-  let textBuffer: string[] = []
-  let tableBuffer: string[] = []
-
-  const flushText = () => {
-    if (textBuffer.length === 0) return
-    blocks.push({ type: 'text', content: textBuffer.join('\n') })
-    textBuffer = []
-  }
-
-  const flushTable = () => {
-    if (tableBuffer.length === 0) return
-    blocks.push({ type: 'table', content: tableBuffer.join('\n') })
-    tableBuffer = []
-  }
-
-  for (const line of lines) {
-    if (isTableLine(line)) {
-      flushText()
-      tableBuffer.push(line.trim())
-      continue
-    }
-
-    // riga vuota immediatamente dopo una tabella: chiude il blocco tabella
-    if (tableBuffer.length > 0 && line.trim() === '') {
-      flushTable()
-      textBuffer.push('')
-      continue
-    }
-
-    // separatore markdown tabella fuori contesto: trattalo come testo
-    if (isTableSeparatorLine(line) && tableBuffer.length === 0) {
-      textBuffer.push(line)
-      continue
-    }
-
-    if (tableBuffer.length > 0) {
-      flushTable()
-    }
-    textBuffer.push(line)
-  }
-
-  flushTable()
-  flushText()
-
-  return blocks
 }
 
 // ── Intestazione fissa dello studio ───────────────────────
@@ -403,29 +311,288 @@ function anagraficaParagraph(anagrafica?: AnagraficaPaziente | null): Paragraph 
   })
 }
 
-export async function esportaDocx({ testo, data, nomeStudio, anagrafica, professionista }: ExportDocxInput): Promise<Blob> {
+function makeWiscTable(punteggi: ScoreMap): Table {
+  const righeValide = WISC_IV_CAMPI.filter(c => punteggi[c.key])
+  const colW = Math.floor(CONTENT_W / 4)
+  const colWidths = [colW * 2, colW, colW, colW]
+  const border = { style: BorderStyle.SINGLE, size: 4, color: '999999' }
+  const borders = { top: border, bottom: border, left: border, right: border }
+
+  const rows = [
+    new TableRow({
+      children: ['Scala', 'Indici/QI', 'Categoria descrittiva', 'Interpretabilità'].map(text =>
+        new TableCell({
+          borders,
+          width: { size: colW, type: WidthType.DXA },
+          margins: { top: 80, bottom: 80, left: 120, right: 120 },
+          shading: { fill: 'E8E8E8', type: ShadingType.CLEAR },
+          children: [new Paragraph({
+            alignment: AlignmentType.CENTER,
+            children: [new TextRun({ text, font: FONT, size: SIZE_BODY, bold: true })],
+          })],
+        })
+      ),
+    }),
+    ...righeValide.map(c =>
+      new TableRow({
+        children: [
+          new TableCell({
+            borders, width: { size: colWidths[0], type: WidthType.DXA },
+            margins: { top: 80, bottom: 80, left: 120, right: 120 },
+            children: [new Paragraph({ children: [new TextRun({ text: c.label, font: FONT, size: SIZE_BODY })] })],
+          }),
+          new TableCell({
+            borders, width: { size: colWidths[1], type: WidthType.DXA },
+            margins: { top: 80, bottom: 80, left: 120, right: 120 },
+            children: [new Paragraph({
+              alignment: AlignmentType.CENTER,
+              children: [new TextRun({ text: String(punteggi[c.key] || ''), font: FONT, size: SIZE_BODY })],
+            })],
+          }),
+          new TableCell({
+            borders, width: { size: colWidths[2], type: WidthType.DXA },
+            margins: { top: 80, bottom: 80, left: 120, right: 120 },
+            children: [new Paragraph({
+              alignment: AlignmentType.CENTER,
+              children: [new TextRun({ text: fasciaWISC(punteggi[c.key]), font: FONT, size: SIZE_BODY })],
+            })],
+          }),
+          new TableCell({
+            borders, width: { size: colWidths[3], type: WidthType.DXA },
+            margins: { top: 80, bottom: 80, left: 120, right: 120 },
+            children: [new Paragraph({
+              alignment: AlignmentType.CENTER,
+              children: [new TextRun({ text: 'Si', font: FONT, size: SIZE_BODY })],
+            })],
+          }),
+        ],
+      })
+    ),
+  ]
+
+  return new Table({
+    width: { size: CONTENT_W, type: WidthType.DXA },
+    columnWidths: colWidths,
+    rows,
+  })
+}
+
+function makeNepsyTable(punteggi: ScoreMap): Table {
+  const domWithData = NEPSY_II_DOMINI
+    .map(d => ({ ...d, subtest: d.subtest.filter(s => punteggi[s.key]) }))
+    .filter(d => d.subtest.length > 0)
+
+  if (domWithData.length === 0) {
+    return new Table({
+      width: { size: CONTENT_W, type: WidthType.DXA },
+      rows: [],
+    })
+  }
+
+  const colW = Math.floor(CONTENT_W / 3)
+  const colWidths = [colW * 2, colW, colW]
+  const border = { style: BorderStyle.SINGLE, size: 4, color: '999999' }
+  const borders = { top: border, bottom: border, left: border, right: border }
+
+  const rows = [
+    new TableRow({
+      children: ['Sottotest', 'Punteggio scalare', 'Fascia'].map(text =>
+        new TableCell({
+          borders,
+          width: { size: colW, type: WidthType.DXA },
+          margins: { top: 80, bottom: 80, left: 120, right: 120 },
+          shading: { fill: 'E8E8E8', type: ShadingType.CLEAR },
+          children: [new Paragraph({
+            alignment: AlignmentType.CENTER,
+            children: [new TextRun({ text, font: FONT, size: SIZE_BODY, bold: true })],
+          })],
+        })
+      ),
+    }),
+    ...domWithData.flatMap(dom =>
+      dom.subtest.map(st =>
+        new TableRow({
+          children: [
+            new TableCell({
+              borders, width: { size: colWidths[0], type: WidthType.DXA },
+              margins: { top: 80, bottom: 80, left: 120, right: 120 },
+              children: [new Paragraph({ children: [new TextRun({ text: `${st.label} (${dom.dominio})`, font: FONT, size: SIZE_BODY })] })],
+            }),
+            new TableCell({
+              borders, width: { size: colWidths[1], type: WidthType.DXA },
+              margins: { top: 80, bottom: 80, left: 120, right: 120 },
+              children: [new Paragraph({
+                alignment: AlignmentType.CENTER,
+                children: [new TextRun({ text: String(punteggi[st.key] || ''), font: FONT, size: SIZE_BODY })],
+              })],
+            }),
+            new TableCell({
+              borders, width: { size: colWidths[2], type: WidthType.DXA },
+              margins: { top: 80, bottom: 80, left: 120, right: 120 },
+              children: [new Paragraph({
+                alignment: AlignmentType.CENTER,
+                children: [new TextRun({ text: fasciaScalare(punteggi[st.key]), font: FONT, size: SIZE_BODY })],
+              })],
+            }),
+          ],
+        })
+      )
+    ),
+  ]
+
+  return new Table({
+    width: { size: CONTENT_W, type: WidthType.DXA },
+    columnWidths: colWidths,
+    rows,
+  })
+}
+
+export async function esportaDocx({ testo, data, nomeStudio, anagrafica, professionista, cognitivo, nepsy }: ExportDocxInput): Promise<Blob> {
   const oggi = data || new Date().toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit', year: 'numeric' })
   const testoPulito = deAnonimizzaTesto(testo, anagrafica)
 
-  // Separa in blocchi testuali/tabellari senza duplicare righe tabella.
   const blocchi: Array<Paragraph | Table> = []
+  const lines = testoPulito.split('\n')
+  let i = 0
+  let inCognitivo = false
+  let inNepsy = false
+  let cognitivoNarrativaLines: string[] = []
+  let nepsyNarrativaLines: string[] = []
 
-  for (const block of splitMarkdownBlocks(testoPulito)) {
-    if (block.type === 'text') {
-      blocchi.push(...markdownToParagraphs(block.content))
+  const flushCognitivo = () => {
+    if (inCognitivo) {
+      const narrativa = cognitivoNarrativaLines.join('\n').trim()
+      if (cognitivo?.punteggi && Object.keys(cognitivo.punteggi).length > 0) {
+        blocchi.push(makeWiscTable(cognitivo.punteggi))
+        blocchi.push(emptyLine(120))
+        if (cognitivo.includi_nota_range) {
+          blocchi.push(new Paragraph({
+            spacing: { after: 120 },
+            children: [new TextRun({ text: notaRangeWisc(), font: FONT, size: SIZE_SMALL, italics: true })],
+          }))
+        }
+      }
+      if (narrativa) {
+        blocchi.push(...markdownToParagraphs(narrativa))
+      }
+      cognitivoNarrativaLines = []
+      inCognitivo = false
+    }
+  }
+
+  const flushNepsy = () => {
+    if (inNepsy) {
+      const narrativa = nepsyNarrativaLines.join('\n').trim()
+      if (nepsy?.punteggi && Object.keys(nepsy.punteggi).length > 0) {
+        blocchi.push(makeNepsyTable(nepsy.punteggi))
+        blocchi.push(emptyLine(120))
+        if (nepsy.includi_nota_range) {
+          blocchi.push(new Paragraph({
+            spacing: { after: 120 },
+            children: [new TextRun({ text: notaRangeNepsy(), font: FONT, size: SIZE_SMALL, italics: true })],
+          }))
+        }
+      }
+      if (narrativa) {
+        blocchi.push(...markdownToParagraphs(narrativa))
+      }
+      nepsyNarrativaLines = []
+      inNepsy = false
+    }
+  }
+
+  while (i < lines.length) {
+    const line = lines[i]
+
+    if (line.startsWith('# Relazione')) {
+      i++
       continue
     }
 
-    const table = parseMarkdownTable(block.content)
-    if (table) {
-      blocchi.push(table)
-      blocchi.push(emptyLine(120))
-    } else {
-      // fallback: se il parser tabella non riconosce la struttura,
-      // mantieni comunque il contenuto come testo per non perdere informazioni.
-      blocchi.push(...markdownToParagraphs(block.content))
+    if (line.startsWith('## Dati e motivo')) {
+      i++
+      while (i < lines.length && !lines[i].startsWith('## ')) i++
+      continue
     }
+
+    if (line.startsWith('## Valutazione cognitiva')) {
+      flushNepsy()
+      inCognitivo = true
+      i++
+      while (i < lines.length && lines[i].match(/^\s*(\*WISC|===)/)) i++
+      if (i < lines.length && lines[i].trim() && !lines[i].startsWith('#')) {
+        cognitivoNarrativaLines.push(lines[i])
+        i++
+      }
+      continue
+    }
+
+    if (line.startsWith('## Approfondimento neuropsicologico')) {
+      flushCognitivo()
+      inNepsy = true
+      i++
+      while (i < lines.length && lines[i].match(/^\s*(\*Nepsy|===)/)) i++
+      if (i < lines.length && lines[i].trim() && !lines[i].startsWith('#')) {
+        nepsyNarrativaLines.push(lines[i])
+        i++
+      }
+      continue
+    }
+
+    if (inCognitivo) {
+      if (line.startsWith('## ')) {
+        flushCognitivo()
+        continue
+      }
+      if (line.trim()) cognitivoNarrativaLines.push(line)
+      i++
+      continue
+    }
+
+    if (inNepsy) {
+      if (line.startsWith('## ')) {
+        flushNepsy()
+        continue
+      }
+      if (line.trim()) nepsyNarrativaLines.push(line)
+      i++
+      continue
+    }
+
+    if (line.startsWith('## ')) {
+      const title = line.slice(3).trim()
+      blocchi.push(para(title, { bold: true, underline: true, center: true, size: SIZE_HEADER, spaceBefore: 200, spaceAfter: 140 }))
+      i++
+      continue
+    }
+
+    if (line.trim() === '') {
+      blocchi.push(emptyLine(120))
+      i++
+      continue
+    }
+
+    if (line.startsWith('|') || line.match(/^\s{4,}/)) {
+      blocchi.push(new Paragraph({
+        spacing: { after: 40 },
+        children: [new TextRun({ text: line.trimEnd(), font: 'Courier New', size: SIZE_SMALL })],
+      }))
+      i++
+      continue
+    }
+
+    const runs = parseInline(line.trim())
+    blocchi.push(new Paragraph({
+      alignment: AlignmentType.JUSTIFIED,
+      indent: { firstLine: 720 },
+      spacing: { after: 120 },
+      children: runs.map(r => new TextRun({ text: r.text, font: FONT, size: SIZE_BODY, bold: r.bold })),
+    }))
+    i++
   }
+
+  flushCognitivo()
+  flushNepsy()
 
   const paraAnagrafica = anagraficaParagraph(anagrafica)
 
@@ -447,7 +614,6 @@ export async function esportaDocx({ testo, data, nomeStudio, anagrafica, profess
       headers: { default: makeHeader(nomeStudio, professionista) },
       footers: { default: makeFooter() },
       children: [
-        // Data e titolo
         new Paragraph({
           spacing: { before: 280, after: 80 },
           children: [new TextRun({ text: oggi, font: FONT, size: SIZE_BODY })],
@@ -457,9 +623,7 @@ export async function esportaDocx({ testo, data, nomeStudio, anagrafica, profess
           spacing: { after: 280 },
           children: [new TextRun({ text: 'RELAZIONE', font: FONT, size: SIZE_BODY, bold: true, underline: { type: UnderlineType.SINGLE } })],
         }),
-        // Anagrafica reale — inserita qui, mai vista da Gemini
         ...(paraAnagrafica ? [paraAnagrafica] : []),
-        // Corpo generato
         ...blocchi,
         ...firmaProfessionistaParagraphs(professionista),
       ],

@@ -106,6 +106,30 @@ function wizardReducer(state, action) {
 const sh    = { fontFamily: 'var(--font-serif)', fontSize: 17, fontWeight: 600, marginBottom: 6, color: 'var(--accent-dk)' }
 const shSub = { fontSize: 12.5, color: 'var(--text-muted)', marginBottom: 20, lineHeight: 1.5 }
 
+function isFilled(value: unknown) {
+  return String(value || '').trim().length > 0
+}
+
+function hasAtLeastOneFilled(values: unknown[]) {
+  return values.some(v => isFilled(v))
+}
+
+function hasAnyNumericValue(obj: Record<string, unknown> | undefined) {
+  if (!obj) return false
+  return Object.values(obj).some(v => isFilled(v))
+}
+
+function hasAllRequiredVoiceDetails(
+  selectedVoiceIds: string[],
+  details: Record<string, unknown>,
+  allVoices: Array<{ id: string; richiedeDettaglio?: boolean }>,
+) {
+  const requiredDetailIds = allVoices
+    .filter(v => v.richiedeDettaglio && selectedVoiceIds.includes(v.id))
+    .map(v => v.id)
+  return requiredDetailIds.every(id => isFilled(details?.[id]))
+}
+
 // ── Checkbox riutilizzabile con dettaglio opzionale ────────
 function VoceCheckbox({ voce, checked, onToggle, dettaglio, onDettaglio }: any) {
   return (
@@ -784,14 +808,125 @@ export default function WizardNuovaRelazione() {
 
   function setField(k, v) { dispatch({ type: 'SET', section: current.section, k, v }) }
 
-  function canProceed() {
-    if (current.id === 'sezioni' && data.sezioni_attive.length === 0) return false
-    if (current.id === 'cognitivo' && checklistKO.some(i => i.id === 'subtest' || i.id === 'eta_valutazione' || i.id === 'strumenti_cognitivo' || i.id === 'nota_range_wisc')) {
-      return false
+  function getStepValidation() {
+    const reasons: string[] = []
+
+    if (current.id === 'sezioni' && data.sezioni_attive.length === 0) {
+      reasons.push('Seleziona almeno una sezione da includere.')
     }
-    if (current.id === 'nepsy' && checklistKO.some(i => i.id === 'strumenti_nepsy')) return false
-    if (current.id === 'finale' && checklistKO.length > 0) return false
-    return true
+
+    if (current.id === 'anagrafica') {
+      if (!isFilled(data.anagrafica?.nome)) reasons.push('Inserisci il nome.')
+      if (!isFilled(data.anagrafica?.cognome)) reasons.push('Inserisci il cognome.')
+      if (!isFilled(data.anagrafica?.data_nascita)) reasons.push('Inserisci la data di nascita.')
+    }
+
+    if (current.id === 'contesto') {
+      if (!isFilled(data.motivo_invio)) reasons.push('Compila il motivo dell\'invio.')
+      if (!isFilled(data.tipo_invio)) reasons.push('Seleziona chi invia.')
+    }
+
+    if (current.id === 'anamnesi') {
+      const hasContent = hasAtLeastOneFilled([
+        ...(data.anamnesi?.remota_voci || []),
+        ...(data.anamnesi?.recente_voci || []),
+        data.anamnesi?.remota_extra,
+        data.anamnesi?.recente_extra,
+      ])
+
+      const detailsOk = hasAllRequiredVoiceDetails(
+        data.anamnesi?.remota_voci || [],
+        data.anamnesi?.remota_dettagli || {},
+        ANAMNESI_REMOTA_VOCI,
+      ) && hasAllRequiredVoiceDetails(
+        data.anamnesi?.recente_voci || [],
+        data.anamnesi?.recente_dettagli || {},
+        ANAMNESI_RECENTE_VOCI,
+      )
+
+      if (!hasContent) reasons.push('Inserisci almeno una informazione anamnestica (voce o testo libero).')
+      if (!detailsOk) reasons.push('Completa i dettagli richiesti per le voci selezionate.')
+    }
+
+    if (current.id === 'osservazione') {
+      const hasContent = hasAtLeastOneFilled([
+        ...(data.osservazione?.adattamento_voci || []),
+        ...(data.osservazione?.atteggiamento_voci || []),
+        data.osservazione?.note,
+      ])
+      if (!hasContent) reasons.push('Inserisci almeno una osservazione (voce o nota libera).')
+    }
+
+    if (current.id === 'cognitivo') {
+      const hasWiscScore = hasAtLeastOneFilled([
+        data.cognitivo?.punteggi?.icv,
+        data.cognitivo?.punteggi?.rp,
+        data.cognitivo?.punteggi?.iml,
+        data.cognitivo?.punteggi?.ve,
+        data.cognitivo?.punteggi?.qit,
+      ])
+      if (!hasWiscScore) reasons.push('Inserisci almeno un punteggio WISC-IV (consigliato: QIT e indici principali).')
+
+      if (checklistKO.some(i => i.id === 'subtest' || i.id === 'eta_valutazione' || i.id === 'strumenti_cognitivo' || i.id === 'nota_range_wisc')) {
+        reasons.push('Completa i requisiti obbligatori del Profilo di Stile per lo step Cognitivo.')
+      }
+    }
+
+    if (current.id === 'nepsy') {
+      if (!hasAnyNumericValue(data.nepsy?.punteggi)) {
+        reasons.push('Inserisci almeno un punteggio NEPSY-II.')
+      }
+      if (checklistKO.some(i => i.id === 'strumenti_nepsy')) {
+        reasons.push('Completa i requisiti obbligatori del Profilo di Stile per lo step NEPSY.')
+      }
+    }
+
+    if (current.id === 'apprendimenti') {
+      const hasContent = hasAtLeastOneFilled([
+        data.apprendimenti?.strumenti,
+        data.apprendimenti?.punteggi_grezzi,
+        data.apprendimenti?.lettura,
+        data.apprendimenti?.scrittura,
+        data.apprendimenti?.matematica,
+      ])
+      if (!hasContent) reasons.push('Inserisci almeno un contenuto nella sezione Apprendimenti.')
+    }
+
+    if (current.id === 'questionari') {
+      const hasContent = hasAtLeastOneFilled([
+        data.questionari?.tipo,
+        data.questionari?.punteggi_grezzi,
+        data.questionari?.note_cliniche,
+      ])
+      if (!hasContent) reasons.push('Inserisci almeno un contenuto nella sezione Questionari.')
+    }
+
+    if (current.id === 'conclusioni') {
+      const hasContent = hasAtLeastOneFilled([
+        data.conclusioni?.diagnosi,
+        data.conclusioni?.consigli_paziente,
+        data.conclusioni?.consigli_scuola,
+        data.conclusioni?.strumenti_compensativi,
+        data.conclusioni?.misure_dispensative,
+      ])
+      if (!hasContent) reasons.push('Inserisci almeno una conclusione clinica (diagnosi o consigli).')
+    }
+
+    if (current.id === 'finale' && checklistKO.length > 0) {
+      reasons.push('Completa la checklist di aderenza al Profilo di Stile prima della generazione.')
+    }
+
+    return {
+      ok: reasons.length === 0,
+      reasons,
+      firstReason: reasons[0] || null,
+    }
+  }
+
+  const stepValidation = getStepValidation()
+
+  function canProceed() {
+    return stepValidation.ok
   }
 
   return (
@@ -878,27 +1013,34 @@ export default function WizardNuovaRelazione() {
           <button className="btn btn-secondary" onClick={() => dispatchStep({ type: 'PREV' })} disabled={safeStep === 0}>
             <ChevronLeft size={15} /> Indietro
           </button>
-          {safeStep < STEPS.length - 1 ? (
-            <button className="btn btn-primary" onClick={() => dispatchStep({ type: 'NEXT' })} disabled={!canProceed()}>
-              Avanti <ChevronRight size={15} />
-            </button>
-          ) : (
-            <button
-              className="btn btn-primary"
-              onClick={() => navigate('/risultato', {
-                state: {
-                  wizardData: {
-                    ...data,
-                    _sessionId: sessionIdRef.current,
-                    _sourceRoute: `${location.pathname}${location.search || ''}`,
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6 }}>
+            {safeStep < STEPS.length - 1 ? (
+              <button className="btn btn-primary" onClick={() => dispatchStep({ type: 'NEXT' })} disabled={!canProceed()}>
+                Avanti <ChevronRight size={15} />
+              </button>
+            ) : (
+              <button
+                className="btn btn-primary"
+                onClick={() => navigate('/risultato', {
+                  state: {
+                    wizardData: {
+                      ...data,
+                      _sessionId: sessionIdRef.current,
+                      _sourceRoute: `${location.pathname}${location.search || ''}`,
+                    },
                   },
-                },
-              })}
-              disabled={!canProceed()}
-            >
-              <Save size={15} /> Genera relazione
-            </button>
-          )}
+                })}
+                disabled={!canProceed()}
+              >
+                <Save size={15} /> Genera relazione
+              </button>
+            )}
+            {!stepValidation.ok && stepValidation.firstReason && (
+              <span style={{ fontSize: 12, color: 'var(--danger)', maxWidth: 420, textAlign: 'right' }}>
+                {stepValidation.firstReason}
+              </span>
+            )}
+          </div>
         </div>
       </div>
     </>

@@ -127,3 +127,83 @@ export function nepsyToNarrativa(punteggi) {
   if (nomi.length === 0) return ''
   return `Le prestazioni ai sottotest somministrati risultano: ${nomi.join(', ')}.`
 }
+
+export function assemblaDocumentoMarkdown(wizard, narrativaPerSezione = {}) {
+  const sez = wizard.sezioni_attive || []
+  let out = '# Relazione di Valutazione Neuropsicologica\n\n'
+  out += '## Dati e motivo dell\'invio\n'
+  out += `Il/la paziente viene inviato/a da ${wizard.tipo_invio || '[inviante]'} per ${wizard.motivo_invio || 'valutazione neuropsicologica'}.\n`
+
+  if (sez.includes('anamnesi')) {
+    out += '\n## Anamnesi\n'
+    if (wizard.anamnesi) {
+      const remota = anamnesiRemotaToTesto(wizard.anamnesi)
+      const recente = anamnesiRecenteToTesto(wizard.anamnesi)
+      if (remota) out += `Anamnesi remota: ${remota} `
+      if (recente) out += `Situazione attuale: ${recente}`
+      out += '\n'
+    }
+  }
+
+  if (sez.includes('osservazione')) {
+    out += '\n## Osservazione comportamentale\n'
+    const oss = osservazioneToTesto(wizard.osservazione)
+    out += (oss || '') + '\n'
+  }
+
+  if (sez.includes('cognitivo')) {
+    out += '\n## Valutazione cognitiva\n'
+    if (wizard.cognitivo?.eta_valutazione) out += `Età al momento della valutazione: ${wizard.cognitivo.eta_valutazione}.\n`
+    if (wizard.cognitivo?.strumenti_utilizzati) out += `Strumenti utilizzati: ${wizard.cognitivo.strumenti_utilizzati}\n`
+    out += '\n'
+    const wiscTabella = wiscToMarkdownTable(wizard.cognitivo.punteggi || {})
+    if (wiscTabella) out += wiscTabella + '\n'
+    if (wizard.cognitivo?.includi_nota_range) out += notaRangeWisc() + '\n'
+    const narrativaC = narrativaPerSezione['cognitivo'] || ''
+    if (narrativaC) out += narrativaC + '\n'
+    if (wizard.cognitivo?.note_cliniche) out += wizard.cognitivo.note_cliniche + '\n'
+  }
+
+  if (sez.includes('nepsy')) {
+    out += '\n## Approfondimento neuropsicologico\n'
+    if (wizard.nepsy?.strumenti_utilizzati) out += `Strumenti utilizzati: ${wizard.nepsy.strumenti_utilizzati}\n`
+    out += '\n'
+    const nepsyTabella = nepsyToMarkdownTable(wizard.nepsy.punteggi || {})
+    if (nepsyTabella) out += nepsyTabella + '\n'
+    if (wizard.nepsy?.includi_nota_range) out += notaRangeNepsy() + '\n'
+    const narrativaN = narrativaPerSezione['nepsy'] || ''
+    if (narrativaN) out += narrativaN + '\n'
+    if (wizard.nepsy?.note_cliniche) out += wizard.nepsy.note_cliniche + '\n'
+  }
+
+  if (sez.includes('apprendimenti')) {
+    out += '\n## Valutazione apprendimenti\n'
+    if (wizard.apprendimenti?.strumenti) out += `${wizard.apprendimenti.strumenti}\n\n`
+    if (wizard.apprendimenti?.punteggi_grezzi) out += `${wizard.apprendimenti.punteggi_grezzi}\n\n`
+    const parti = [wizard.apprendimenti?.lettura, wizard.apprendimenti?.scrittura, wizard.apprendimenti?.matematica].filter(Boolean)
+    if (parti.length) out += parti.join(' ') + '\n'
+  }
+
+  if (sez.includes('questionari')) {
+    out += '\n## Questionari\n'
+    if (wizard.questionari?.tipo) out += `${wizard.questionari.tipo}\n\n`
+    if (wizard.questionari?.punteggi_grezzi) out += `${wizard.questionari.punteggi_grezzi}\n\n`
+    if (wizard.questionari?.note_cliniche) out += wizard.questionari.note_cliniche + '\n'
+  }
+
+  if (sez.includes('conclusioni')) {
+    out += '\n## Conclusioni\n'
+    if (wizard.conclusioni?.diagnosi) {
+      out += `Alla luce di quanto emerso dalla valutazione, si rileva ${wizard.conclusioni.diagnosi}`
+      if (wizard.conclusioni?.codice_icd) out += ` (${wizard.conclusioni.codice_icd})`
+      out += '.\n\n'
+    }
+    if (wizard.conclusioni?.consigli_paziente) out += `Consigli: ${wizard.conclusioni.consigli_paziente}\n`
+    if (wizard.conclusioni?.consigli_scuola) out += `Indicazioni per la scuola: ${wizard.conclusioni.consigli_scuola}\n`
+    if (wizard.conclusioni?.strumenti_compensativi) out += `Strumenti compensativi: ${wizard.conclusioni.strumenti_compensativi}\n`
+    if (wizard.conclusioni?.misure_dispensative) out += `Misure dispensative: ${wizard.conclusioni.misure_dispensative}\n`
+    out += '\nSi rilascia alla famiglia per gli usi consentiti dalla Legge 170/2010.\n'
+  }
+
+  return out.trim()
+}

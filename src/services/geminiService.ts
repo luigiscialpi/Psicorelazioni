@@ -7,9 +7,8 @@
 // ============================================================
 
 import {
-  anamnesiRemotaToTesto, anamnesiRecenteToTesto, osservazioneToTesto,
   wiscToMarkdownTable, wiscToNarrativa, nepsyToMarkdownTable, nepsyToNarrativa,
-  notaRangeWisc, notaRangeNepsy,
+  notaRangeWisc, notaRangeNepsy, assemblaDocumentoMarkdown,
 } from './wizardToText'
 import { getPazienteById } from '../data/pazientiData'
 import { anonimizzaTesto } from './anonimizza'
@@ -415,151 +414,141 @@ Rispondi SOLO con il documento Markdown, senza introduzioni.`,
 }
 
 // ── GENERAZIONE RELAZIONE ──────────────────────────────────
-// ⚠️ SICUREZZA DATI: `wizard.anagrafica` (nome, cognome, data di
-// nascita, scuola/classe) viene DELIBERATAMENTE rimosso dal payload
-// prima di costruire qualunque prompt o chiamata a Gemini. Quei dati
-// vengono ricomposti nel documento finale solo lato client, in
-// RisultatoGenerazione.tsx + exportDocx.ts, mai visti dall'AI.
-export async function generaRelazione(profiloStile: string, wizardCompleto: WizardPayload, esempi: Relazione[] = []): Promise<string> {
-  // Payload "pulito" — SENZA anagrafica reale
-  const { anagrafica: _anagrafica, ...wizard } = wizardCompleto
+// Strategia: la relazione viene assemblata deterministicamente da
+// wizardToText.assemblaDocumentoMarkdown() invece che fare generare
+// il Markdown completo a Gemini. Gemini riceve solo le sezioni
+// narrative (cognitivo, nepsy, conclusioni...) mentre le tabelle
+// WISC/NEPSY sono precalcolate lato client.
+export async function generaNarrativaSezioni(
+  profiloStile: string,
+  wizard: WizardPayload,
+  esempi: Relazione[] = [],
+  isMock = false
+): Promise<Record<string, string>> {
+  const sez = wizard.sezioni_attive || []
+  const out: Record<string, string> = {}
 
-  // Precalcola testo/tabelle dalle strutture dati del wizard
-  const anamnesiRemotaTxt   = wizard.anamnesi ? anamnesiRemotaToTesto(wizard.anamnesi) : ''
-  const anamnesiRecenteTxt  = wizard.anamnesi ? anamnesiRecenteToTesto(wizard.anamnesi) : ''
-  const osservazioneTxt     = wizard.osservazione ? osservazioneToTesto(wizard.osservazione) : ''
-  const wiscTabella         = wizard.cognitivo ? wiscToMarkdownTable(wizard.cognitivo.punteggi || {}) : ''
-  const wiscNotaRange       = wizard.cognitivo?.includi_nota_range ? notaRangeWisc() : ''
-  const wiscNarrativa       = wizard.cognitivo
-    ? wiscToNarrativa(wizard.cognitivo.punteggi || {}, wizard.cognitivo.riferimenti_subtest || '')
-    : ''
-  const nepsyTabella        = wizard.nepsy ? nepsyToMarkdownTable(wizard.nepsy.punteggi || {}) : ''
-  const nepsyNotaRange      = wizard.nepsy?.includi_nota_range ? notaRangeNepsy() : ''
-  const nepsyNarrativa      = wizard.nepsy ? nepsyToNarrativa(wizard.nepsy.punteggi || {}) : ''
-
-  if (USE_MOCK_AI) {
-    await new Promise<void>(resolve => setTimeout(resolve, 2200))
-    const sez = wizard.sezioni_attive || []
-    let out = `# Relazione di Valutazione Neuropsicologica
-
-## Dati e motivo dell'invio
-Il/la paziente viene inviato/a da ${wizard.tipo_invio || '[inviante]'} per ${wizard.motivo_invio || 'valutazione neuropsicologica'}.
-`
-    if (sez.includes('anamnesi')) out += `
-## Anamnesi
-${anamnesiRemotaTxt ? 'Anamnesi remota: ' + anamnesiRemotaTxt : ''}
-${anamnesiRecenteTxt ? 'Situazione attuale: ' + anamnesiRecenteTxt : ''}
-`
-    if (sez.includes('osservazione')) out += `
-## Osservazione comportamentale
-${osservazioneTxt}
-`
-    if (sez.includes('cognitivo')) out += `
-## Valutazione cognitiva
-
-  ${wizard.cognitivo?.eta_valutazione ? `Età al momento della valutazione: ${wizard.cognitivo.eta_valutazione}.` : ''}
-  ${wizard.cognitivo?.strumenti_utilizzati ? `Strumenti utilizzati: ${wizard.cognitivo.strumenti_utilizzati}` : ''}
-
-${wiscTabella || '[nessun punteggio inserito]'}
-
-  ${wiscNotaRange}
-
-${wiscNarrativa}
-${wizard.cognitivo?.note_cliniche || ''}
-`
-    if (sez.includes('nepsy')) out += `
-## Approfondimento neuropsicologico
-
-  ${wizard.nepsy?.strumenti_utilizzati ? `Strumenti utilizzati: ${wizard.nepsy.strumenti_utilizzati}` : ''}
-
-${nepsyTabella || '[nessun punteggio inserito]'}
-
-  ${nepsyNotaRange}
-
-${nepsyNarrativa}
-${wizard.nepsy?.note_cliniche || ''}
-`
-    if (sez.includes('apprendimenti')) out += `
-## Valutazione apprendimenti
-${wizard.apprendimenti?.strumenti || '—'}
-
-${wizard.apprendimenti?.punteggi_grezzi || '[tabella punteggi]'}
-
-${wizard.apprendimenti?.lettura || ''} ${wizard.apprendimenti?.scrittura || ''} ${wizard.apprendimenti?.matematica || ''}
-`
-    if (sez.includes('questionari')) out += `
-## Questionari
-${wizard.questionari?.tipo || '—'}
-
-${wizard.questionari?.punteggi_grezzi || '[tabella punteggi]'}
-
-${wizard.questionari?.note_cliniche || ''}
-`
-    if (sez.includes('conclusioni')) out += `
-## Conclusioni
-Alla luce di quanto emerso dalla valutazione, si rileva ${wizard.conclusioni?.diagnosi || '[diagnosi]'} ${wizard.conclusioni?.codice_icd ? '(' + wizard.conclusioni.codice_icd + ')' : ''}.
-
-${wizard.conclusioni?.consigli_paziente ? 'Consigli: ' + wizard.conclusioni.consigli_paziente : ''}
-${wizard.conclusioni?.consigli_scuola ? 'Indicazioni per la scuola: ' + wizard.conclusioni.consigli_scuola : ''}
-${wizard.conclusioni?.strumenti_compensativi ? 'Strumenti compensativi: ' + wizard.conclusioni.strumenti_compensativi : ''}
-${wizard.conclusioni?.misure_dispensative ? 'Misure dispensative: ' + wizard.conclusioni.misure_dispensative : ''}
-
-Si rilascia alla famiglia per gli usi consentiti dalla Legge 170/2010.
-`
-    return out.trim()
+  if (isMock || USE_MOCK_AI) {
+    await new Promise<void>(resolve => setTimeout(resolve, 1200))
+    if (sez.includes('cognitivo') && wizard.cognitivo?.punteggi) {
+      out['cognitivo'] = wiscToNarrativa(wizard.cognitivo.punteggi, wizard.cognitivo.riferimenti_subtest || '')
+    }
+    if (sez.includes('nepsy') && wizard.nepsy?.punteggi) {
+      out['nepsy'] = nepsyToNarrativa(wizard.nepsy.punteggi)
+    }
+    if (sez.includes('apprendimenti') && wizard.apprendimenti?.note_cliniche) {
+      out['apprendimenti'] = String(wizard.apprendimenti.note_cliniche)
+    }
+    if (sez.includes('questionari') && wizard.questionari?.note_cliniche) {
+      out['questionari'] = wizard.questionari.note_cliniche
+    }
+    if (sez.includes('conclusioni') && wizard.conclusioni) {
+      const c = wizard.conclusioni
+      const parti = []
+      if (c.diagnosi) parti.push(`${c.diagnosi}${c.codice_icd ? ` (${c.codice_icd})` : ''}`)
+      if (c.consigli_paziente) parti.push(`Consigli: ${c.consigli_paziente}`)
+      if (c.consigli_scuola) parti.push(`Indicazioni per la scuola: ${c.consigli_scuola}`)
+      if (c.strumenti_compensativi) parti.push(`Strumenti compensativi: ${c.strumenti_compensativi}`)
+      if (c.misure_dispensative) parti.push(`Misure dispensative: ${c.misure_dispensative}`)
+      out['conclusioni'] = parti.join('\n')
+    }
+    return out
   }
+
+  const wiscTabella = wizard.cognitivo?.punteggi ? wiscToMarkdownTable(wizard.cognitivo.punteggi) : ''
+  const nepsyTabella = wizard.nepsy?.punteggi ? nepsyToMarkdownTable(wizard.nepsy.punteggi) : ''
 
   const esempiFewShot = esempi.length > 0
-    ? esempi.map((e: Relazione, i: number) => `--- ESEMPIO ${i+1} ---\n${e.testo_markdown}`).join('\n\n')
+    ? esempi.map((e: Relazione, i: number) => `--- ESEMPIO ${i+1} ---\n${e.testo_anonimizzato || e.testo_markdown}`).join('\n\n')
     : ''
 
-  // Payload testuale pronto — tabelle e narrativa già precalcolate,
-  // Gemini le riceve come dato "finito" per le sezioni WISC/NEPSY,
-  // mentre per le altre riceve ancora i campi grezzi del wizard
-  const datiPerGemini = {
-    ...wizard,
-    anamnesi: wizard.anamnesi ? { remota: anamnesiRemotaTxt, recente: anamnesiRecenteTxt } : undefined,
-    osservazione: wizard.osservazione ? { descrizione: osservazioneTxt, note: wizard.osservazione.note } : undefined,
-    cognitivo: wizard.cognitivo
-      ? {
-          eta_valutazione: wizard.cognitivo.eta_valutazione || '',
-          strumenti_utilizzati: wizard.cognitivo.strumenti_utilizzati || '',
-          tabella_wisc: wiscTabella,
-          nota_range_wisc: wiscNotaRange,
-          narrativa_precalcolata: wiscNarrativa,
-          riferimenti_subtest: wizard.cognitivo.riferimenti_subtest || '',
-          note_cliniche: wizard.cognitivo.note_cliniche,
-        }
-      : undefined,
-    nepsy: wizard.nepsy
-      ? {
-          strumenti_utilizzati: wizard.nepsy.strumenti_utilizzati || '',
-          tabella_nepsy: nepsyTabella,
-          nota_range_nepsy: nepsyNotaRange,
-          narrativa_precalcolata: nepsyNarrativa,
-          note_cliniche: wizard.nepsy.note_cliniche,
-        }
-      : undefined,
-  }
-
-  return callGemini(
-    `Sei un assistente specializzato nella redazione di relazioni di valutazione neuropsicologica e dell'apprendimento in età evolutiva.
+  const systemPrompt = `Sei un assistente specializzato nella redazione di relazioni di valutazione neuropsicologica e dell'apprendimento in età evolutiva.
 REGOLA ASSOLUTA: scrivi ESCLUSIVAMENTE seguendo il Profilo di Stile fornito.
 Non inventare mai punteggi o dati non presenti nell'input.
-Per le sezioni "cognitivo" e "nepsy": il campo "tabella_wisc"/"tabella_nepsy" contiene una tabella Markdown già pronta — riportala FEDELMENTE così com'è, senza modificarla. Il campo "narrativa_precalcolata" contiene già le frasi-cornice standard con i punteggi inseriti — puoi usarlo come base ma puoi arricchirlo con le note_cliniche fornite.
-Se presenti, riporta i campi "eta_valutazione", "strumenti_utilizzati", "nota_range_wisc" e "nota_range_nepsy" nella rispettiva sezione senza alterarli semanticamente.
-Se "riferimenti_subtest" è vuoto o assente, NON inventare riferimenti ai subtest (es. "CO pp. 10"). Se è presente, usalo solo nella sezione cognitiva pertinente.
-Non duplicare le tabelle: ogni tabella deve comparire una sola volta nella sua sezione, senza copia/incolla in altre parti del testo.
-Non usare mai nomi reali o dati identificativi: usa solo "il/la paziente". Non riceverai comunque questi dati.
-Includi solo le sezioni effettivamente presenti nei dati forniti.
-Rispondi SOLO con la relazione in Markdown, senza introduzioni o commenti.
+Genera SOLO il testo narrativo per ogni sezione richiesta. NON generare tabelle, le tabelle sono già pronte.
+Usa le frasi-cornice standard del Profilo di Stile per le sezioni cognitivo e nepsy.
+Non usare mai nomi reali o dati identificativi: usa solo "il/la paziente".
+Rispondi SOLO con il testo narrativo per ogni sezione, separato da intestazioni "=== SEZIONE: nome ===".
 
 === PROFILO DI STILE (priorità massima) ===
 ${profiloStile}
 
-${esempiFewShot ? `=== ESEMPI DI RIFERIMENTO ===\n${esempiFewShot}` : ''}`,
-    `Genera la relazione completa in Markdown con questi dati:\n\n${JSON.stringify(datiPerGemini, null, 2)}`
-  )
+${esempiFewShot ? `=== ESEMPI DI RIFERIMENTO ===\n${esempiFewShot}` : ''}`
+
+  const userData: string[] = []
+  if (sez.includes('cognitivo') && wizard.cognitivo?.punteggi) {
+    userData.push(`=== SEZIONE: cognitivo ===
+Tabella WISC-IV (non modificare, verrà inserita automaticamente):
+${wiscTabella}
+
+Nota range: ${wizard.cognitivo?.includi_nota_range ? notaRangeWisc() : 'Nessuna'}
+Riferimenti subtest: ${wizard.cognitivo?.riferimenti_subtest || 'Nessuno'}
+Note cliniche: ${wizard.cognitivo?.note_cliniche || 'Nessuna'}`)
+  }
+  if (sez.includes('nepsy') && wizard.nepsy?.punteggi) {
+    userData.push(`=== SEZIONE: nepsy ===
+Tabella NEPSY-II (non modificare, verrà inserita automaticamente):
+${nepsyTabella}
+
+Nota range: ${wizard.nepsy?.includi_nota_range ? notaRangeNepsy() : 'Nessuna'}
+Note cliniche: ${wizard.nepsy?.note_cliniche || 'Nessuna'}`)
+  }
+  if (sez.includes('apprendimenti') && wizard.apprendimenti) {
+    userData.push(`=== SEZIONE: apprendimenti ===
+Strumenti: ${wizard.apprendimenti?.strumenti || 'Nessuno'}
+Punteggi grezzi: ${wizard.apprendimenti?.punteggi_grezzi || 'Nessuno'}
+Note: ${wizard.apprendimenti?.note_cliniche || 'Nessuna'}`)
+  }
+  if (sez.includes('questionari') && wizard.questionari) {
+    userData.push(`=== SEZIONE: questionari ===
+Tipo: ${wizard.questionari?.tipo || 'Nessuno'}
+Punteggi grezzi: ${wizard.questionari?.punteggi_grezzi || 'Nessuno'}
+Note: ${wizard.questionari?.note_cliniche || 'Nessuna'}`)
+  }
+  if (sez.includes('conclusioni') && wizard.conclusioni) {
+    const c = wizard.conclusioni
+    userData.push(`=== SEZIONE: conclusioni ===
+Diagnosi: ${c.diagnosi || 'Nessuna'}${c.codice_icd ? ` (${c.codice_icd})` : ''}
+Consigli paziente: ${c.consigli_paziente || 'Nessuno'}
+Consigli scuola: ${c.consigli_scuola || 'Nessuno'}
+Strumenti compensativi: ${c.strumenti_compensativi || 'Nessuno'}
+Misure dispensative: ${c.misure_dispensative || 'Nessuna'}`)
+  }
+
+  const userPrompt = `Genera SOLO il testo narrativo per ogni sezione indicata. Le tabelle sono già pronte e verranno inserite automaticamente.
+Per ogni sezione, fornisci un testo fluido e coerente con il Profilo di Stile.
+
+${userData.join('\n\n')}`
+
+  const risposta = await callGemini(systemPrompt, userPrompt, { maxOutputTokens: 4096, temperature: 0.7 })
+
+  const sezioneRegex = /=== SEZIONE: (\w+) ===\n([\s\S]*?)(?=\n=== SEZIONE:|\n*$)/
+  const matches = risposta.matchAll(sezioneRegex)
+  for (const match of matches) {
+    const nome = match[1]
+    const testo = match[2].trim()
+    if (nome && testo) out[nome] = testo
+  }
+
+  return out
+}
+
+// ⚠️ SICUREZZA DATI: `wizard.anagrafica` viene DELIBERATAMENTE
+// rimosso dal payload prima di costruire qualunque prompt o chiamata
+// a Gemini. Quei dati vengono ricomposti nel documento finale solo
+// lato client, in RisultatoGenerazione.tsx + exportDocx.ts, mai visti
+// dall'AI.
+export async function generaRelazione(profiloStile: string, wizardCompleto: WizardPayload, esempi: Relazione[] = []): Promise<string> {
+  const { anagrafica: _anagrafica, ...wizard } = wizardCompleto
+
+  if (USE_MOCK_AI) {
+    await new Promise<void>(resolve => setTimeout(resolve, 2200))
+    const narrativa = await generaNarrativaSezioni('', wizard, [], true)
+    return assemblaDocumentoMarkdown(wizard, narrativa)
+  }
+
+  const narrativa = await generaNarrativaSezioni(profiloStile, wizard, esempi, false)
+  return assemblaDocumentoMarkdown(wizard, narrativa)
 }
 
 // ── RIGENERA SEZIONE ───────────────────────────────────────

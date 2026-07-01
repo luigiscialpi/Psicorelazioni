@@ -101,6 +101,8 @@ export default function RisultatoGenerazione() {
         testo: state.testo,
         anagrafica: wizardData.anagrafica,
         professionista,
+        cognitivo: wizardData.cognitivo,
+        nepsy: wizardData.nepsy,
       })
       const cognome = (wizardData.anagrafica?.cognome || 'paziente').replace(/\s+/g, '_')
       const oggi    = new Date().toISOString().slice(0, 10)
