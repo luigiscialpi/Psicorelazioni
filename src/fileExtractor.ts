@@ -6,10 +6,12 @@
 import mammoth from 'mammoth'
 import * as pdfjsLib from 'pdfjs-dist'
 
+const mammothAny = mammoth as any
+
 // Il worker è servito come asset statico da /public (vedi SETUP.md)
 pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs'
 
-export function getFileKind(filename) {
+export function getFileKind(filename: string) {
   const ext = filename.toLowerCase().split('.').pop()
   if (ext === 'docx') return 'docx'
   if (ext === 'doc')  return 'doc'
@@ -43,18 +45,18 @@ const DOCX_STYLE_MAP = [
 
 // Promuove un paragrafo a intestazione se tutto il suo testo è in grassetto
 // e la riga è breve: è il pattern tipico dei titoli scritti a mano.
-function promuoviTitoliGrassetto(paragraph) {
+function promuoviTitoliGrassetto(paragraph: any) {
   // Non toccare i paragrafi che hanno già uno stile (potrebbero essere titoli veri)
   if (paragraph.styleId || paragraph.styleName) return paragraph
 
-  const runs = mammoth.transforms.getDescendantsOfType(paragraph, 'run')
-  const texts = mammoth.transforms.getDescendantsOfType(paragraph, 'text')
-  const testo = texts.map(t => t.value || '').join('').trim()
+  const runs = mammothAny.transforms.getDescendantsOfType(paragraph, 'run')
+  const texts = mammothAny.transforms.getDescendantsOfType(paragraph, 'text')
+  const testo = texts.map((t: any) => t.value || '').join('').trim()
 
   if (!testo || testo.length > 90) return paragraph
   if (runs.length === 0) return paragraph
 
-  const tuttoGrassetto = runs.every(r => r.isBold)
+  const tuttoGrassetto = runs.every((r: any) => r.isBold)
   if (!tuttoGrassetto) return paragraph
 
   // Evita di trasformare frasi vere e proprie (che terminano con punteggiatura)
@@ -65,7 +67,7 @@ function promuoviTitoliGrassetto(paragraph) {
 
 // Normalizza il Markdown prodotto: righe vuote multiple, spazi finali,
 // e i grassetti "vuoti" (**  **) che Mammoth può lasciare.
-function ripulisciMarkdown(md) {
+function ripulisciMarkdown(md: string) {
   return md
     .replace(/[ \t]+$/gm, '')          // spazi a fine riga
     .replace(/\*\*\s*\*\*/g, '')       // grassetti vuoti
@@ -76,15 +78,15 @@ function ripulisciMarkdown(md) {
     .trim()
 }
 
-function mediana(nums) {
+function mediana(nums: number[]) {
   if (!nums.length) return 0
   const sorted = [...nums].sort((a, b) => a - b)
   return sorted[Math.floor(sorted.length / 2)]
 }
 
 // Promuove a heading i blocchi con testo breve e font sensibilmente maggiore.
-function promuoviTitoliDaStile(container) {
-  const blocchi = Array.from(container.querySelectorAll('p, div'))
+function promuoviTitoliDaStile(container: Element) {
+  const blocchi = Array.from(container.querySelectorAll<HTMLElement>('p, div'))
     .filter(el => el.childElementCount === 0 || !el.querySelector('p, div, li, table'))
 
   const campioni = blocchi
@@ -115,7 +117,7 @@ function promuoviTitoliDaStile(container) {
   }
 }
 
-function creaTurndownService(TurndownService) {
+function creaTurndownService(TurndownService: any) {
   const td = new TurndownService({
     headingStyle: 'atx',
     bulletListMarker: '-',
@@ -135,7 +137,7 @@ function creaTurndownService(TurndownService) {
   return td
 }
 
-async function extractDocxConDocxPreview(file) {
+async function extractDocxConDocxPreview(file: File) {
   const buffer = await file.arrayBuffer()
 
   const docxPreviewMod = await import('docx-preview')
@@ -191,7 +193,7 @@ async function extractDocxConDocxPreview(file) {
   }
 }
 
-async function extractDocxConPandocWasm(file) {
+async function extractDocxConPandocWasm(file: File) {
   const pandocBrowser = await import('./pandocBrowser')
   const convert = pandocBrowser.convertWithPandoc
   if (typeof convert !== 'function') throw new Error('Impossibile inizializzare pandoc-wasm.')
@@ -208,7 +210,7 @@ async function extractDocxConPandocWasm(file) {
     'input.docx': file,
   }
 
-  const result = await convert(options, null, files)
+  const result: any = await convert(options, null, files)
   const out = result?.files?.['out.md'] ?? result?.stdout ?? ''
 
   let markdown = ''
@@ -223,19 +225,19 @@ async function extractDocxConPandocWasm(file) {
   return cleaned
 }
 
-async function extractDocxConMammoth(file) {
+async function extractDocxConMammoth(file: File) {
   const buffer = await file.arrayBuffer()
-  const result = await mammoth.convertToMarkdown(
+  const result = await mammothAny.convertToMarkdown(
     { arrayBuffer: buffer },
     {
       styleMap: DOCX_STYLE_MAP,
-      transformDocument: mammoth.transforms.paragraph(promuoviTitoliGrassetto),
+      transformDocument: mammothAny.transforms.paragraph(promuoviTitoliGrassetto),
     },
   )
   return ripulisciMarkdown(result.value)
 }
 
-async function extractDocx(file) {
+async function extractDocx(file: File) {
   try {
     const markdown = await extractDocxConPandocWasm(file)
     if (markdown && markdown.length >= 40) {
@@ -274,22 +276,22 @@ async function extractDocx(file) {
 //      grande della media → titolo Markdown);
 //   3) unisce le righe in paragrafi, spezzando dove il salto verticale è
 //      ampio (riga vuota) e ricongiungendo le parole sillabate a fine riga.
-async function extractPdf(file) {
+async function extractPdf(file: File) {
   const buffer = await file.arrayBuffer()
   const pdf = await pdfjsLib.getDocument({ data: buffer }).promise
 
-  const pageBlocks = []
+  const pageBlocks: string[] = []
 
   for (let i = 1; i <= pdf.numPages; i++) {
     const page = await pdf.getPage(i)
     const content = await page.getTextContent()
 
     // 1) Raggruppa gli items in righe { y, height, text, gap }
-    const righe = []
-    let lastY = null
-    let current = null
+    const righe: any[] = []
+    let lastY: number | null = null
+    let current: any = null
 
-    for (const item of content.items) {
+    for (const item of content.items as any[]) {
       const y = item.transform[5]
       const h = item.height || Math.abs(item.transform[3]) || 0
 
@@ -326,7 +328,7 @@ async function extractPdf(file) {
     const gapBase = gaps.length ? gaps[Math.floor(gaps.length / 2)] : 0
 
     // 3) Ricostruisce i paragrafi
-    const out = []
+    const out: string[] = []
     let paragrafo = ''
 
     const flush = () => {
@@ -379,7 +381,7 @@ async function extractPdf(file) {
 }
 
 // ── DOC legacy (non supportato lato client) ────────────────
-async function extractDoc() {
+async function extractDoc(_file?: File) {
   throw new Error(
     'Il formato .doc (Word 97-2003) non può essere letto direttamente dal browser. ' +
     'Apri il file in Word, scegli "Salva con nome" → formato .docx, poi ricarica qui il nuovo file.'
@@ -387,7 +389,7 @@ async function extractDoc() {
 }
 
 // ── Entry point unico ──────────────────────────────────────
-export async function extractText(file) {
+export async function extractText(file: File) {
   const kind = getFileKind(file.name)
   switch (kind) {
     case 'docx': return extractDocx(file)

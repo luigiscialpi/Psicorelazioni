@@ -5,13 +5,13 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { getRelazioni, getPazienteById } from './dataService'
 
-const INIT = {
+const INIT: any = {
   relazioni: [], loading: true, query: '', filtroTipo: '',
   aperta: null,         // relazione attualmente visualizzata in dettaglio
   pazienteAperta: null, // anagrafica della relazione aperta (per mostrarla, mai per Gemini)
 }
 
-function reducer(state, action) {
+function reducer(state: any, action: any) {
   switch (action.type) {
     case 'LOADED':      return { ...state, relazioni: action.data, loading: false }
     case 'QUERY':       return { ...state, query: action.value }
@@ -23,7 +23,7 @@ function reducer(state, action) {
 }
 
 const MESI = ['gen','feb','mar','apr','mag','giu','lug','ago','set','ott','nov','dic']
-function formatData(iso) {
+function formatData(iso: string) {
   if (!iso) return '—'
   const d = new Date(iso)
   return `${d.getDate()} ${MESI[d.getMonth()]} ${d.getFullYear()}`
@@ -41,12 +41,12 @@ export default function Archivio() {
     dispatch({ type: 'LOADED', data })
   }
 
-  async function handleApri(relazione) {
+  async function handleApri(relazione: any) {
     const paziente = relazione.paziente_id ? await getPazienteById(relazione.paziente_id) : null
     dispatch({ type: 'APRI', relazione, paziente })
   }
 
-  function handleModifica(relazione) {
+  function handleModifica(relazione: any) {
     if (!relazione.wizard_snapshot) {
       alert('Questa relazione non ha uno snapshot del wizard salvato (probabilmente importata da DOCX) — non può essere riaperta per la modifica, ma puoi comunque consultarla.')
       return
@@ -63,7 +63,7 @@ export default function Archivio() {
     return matchQuery && matchTipo
   })
 
-  const tipiDisponibili = [...new Set(relazioni.map(r => r.tipo_relazione).filter(Boolean))]
+  const tipiDisponibili = [...new Set<string>(relazioni.map((r: any) => r.tipo_relazione).filter(Boolean))]
 
   return (
     <>

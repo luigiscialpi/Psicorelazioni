@@ -23,7 +23,7 @@ function reducer(state, action) {
 }
 
 // wizardData può includere due campi opzionali "di contesto" quando si
-// riapre una relazione esistente dall'Archivio (vedi Archivio.jsx):
+    // riapre una relazione esistente dall'Archivio (vedi Archivio.tsx):
 //   wizardData._relazioneId  → id della relazione da AGGIORNARE invece di duplicare
 //   wizardData._pazienteId   → id del paziente già collegato, da aggiornare invece di ricreare
 export default function RisultatoGenerazione() {

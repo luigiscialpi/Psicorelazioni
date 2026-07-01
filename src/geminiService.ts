@@ -37,17 +37,17 @@ const MODEL_CANDIDATES = MODEL_CONFIG
   .filter(Boolean)
   .filter((m, idx, arr) => arr.indexOf(m) === idx)
 
-function buildEndpoint(modelName) {
+function buildEndpoint(modelName: string) {
   return `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${API_KEY}`
 }
 
-function erroreQuotaEsaurita(status, dettaglio) {
+function erroreQuotaEsaurita(status: number, dettaglio: unknown) {
   if (status !== 429) return false
   const d = String(dettaglio || '').toLowerCase()
   return d.includes('quota exceeded') || d.includes('resource_exhausted') || d.includes('free_tier')
 }
 
-function erroreModelloNonDisponibile(status, dettaglio) {
+function erroreModelloNonDisponibile(status: number, dettaglio: unknown) {
   if (status !== 400 && status !== 404) return false
   const d = String(dettaglio || '').toLowerCase()
   return (
@@ -62,7 +62,7 @@ export const CORPUS_LIMITI = {
   maxRelazioneChars: MAX_RELATION_CHARS,
 }
 
-function estraiMessaggioErroreGemini(payload) {
+function estraiMessaggioErroreGemini(payload: any) {
   if (!payload || typeof payload !== 'object') return null
   const err = payload.error
   if (!err) return null
@@ -75,13 +75,13 @@ function estraiMessaggioErroreGemini(payload) {
   return [...parti, ...dettagli].join(' | ') || null
 }
 
-function troncaTestoPerCorpus(testo, maxChars = MAX_RELATION_CHARS) {
+function troncaTestoPerCorpus(testo: unknown, maxChars = MAX_RELATION_CHARS) {
   const value = String(testo || '')
   if (value.length <= maxChars) return value
   return `${value.slice(0, maxChars)}\n\n[...CONTENUTO TRONCATO AUTOMATICAMENTE PER LIMITI PAYLOAD...]`
 }
 
-function costruisciCorpus(relazioni, labelPrefix = 'RELAZIONE') {
+function costruisciCorpus(relazioni: any[], labelPrefix = 'RELAZIONE') {
   let used = 0
   const chunks = []
   const indiciUsati = []
@@ -114,7 +114,7 @@ function costruisciCorpus(relazioni, labelPrefix = 'RELAZIONE') {
   }
 }
 
-async function callGemini(systemPrompt, userPrompt, options = {}) {
+async function callGemini(systemPrompt: string, userPrompt: string, options: any = {}) {
   const {
     maxOutputTokens = 4096,
     temperature = 0.7,
@@ -328,7 +328,7 @@ Rispondi SOLO con il documento Markdown, senza introduzioni.`,
 // nascita, scuola/classe) viene DELIBERATAMENTE rimosso dal payload
 // prima di costruire qualunque prompt o chiamata a Gemini. Quei dati
 // vengono ricomposti nel documento finale solo lato client, in
-// RisultatoGenerazione.jsx + exportDocx.js, mai visti dall'AI.
+// RisultatoGenerazione.tsx + exportDocx.ts, mai visti dall'AI.
 export async function generaRelazione(profiloStile, wizardCompleto, esempi = []) {
   // Payload "pulito" — SENZA anagrafica reale
   const { anagrafica, ...wizard } = wizardCompleto

@@ -2,8 +2,8 @@
 // WIZARD → TESTO — trasforma le strutture dati del wizard
 // (voci checkbox selezionate, punteggi numerici) in testo/tabelle
 // pronte da passare a Gemini o da inserire nel DOCX finale.
-// Centralizzato qui per essere condiviso tra geminiService.js
-// e exportDocx.js senza duplicare la logica.
+// Centralizzato qui per essere condiviso tra geminiService.ts
+// e exportDocx.ts senza duplicare la logica.
 // ============================================================
 
 import {
@@ -44,7 +44,7 @@ export function osservazioneToTesto(osservazione) {
   return [adattamento, atteggiamento, osservazione.note?.trim()].filter(Boolean).join(' ')
 }
 
-// ── Tabella WISC-IV in Markdown, pronta per Gemini e per il parser di exportDocx.js ──
+// ── Tabella WISC-IV in Markdown, pronta per Gemini e per il parser di exportDocx.ts ──
 export function wiscToMarkdownTable(punteggi) {
   const righeValide = WISC_IV_CAMPI.filter(c => punteggi[c.key])
   if (righeValide.length === 0) return ''

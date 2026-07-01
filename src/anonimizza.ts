@@ -1,8 +1,8 @@
-function escapeRegExp(value) {
+function escapeRegExp(value: unknown) {
   return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
-function sostituisciNomeCompleto(testo, nome, cognome) {
+function sostituisciNomeCompleto(testo: string, nome: string, cognome: string) {
   if (!nome || !cognome) return testo
   const tokens = `${nome} ${cognome}`.trim().split(/\s+/).filter(Boolean)
   if (tokens.length === 0) return testo
@@ -10,14 +10,14 @@ function sostituisciNomeCompleto(testo, nome, cognome) {
   return testo.replace(re, '[PAZIENTE]')
 }
 
-function sostituisciParolaIsolata(testo, parola) {
+function sostituisciParolaIsolata(testo: string, parola: string) {
   if (!parola || !parola.trim()) return testo
   const p = parola.trim()
   const re = new RegExp(`(^|[^A-Za-zÀ-ÖØ-öø-ÿ'])(${escapeRegExp(p)})(?=$|[^A-Za-zÀ-ÖØ-öø-ÿ'])`, 'gi')
   return testo.replace(re, '$1[PAZIENTE]')
 }
 
-export function anonimizzaTesto(testoMarkdown, metadatiRelazione = {}) {
+export function anonimizzaTesto(testoMarkdown: unknown, metadatiRelazione: any = {}) {
   let testo = String(testoMarkdown || '')
   const paziente = metadatiRelazione?.paziente || metadatiRelazione || {}
   const nome = paziente?.nome || ''

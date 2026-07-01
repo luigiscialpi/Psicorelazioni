@@ -12,11 +12,11 @@ const USE_MOCK = !import.meta.env.VITE_SUPABASE_URL ||
   import.meta.env.VITE_SUPABASE_URL.includes('YOUR_PROJECT')
 
 // Store mock in-memory (sopravvive alla navigazione, non al refresh)
-let mockRelazioni  = [...MOCK_RELAZIONI]
-let mockPazienti   = [...MOCK_PAZIENTI]
-let mockSessioni   = [...MOCK_SESSIONI]
-let mockProfilo    = MOCK_PROFILO_STILE
-let mockProfessionista = null
+let mockRelazioni: any[]  = [...MOCK_RELAZIONI]
+let mockPazienti: any[]   = [...MOCK_PAZIENTI]
+let mockSessioni: any[]   = [...MOCK_SESSIONI]
+let mockProfilo: any      = MOCK_PROFILO_STILE
+let mockProfessionista: any = null
 
 const PROFESSIONISTA_LS_KEY = 'psicorelazioni_professionista_v1'
 
@@ -29,7 +29,7 @@ function loadProfessionistaLocal() {
   }
 }
 
-function saveProfessionistaLocal(value) {
+function saveProfessionistaLocal(value: any) {
   try {
     localStorage.setItem(PROFESSIONISTA_LS_KEY, JSON.stringify(value || null))
   } catch {
@@ -47,7 +47,7 @@ export async function getRelazioni() {
   return data || []
 }
 
-export async function insertRelazione(row) {
+export async function insertRelazione(row: any) {
   if (USE_MOCK) {
     const r = { ...row, id: uid(), created_at: new Date().toISOString() }
     mockRelazioni.push(r)
@@ -57,7 +57,7 @@ export async function insertRelazione(row) {
   return data
 }
 
-export async function updateRelazione(id, patch) {
+export async function updateRelazione(id: string, patch: any) {
   if (USE_MOCK) {
     mockRelazioni = mockRelazioni.map(r => r.id === id ? { ...r, ...patch } : r)
     return
@@ -65,7 +65,7 @@ export async function updateRelazione(id, patch) {
   await supabase.from('relazioni').update(patch).eq('id', id)
 }
 
-export async function getRelazioniSimilari(tipo, tag = []) {
+export async function getRelazioniSimilari(tipo: string, tag: string[] = []) {
   if (USE_MOCK) {
     return mockRelazioni
       .filter(r => r.tipo_relazione === tipo || (r.tag || []).some(t => tag.includes(t)))
@@ -80,7 +80,7 @@ export async function getRelazioniSimilari(tipo, tag = []) {
 
 // Recupera una singola relazione per riaprirla nel wizard/editor.
 // Usata dall'Archivio quando si clicca "Apri e modifica".
-export async function getRelazioneById(id) {
+export async function getRelazioneById(id: string) {
   if (USE_MOCK) return mockRelazioni.find(r => r.id === id) || null
   const { data } = await supabase.from('relazioni').select('*').eq('id', id).single()
   return data || null
@@ -93,13 +93,13 @@ export async function getPazienti() {
   return data || []
 }
 
-export async function getPazienteById(id) {
+export async function getPazienteById(id: string) {
   if (USE_MOCK) return mockPazienti.find(p => p.id === id) || null
   const { data } = await supabase.from('pazienti').select('*').eq('id', id).single()
   return data || null
 }
 
-export async function upsertPaziente(codice) {
+export async function upsertPaziente(codice: string) {
   if (USE_MOCK) {
     let p = mockPazienti.find(x => x.codice === codice)
     if (!p) { p = { id: uid(), codice, created_at: new Date().toISOString() }; mockPazienti.push(p) }
@@ -113,9 +113,9 @@ export async function upsertPaziente(codice) {
 
 // Salva l'anagrafica REALE del paziente (nome, cognome, data di nascita,
 // scuola/classe). Se pazienteId è fornito aggiorna quel record, altrimenti
-// ne crea uno nuovo. Usata da RisultatoGenerazione.jsx al momento del
+// ne crea uno nuovo. Usata da RisultatoGenerazione.tsx al momento del
 // salvataggio in archivio — mai passata a Gemini, solo persistita qui.
-export async function upsertPazienteAnagrafica(anagrafica, pazienteId = null) {
+export async function upsertPazienteAnagrafica(anagrafica: any, pazienteId: string | null = null) {
   const payload = {
     nome:          anagrafica.nome || null,
     cognome:       anagrafica.cognome || null,
@@ -148,7 +148,7 @@ export async function getProfiloStile() {
   return data?.documento_stile || null
 }
 
-// Restituisce l'oggetto completo — usato da ProfiloStile.jsx per
+// Restituisce l'oggetto completo — usato da ProfiloStile.tsx per
 // sapere quante relazioni sono già state analizzate e quando,
 // così da identificare quelle "nuove" per l'analisi incrementale.
 export async function getProfiloStileCompleto() {

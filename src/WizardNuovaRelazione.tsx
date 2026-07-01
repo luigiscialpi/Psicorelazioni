@@ -17,7 +17,7 @@ import {
 // di nascita) vengono raccolti qui ma NON fanno mai parte del
 // payload mandato a Gemini — restano lato client e vengono
 // ricomposti nel documento finale solo in fase di export DOCX
-// (vedi RisultatoGenerazione.jsx + exportDocx.js). Gemini vede
+// (vedi RisultatoGenerazione.tsx + exportDocx.ts). Gemini vede
 // sempre e solo "il/la paziente", mai un nome reale.
 //
 // I punteggi dei test (WISC-IV, NEPSY-II) sono input numerici
@@ -102,7 +102,7 @@ const sh    = { fontFamily: 'var(--font-serif)', fontSize: 17, fontWeight: 600, 
 const shSub = { fontSize: 12.5, color: 'var(--text-muted)', marginBottom: 20, lineHeight: 1.5 }
 
 // ── Checkbox riutilizzabile con dettaglio opzionale ────────
-function VoceCheckbox({ voce, checked, onToggle, dettaglio, onDettaglio }) {
+function VoceCheckbox({ voce, checked, onToggle, dettaglio, onDettaglio }: any) {
   return (
     <div style={{ marginBottom: 8 }}>
       <button type="button" onClick={onToggle} style={{
@@ -124,7 +124,7 @@ function VoceCheckbox({ voce, checked, onToggle, dettaglio, onDettaglio }) {
           className="form-input" style={{ marginTop: 6, marginLeft: 24, width: 'calc(100% - 24px)', fontSize: 12.5 }}
           placeholder={voce.placeholder}
           value={dettaglio || ''}
-          onChange={e => onDettaglio(e.target.value)}
+          onChange={e => onDettaglio?.(e.target.value)}
         />
       )}
     </div>

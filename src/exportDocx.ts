@@ -27,7 +27,17 @@ const MARGIN      = 1418  // ~2.5cm in DXA
 const CONTENT_W   = PAGE_W - MARGIN * 2  // ~8070 DXA
 
 // ── Helpers paragrafo ──────────────────────────────────────
-function para(text, opts = {}) {
+type ParagraphOptions = {
+  bold?: boolean
+  underline?: boolean
+  center?: boolean
+  indent?: boolean
+  size?: number
+  spaceBefore?: number
+  spaceAfter?: number
+}
+
+function para(text: string, opts: ParagraphOptions = {}) {
   const {
     bold = false, underline = false, center = false, indent = false,
     size = SIZE_BODY, spaceBefore = 0, spaceAfter = 120,
@@ -375,7 +385,7 @@ function anagraficaParagraph(anagrafica) {
   })
 }
 
-export async function esportaDocx({ testo, data, nomeStudio, anagrafica, professionista }) {
+export async function esportaDocx({ testo, data, nomeStudio, anagrafica, professionista }: any) {
   const oggi = data || new Date().toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit', year: 'numeric' })
   const testoPulito = deAnonimizzaTesto(testo, anagrafica)
 

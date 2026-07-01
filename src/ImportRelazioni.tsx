@@ -1,4 +1,4 @@
-import { useReducer, useRef, useCallback } from 'react'
+import { useReducer, useRef, useCallback, type ChangeEvent } from 'react'
 import { Upload, FileText, CheckCircle, AlertCircle, X, Save, Eye, EyeOff, FlaskConical, AlertTriangle } from 'lucide-react'
 import { insertRelazione, upsertPaziente, USE_MOCK } from './dataService'
 import { supabase } from './supabase'
@@ -11,9 +11,9 @@ const uid = () => Math.random().toString(36).slice(2)
 const CONTENT_TYPES = {
   docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   pdf:  'application/pdf',
-}
+} as Record<string, string>
 
-function FileKindBadge({ kind }) {
+function FileKindBadge({ kind }: any) {
   const labels = { docx: 'DOCX', pdf: 'PDF', doc: 'DOC' }
   const colors = {
     docx: { bg: 'var(--accent-lt)', fg: 'var(--accent-dk)' },
@@ -29,7 +29,7 @@ function FileKindBadge({ kind }) {
 }
 
 // ── Reducer per la lista file ──────────────────────────────
-function filesReducer(state, action) {
+function filesReducer(state: any[], action: any) {
   switch (action.type) {
     case 'ADD':
       return [...state, action.entry]
@@ -42,7 +42,7 @@ function filesReducer(state, action) {
   }
 }
 
-function FileItem({ file, onRemove, onSave }) {
+function FileItem({ file, onRemove, onSave }: any) {
   const [meta, dispatchMeta] = useReducer(
     (s, a) => ({ ...s, [a.k]: a.v }),
     {
@@ -144,37 +144,38 @@ function FileItem({ file, onRemove, onSave }) {
 }
 
 export default function ImportRelazioni() {
-  const [files, dispatchFiles] = useReducer(filesReducer, [])
+  const [files, dispatchFiles] = useReducer(filesReducer, [] as any[])
   const [dragOver, toggleDrag] = useReducer(s => !s, false)
-  const inputRef = useRef()
+  const inputRef = useRef<HTMLInputElement>(null)
 
-  async function convertFile(fileObj) {
+  async function convertFile(fileObj: File) {
     const id = uid()
     const kind = getFileKind(fileObj.name)
     dispatchFiles({ type: 'ADD', entry: { id, name: fileObj.name, kind, status: 'converting', markdown: '', file: fileObj } })
 
     try {
-      const { markdown, warning } = await extractText(fileObj)
+      const { markdown, warning } = await extractText(fileObj) as any
       dispatchFiles({ type: 'UPDATE', id, patch: { status: 'ready', markdown, warning } })
-    } catch (err) {
+    } catch (err: any) {
       dispatchFiles({ type: 'UPDATE', id, patch: { status: 'error', errorMsg: err.message } })
     }
   }
 
-  const onDrop = useCallback(e => {
+  const onDrop = useCallback((e: any) => {
     e.preventDefault()
     toggleDrag()
-    Array.from(e.dataTransfer.files).filter(f => f.name.match(/\.(docx?|pdf)$/i)).forEach(convertFile)
+    Array.from(e.dataTransfer.files as FileList).filter((f: File) => f.name.match(/\.(docx?|pdf)$/i)).forEach(convertFile)
   }, [])
 
-  function onFileChange(e) {
+  function onFileChange(e: ChangeEvent<HTMLInputElement>) {
+    if (!e.target.files) return
     Array.from(e.target.files).forEach(convertFile)
     e.target.value = ''
   }
 
-  function removeFile(id) { dispatchFiles({ type: 'REMOVE', id }) }
+  function removeFile(id: string) { dispatchFiles({ type: 'REMOVE', id }) }
 
-  async function saveFile(id, meta) {
+  async function saveFile(id: string, meta: any) {
     const fileEntry = files.find(f => f.id === id)
     if (!fileEntry) return
 
@@ -208,7 +209,7 @@ export default function ImportRelazioni() {
       })
 
       dispatchFiles({ type: 'UPDATE', id, patch: { status: 'saved' } })
-    } catch (err) {
+    } catch (err: any) {
       console.error(err)
       dispatchFiles({ type: 'UPDATE', id, patch: { status: 'error', errorMsg: 'Errore durante il salvataggio: ' + err.message } })
     }
@@ -248,7 +249,7 @@ export default function ImportRelazioni() {
 
         <div
           className={`dropzone ${dragOver ? 'drag-over' : ''}`}
-          onClick={() => inputRef.current.click()}
+          onClick={() => inputRef.current?.click()}
           onDragOver={e => { e.preventDefault(); if (!dragOver) toggleDrag() }}
           onDragLeave={() => dragOver && toggleDrag()}
           onDrop={onDrop}
