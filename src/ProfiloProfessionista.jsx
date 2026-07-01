@@ -8,6 +8,7 @@ const INIT = {
   msg: null,
   data: {
     nome_completo: '',
+    genere: '',
     titolo: '',
     specializzazione: '',
     email: '',
@@ -98,6 +99,22 @@ export default function ProfiloProfessionista() {
               <label className="form-label">Nome e cognome</label>
               <input className="form-input" value={data.nome_completo || ''} onChange={e => dispatch({ type: 'SET', k: 'nome_completo', v: e.target.value })} />
             </div>
+            <div className="form-group">
+              <label className="form-label">Genere</label>
+              <select
+                className="form-select"
+                value={data.genere || ''}
+                onChange={e => dispatch({ type: 'SET', k: 'genere', v: e.target.value })}
+              >
+                <option value="">— seleziona —</option>
+                <option value="uomo">Uomo</option>
+                <option value="donna">Donna</option>
+                <option value="non_binario">Non binario</option>
+              </select>
+            </div>
+          </div>
+
+          <div className="meta-row">
             <div className="form-group">
               <label className="form-label">Titolo professionale</label>
               <input className="form-input" placeholder="es. Psicologa" value={data.titolo || ''} onChange={e => dispatch({ type: 'SET', k: 'titolo', v: e.target.value })} />

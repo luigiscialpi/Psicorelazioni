@@ -197,6 +197,7 @@ export async function saveProfiloProfessionista(payload) {
   const row = {
     id: 1,
     nome_completo: payload.nome_completo || null,
+    genere: payload.genere || null,
     titolo: payload.titolo || null,
     specializzazione: payload.specializzazione || null,
     email: payload.email || null,
@@ -219,6 +220,18 @@ export async function saveProfiloProfessionista(payload) {
     if (!error && data) {
       saveProfessionistaLocal(data)
       return data
+    }
+
+    // Compatibilita con schema precedente senza colonna "genere".
+    if (error && String(error.message || '').toLowerCase().includes('genere')) {
+      const legacyRow = { ...row }
+      delete legacyRow.genere
+      const { data: legacyData, error: legacyError } = await supabase.from('professionista').upsert(legacyRow).select().single()
+      if (!legacyError && legacyData) {
+        const enriched = { ...legacyData, genere: row.genere }
+        saveProfessionistaLocal(enriched)
+        return enriched
+      }
     }
   } catch {
     // fallback locale

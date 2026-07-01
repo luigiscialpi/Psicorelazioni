@@ -63,6 +63,25 @@ CREATE TABLE IF NOT EXISTS sessioni_wizard (
   relazione_finale_id UUID REFERENCES relazioni(id) ON DELETE SET NULL
 );
 
+-- 5. Tabella professionista (singolo record)
+CREATE TABLE IF NOT EXISTS professionista (
+  id                  INTEGER PRIMARY KEY DEFAULT 1,
+  updated_at          TIMESTAMPTZ DEFAULT now(),
+  nome_completo       TEXT,
+  genere              TEXT,  -- 'uomo' | 'donna' | 'non_binario'
+  titolo              TEXT,
+  specializzazione    TEXT,
+  email               TEXT,
+  telefono            TEXT,
+  indirizzo           TEXT,
+  citta               TEXT,
+  partita_iva         TEXT,
+  codice_fiscale      TEXT
+);
+
+-- Migrazione compatibile per istanze già esistenti
+ALTER TABLE professionista ADD COLUMN IF NOT EXISTS genere TEXT;
+
 -- ============================================================
 -- Row Level Security: solo l'utente autenticato vede i suoi dati
 -- ============================================================
@@ -71,12 +90,14 @@ ALTER TABLE pazienti        ENABLE ROW LEVEL SECURITY;
 ALTER TABLE relazioni       ENABLE ROW LEVEL SECURITY;
 ALTER TABLE profilo_stile   ENABLE ROW LEVEL SECURITY;
 ALTER TABLE sessioni_wizard ENABLE ROW LEVEL SECURITY;
+ALTER TABLE professionista  ENABLE ROW LEVEL SECURITY;
 
 -- Policy: accesso solo per utenti autenticati (utente singola)
 CREATE POLICY "Accesso autenticato" ON pazienti        FOR ALL USING (auth.role() = 'authenticated');
 CREATE POLICY "Accesso autenticato" ON relazioni       FOR ALL USING (auth.role() = 'authenticated');
 CREATE POLICY "Accesso autenticato" ON profilo_stile   FOR ALL USING (auth.role() = 'authenticated');
 CREATE POLICY "Accesso autenticato" ON sessioni_wizard FOR ALL USING (auth.role() = 'authenticated');
+CREATE POLICY "Accesso autenticato" ON professionista  FOR ALL USING (auth.role() = 'authenticated');
 
 -- ============================================================
 -- Storage buckets (esegui separatamente da Supabase > Storage)

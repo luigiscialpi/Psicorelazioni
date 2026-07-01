@@ -1,9 +1,9 @@
 import { useEffect, useReducer } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { FileText, Upload, TrendingUp, Clock, Trash2 } from 'lucide-react'
-import { getRelazioni, getPazienti, getSessioniInCorso, deleteSessione } from './dataService'
+import { getRelazioni, getPazienti, getSessioniInCorso, getProfiloProfessionista, deleteSessione } from './dataService'
 
-const init = { stats: { totale: 0, questo_mese: 0, pazienti: 0 }, recenti: [], sospese: [], loading: true }
+const init = { stats: { totale: 0, questo_mese: 0, pazienti: 0 }, recenti: [], sospese: [], greeting: 'Benvenuta — buon lavoro', loading: true }
 
 function reducer(state, action) {
   switch (action.type) {
@@ -36,18 +36,38 @@ function getBozzaTitolo(sessione) {
   return `Bozza nuova relazione (${tipo})`
 }
 
+function getNomeBreve(nomeCompleto) {
+  const cleaned = String(nomeCompleto || '').trim().replace(/\s+/g, ' ')
+  if (!cleaned) return ''
+  return cleaned.split(' ')[0]
+}
+
+function getSalutoDashboard(profiloProfessionista) {
+  const fallback = "Benvenutə — buon lavoro";
+  const nomeBreve = getNomeBreve(profiloProfessionista?.nome_completo)
+  if (!nomeBreve) return fallback
+
+  const genere = String(profiloProfessionista?.genere || '').trim().toLowerCase()
+  const apertura = genere === 'uomo'
+    ? 'Benvenuto'
+    : (genere === 'non_binario' ? 'Benvenutə' : 'Benvenuta')
+
+  return `${apertura} ${nomeBreve} — buon lavoro`
+}
+
 export default function Dashboard({ mode = 'dashboard' }) {
   const navigate = useNavigate()
   const [state, dispatch] = useReducer(reducer, init)
-  const { stats, recenti, sospese, loading } = state
+  const { stats, recenti, sospese, greeting, loading } = state
   const isBozzePage = mode === 'bozze'
 
   useEffect(() => {
     async function load() {
-      const [relazioni, pazienti, sospese] = await Promise.all([
+      const [relazioni, pazienti, sospese, profiloProfessionista] = await Promise.all([
         getRelazioni(),
         getPazienti(),
         getSessioniInCorso(),
+        getProfiloProfessionista(),
       ])
       const ora = new Date()
       const questoMese = relazioni.filter(r => {
@@ -58,6 +78,7 @@ export default function Dashboard({ mode = 'dashboard' }) {
         stats: { totale: relazioni.length, questo_mese: questoMese.length, pazienti: pazienti.length },
         recenti: relazioni.slice(0, 5),
         sospese,
+        greeting: getSalutoDashboard(profiloProfessionista),
       }})
     }
     load()
@@ -68,7 +89,7 @@ export default function Dashboard({ mode = 'dashboard' }) {
       <div className="topbar">
         <div>
           <div className="topbar-title">{isBozzePage ? 'Bozze in corso' : 'Pannello'}</div>
-          <div className="topbar-sub">{isBozzePage ? 'Riprendi o elimina una bozza salvata automaticamente' : 'Benvenuta — buon lavoro'}</div>
+          <div className="topbar-sub">{isBozzePage ? 'Riprendi o elimina una bozza salvata automaticamente' : greeting}</div>
         </div>
         {!isBozzePage && (
           <button className="btn btn-primary" onClick={() => navigate('/nuova')}>
