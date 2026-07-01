@@ -28,6 +28,48 @@
 
 > Sezione aggiornata in questa revisione: il blocco principale delle versioni precedenti (template reale mancante) è stato risolto.
 
+### Delta modifiche staged (allineamento documentazione)
+
+Questa sezione traccia le modifiche attualmente in stage, per mantenere il piano sincronizzato con il codice pronto al commit.
+
+**Rendering e leggibilità Archivio/Profilo**
+- Archivio: il dettaglio relazione ora renderizza Markdown strutturato (non più testo piatto) con supporto tabelle/liste/blockquote.
+- Profilo Stile: sostituito il renderer Markdown manuale con renderer completo, unificando la resa visiva con l'Archivio.
+- Stili condivisi: introdotto blocco CSS dedicato (`.markdown-profile`) per heading, tabelle, codice e spacing coerente.
+
+**Pipeline import DOCX/PDF migliorata**
+- DOCX: nuova catena di fallback a 3 livelli:
+    1. Pandoc WASM (primario, migliore tenuta su struttura/tabelle)
+    2. docx-preview + Turndown (compatibilità)
+    3. Mammoth con style-map e trasformazioni (ultima rete di sicurezza)
+- PDF: ricostruzione semantica migliorata (raggruppamento righe per coordinata Y, stima heading da font-size, paragrafazione da gap verticale, merge sillabazioni a fine riga).
+- Normalizzazione output: cleanup Markdown centralizzato per ridurre rumore tipografico e artefatti.
+
+**Integrazione Pandoc in ambiente browser (fix Vite)**
+- Aggiunto modulo wrapper browser (`src/pandocBrowser.js`) che inizializza Pandoc caricando il file WASM come asset URL.
+- Motivo: evitare errori in dev build relativi a `wasi_snapshot_preview1` con import diretto del WASM.
+- Configurazione Vite aggiornata con inclusione asset `.wasm`.
+
+**Gemini: affidabilità, fallback e controllo payload**
+- Modelli: introdotta lista candidati configurabile (`VITE_GEMINI_MODELS`) con fallback automatico tra modelli flash/lite.
+- Robustezza chiamate API: gestione errori quota/modello non disponibile, retry con backoff su 429/5xx, parsing dettagli errore.
+- Limiti corpus: introdotti limiti espliciti su payload totale e singola relazione, con troncamento controllato.
+- Pianificazione invio: nuova funzione di pianificazione corpus che decide quante relazioni inviare ora e quante restano in coda.
+- Output analisi stile: ora ritorna metadati (`relazioniUsate`, `relazioniTotali`, `charsCorpus`) oltre al testo.
+
+**Profilo Stile: logica incrementale resa deterministica**
+- Le relazioni vengono ordinate cronologicamente e processate in coda stabile.
+- L'incrementale non dipende più solo da timestamp ultimo aggiornamento, ma da conteggio già analizzato (`num_relazioni_analizzate`).
+- Anteprima invio arricchita con statistiche operative (inviate, in coda, caratteri corpus).
+
+**Dipendenze aggiunte (staged)**
+- `react-markdown`, `remark-gfm`
+- `docx-preview`, `turndown`
+- `pandoc-wasm`
+
+**Nota di sicurezza/roadmap**
+- Inserita anche azione pianificata: migrazione chiamate Gemini lato server (Vercel/Supabase Edge Function) con chiave API non esposta nel client, rate limit e validazione payload.
+
 ### 🟢 Sbloccato: struttura reale identificata da 3 relazioni vere
 
 Tua sorella ha fornito 3 relazioni reali (un `.docx`, un `.doc`, un `.pdf` — utili anche per verificare concretamente il Modulo 1 su tutti i formati supportati). Trattandosi di file **non anonimizzati** (nomi e dati identificativi di pazienti reali, inclusi recapiti professionali in calce), sono stati gestiti così:
@@ -697,6 +739,7 @@ I dati inviati alla Gemini API gratuita (Google AI Studio) potrebbero essere usa
 - [ ] Export multiplo ZIP
 - [ ] Feedback qualità generazione e miglioramento progressivo del profilo
 - [ ] Streaming risposta Gemini
+- [ ] Spostare le chiamate Gemini lato server (Vercel/Supabase Edge Function) con chiave API solo server-side, rate limit e validazione payload (eliminare esposizione chiave nel client)
 
 ### Future versioni — Opzionale
 - [ ] Modalità offline / Service Worker completo
