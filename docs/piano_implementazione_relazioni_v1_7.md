@@ -62,6 +62,19 @@ Questa sezione traccia le modifiche attualmente in stage, per mantenere il piano
 - L'incrementale non dipende più solo da timestamp ultimo aggiornamento, ma da conteggio già analizzato (`num_relazioni_analizzate`).
 - Anteprima invio arricchita con statistiche operative (inviate, in coda, caratteri corpus).
 
+**Allineamento bidirezionale Profilo <-> Wizard (prima versione operativa)**
+- Il wizard legge il `profilo_stile` salvato e ne estrae requisiti operativi (parser leggero di pattern nel Markdown).
+- Se il profilo richiede riferimenti ai subtest WISC per indice, lo step Cognitivo li richiede esplicitamente prima di consentire la generazione.
+- I riferimenti sono ora strutturati per indice (`ICV`, `RP/IRP`, `IML/ML`, `VE/IVE`) e confluiscono nella narrativa WISC passata a Gemini.
+- Compatibilità mantenuta con snapshot precedenti che avevano un singolo campo testuale `riferimenti_subtest`.
+
+**Allineamento bidirezionale Profilo <-> Wizard (seconda iterazione)**
+- Se il profilo richiede età al momento della valutazione, strumenti e note range WISC, il wizard li espone come campi strutturati e li valida in checklist.
+- Nuovi campi WISC: `eta_valutazione`, `strumenti_utilizzati`, toggle `includi_nota_range`, più riferimenti subtest per indice.
+- Nuovi campi NEPSY: `strumenti_utilizzati`, toggle `includi_nota_range`.
+- Prima della generazione viene mostrata una checklist aderenza profilo; se incompleta, il pulsante "Genera relazione" resta disabilitato.
+- I nuovi campi vengono passati a Gemini in payload esplicito (`eta_valutazione`, `strumenti_utilizzati`, `nota_range_wisc`, `nota_range_nepsy`) per ridurre ambiguità e migliorare coerenza output.
+
 **Dipendenze aggiunte (staged)**
 - `react-markdown`, `remark-gfm`
 - `docx-preview`, `turndown`

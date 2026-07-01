@@ -58,12 +58,40 @@ export function wiscToMarkdownTable(punteggi) {
   return md
 }
 
+export function notaRangeWisc() {
+  return '*WISC-IV: QI >129 molto superiore, 120-129 superiore, 110-119 medio-superiore, 90-109 media, 80-89 media inferiore, 70-79 inferiore alla media, <69 molto inferiore alla norma.*'
+}
+
 // Testo narrativo per gli indici WISC compilati — frase-cornice fissa + fascia calcolata
-export function wiscToNarrativa(punteggi) {
-  return WISC_IV_CAMPI
+export function wiscToNarrativa(punteggi, riferimentiSubtest = '') {
+  const base = WISC_IV_CAMPI
     .filter(c => punteggi[c.key] && c.tipo !== 'totale')
     .map(c => `${c.descr} Il punteggio ottenuto (${punteggi[c.key]}) si colloca nella fascia "${fasciaWISC(punteggi[c.key])}".`)
     .join(' ')
+
+  let rif = ''
+
+  if (typeof riferimentiSubtest === 'string') {
+    rif = riferimentiSubtest.trim()
+  } else if (riferimentiSubtest && typeof riferimentiSubtest === 'object') {
+    const mapping = [
+      ['icv', 'ICV'],
+      ['rp', 'RP/IRP'],
+      ['iml', 'IML/ML'],
+      ['ve', 'VE/IVE'],
+    ]
+    rif = mapping
+      .map(([key, label]) => {
+        const value = String(riferimentiSubtest[key] || '').trim()
+        return value ? `${label}: ${value}` : ''
+      })
+      .filter(Boolean)
+      .join('; ')
+  }
+
+  if (!rif) return base
+
+  return [base, `Riferimenti ai subtest: ${rif}.`].filter(Boolean).join(' ')
 }
 
 // ── Tabella NEPSY-II in Markdown ──────────────────────────
@@ -81,6 +109,10 @@ export function nepsyToMarkdownTable(punteggi) {
     }
   }
   return md
+}
+
+export function notaRangeNepsy() {
+  return '*NEPSY-II: punteggi scalari con media 10 e DS 3; valori più alti indicano prestazioni migliori. Interpretazione contestualizzata al dominio valutato.*'
 }
 
 export function nepsyToNarrativa(punteggi) {

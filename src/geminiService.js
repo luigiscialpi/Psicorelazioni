@@ -9,6 +9,7 @@
 import {
   anamnesiRemotaToTesto, anamnesiRecenteToTesto, osservazioneToTesto,
   wiscToMarkdownTable, wiscToNarrativa, nepsyToMarkdownTable, nepsyToNarrativa,
+  notaRangeWisc, notaRangeNepsy,
 } from './wizardToText'
 import { getPazienteById } from './dataService'
 import { anonimizzaTesto } from './anonimizza'
@@ -310,6 +311,7 @@ Contenuti obbligatori:
 4. Come vengono trattate le tabelle di punteggio (mai generarle da zero, sempre riportate fedelmente da un testo incollato)
 5. Terminologia preferita vs da evitare (tabella)
 6. Lunghezza e ritmo (indicazioni quantitative)
+Non introdurre requisiti operativi non presenti nei dati di input o nel wizard (es. riferimenti obbligatori ai subtest con codici/pagine) se non sono esplicitamente disponibili.
 Rispondi SOLO con il documento Markdown, senza introduzioni.`,
     `Analizza queste ${usate} relazioni di valutazione neuropsicologica e produci il Profilo di Stile.${usate < totali ? ` Nota: il corpus è stato ridotto automaticamente da ${totali} a ${usate} relazioni per limiti payload.` : ''}\n\n${corpus}`,
     {
@@ -336,8 +338,12 @@ export async function generaRelazione(profiloStile, wizardCompleto, esempi = [])
   const anamnesiRecenteTxt  = wizard.anamnesi ? anamnesiRecenteToTesto(wizard.anamnesi) : ''
   const osservazioneTxt     = wizard.osservazione ? osservazioneToTesto(wizard.osservazione) : ''
   const wiscTabella         = wizard.cognitivo ? wiscToMarkdownTable(wizard.cognitivo.punteggi || {}) : ''
-  const wiscNarrativa       = wizard.cognitivo ? wiscToNarrativa(wizard.cognitivo.punteggi || {}) : ''
+  const wiscNotaRange       = wizard.cognitivo?.includi_nota_range ? notaRangeWisc() : ''
+  const wiscNarrativa       = wizard.cognitivo
+    ? wiscToNarrativa(wizard.cognitivo.punteggi || {}, wizard.cognitivo.riferimenti_subtest || '')
+    : ''
   const nepsyTabella        = wizard.nepsy ? nepsyToMarkdownTable(wizard.nepsy.punteggi || {}) : ''
+  const nepsyNotaRange      = wizard.nepsy?.includi_nota_range ? notaRangeNepsy() : ''
   const nepsyNarrativa      = wizard.nepsy ? nepsyToNarrativa(wizard.nepsy.punteggi || {}) : ''
 
   if (USE_MOCK_AI) {
@@ -360,7 +366,12 @@ ${osservazioneTxt}
     if (sez.includes('cognitivo')) out += `
 ## Valutazione cognitiva
 
+  ${wizard.cognitivo?.eta_valutazione ? `Età al momento della valutazione: ${wizard.cognitivo.eta_valutazione}.` : ''}
+  ${wizard.cognitivo?.strumenti_utilizzati ? `Strumenti utilizzati: ${wizard.cognitivo.strumenti_utilizzati}` : ''}
+
 ${wiscTabella || '[nessun punteggio inserito]'}
+
+  ${wiscNotaRange}
 
 ${wiscNarrativa}
 ${wizard.cognitivo?.note_cliniche || ''}
@@ -368,7 +379,11 @@ ${wizard.cognitivo?.note_cliniche || ''}
     if (sez.includes('nepsy')) out += `
 ## Approfondimento neuropsicologico
 
+  ${wizard.nepsy?.strumenti_utilizzati ? `Strumenti utilizzati: ${wizard.nepsy.strumenti_utilizzati}` : ''}
+
 ${nepsyTabella || '[nessun punteggio inserito]'}
+
+  ${nepsyNotaRange}
 
 ${nepsyNarrativa}
 ${wizard.nepsy?.note_cliniche || ''}
@@ -414,8 +429,26 @@ Si rilascia alla famiglia per gli usi consentiti dalla Legge 170/2010.
     ...wizard,
     anamnesi: wizard.anamnesi ? { remota: anamnesiRemotaTxt, recente: anamnesiRecenteTxt } : undefined,
     osservazione: wizard.osservazione ? { descrizione: osservazioneTxt, note: wizard.osservazione.note } : undefined,
-    cognitivo: wizard.cognitivo ? { tabella_wisc: wiscTabella, narrativa_precalcolata: wiscNarrativa, note_cliniche: wizard.cognitivo.note_cliniche } : undefined,
-    nepsy: wizard.nepsy ? { tabella_nepsy: nepsyTabella, narrativa_precalcolata: nepsyNarrativa, note_cliniche: wizard.nepsy.note_cliniche } : undefined,
+    cognitivo: wizard.cognitivo
+      ? {
+          eta_valutazione: wizard.cognitivo.eta_valutazione || '',
+          strumenti_utilizzati: wizard.cognitivo.strumenti_utilizzati || '',
+          tabella_wisc: wiscTabella,
+          nota_range_wisc: wiscNotaRange,
+          narrativa_precalcolata: wiscNarrativa,
+          riferimenti_subtest: wizard.cognitivo.riferimenti_subtest || '',
+          note_cliniche: wizard.cognitivo.note_cliniche,
+        }
+      : undefined,
+    nepsy: wizard.nepsy
+      ? {
+          strumenti_utilizzati: wizard.nepsy.strumenti_utilizzati || '',
+          tabella_nepsy: nepsyTabella,
+          nota_range_nepsy: nepsyNotaRange,
+          narrativa_precalcolata: nepsyNarrativa,
+          note_cliniche: wizard.nepsy.note_cliniche,
+        }
+      : undefined,
   }
 
   return callGemini(
@@ -423,6 +456,9 @@ Si rilascia alla famiglia per gli usi consentiti dalla Legge 170/2010.
 REGOLA ASSOLUTA: scrivi ESCLUSIVAMENTE seguendo il Profilo di Stile fornito.
 Non inventare mai punteggi o dati non presenti nell'input.
 Per le sezioni "cognitivo" e "nepsy": il campo "tabella_wisc"/"tabella_nepsy" contiene una tabella Markdown già pronta — riportala FEDELMENTE così com'è, senza modificarla. Il campo "narrativa_precalcolata" contiene già le frasi-cornice standard con i punteggi inseriti — puoi usarlo come base ma puoi arricchirlo con le note_cliniche fornite.
+Se presenti, riporta i campi "eta_valutazione", "strumenti_utilizzati", "nota_range_wisc" e "nota_range_nepsy" nella rispettiva sezione senza alterarli semanticamente.
+Se "riferimenti_subtest" è vuoto o assente, NON inventare riferimenti ai subtest (es. "CO pp. 10"). Se è presente, usalo solo nella sezione cognitiva pertinente.
+Non duplicare le tabelle: ogni tabella deve comparire una sola volta nella sua sezione, senza copia/incolla in altre parti del testo.
 Non usare mai nomi reali o dati identificativi: usa solo "il/la paziente". Non riceverai comunque questi dati.
 Includi solo le sezioni effettivamente presenti nei dati forniti.
 Rispondi SOLO con la relazione in Markdown, senza introduzioni o commenti.

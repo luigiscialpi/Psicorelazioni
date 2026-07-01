@@ -1,7 +1,8 @@
 import { useReducer, useEffect, useRef } from 'react'
 import { ChevronRight, ChevronLeft, Save, FlaskConical, Check, ShieldAlert } from 'lucide-react'
-import { upsertSessione, USE_MOCK } from './dataService'
+import { getProfiloStile, upsertSessione, USE_MOCK } from './dataService'
 import { WISC_IV_CAMPI, NEPSY_II_DOMINI, fasciaWISC, fasciaScalare } from './testDefinitions'
+import { estraiRequisitiDaProfilo, haRiferimentiSubtestCompilati } from './profileAlignment'
 import {
   ANAMNESI_REMOTA_VOCI, ANAMNESI_RECENTE_VOCI,
   OSSERVAZIONE_ADATTAMENTO_VOCI, OSSERVAZIONE_ATTEGGIAMENTO_VOCI,
@@ -48,8 +49,16 @@ const INIT = {
 
   anamnesi:      { remota_voci: [], remota_dettagli: {}, remota_extra: '', recente_voci: [], recente_dettagli: {}, recente_extra: '' },
   osservazione:  { adattamento_voci: [], atteggiamento_voci: [], note: '' },
-  cognitivo:     { somministrato: true, punteggi: {}, note_cliniche: '' },
-  nepsy:         { somministrato: true, punteggi: {}, note_cliniche: '' },
+  cognitivo:     {
+    somministrato: true,
+    punteggi: {},
+    riferimenti_subtest: { icv: '', rp: '', iml: '', ve: '' },
+    eta_valutazione: '',
+    strumenti_utilizzati: '',
+    includi_nota_range: true,
+    note_cliniche: '',
+  },
+  nepsy:         { somministrato: true, punteggi: {}, strumenti_utilizzati: '', includi_nota_range: true, note_cliniche: '' },
   apprendimenti: { strumenti: '', punteggi_grezzi: '', lettura: '', scrittura: '', matematica: '' },
   questionari:   { tipo: '', punteggi_grezzi: '', note_cliniche: '' },
   conclusioni:   { diagnosi: '', codice_icd: '', consigli_paziente: '', consigli_scuola: '', strumenti_compensativi: '', misure_dispensative: '' },
@@ -295,6 +304,27 @@ function StepCognitivo({ data, dispatch }) {
       <h3 style={sh}>Valutazione cognitiva — WISC-IV</h3>
       <p style={shSub}>Inserisci i punteggi standard per ciascun indice. Fascia interpretativa calcolata automaticamente.</p>
 
+      <div className="meta-row" style={{ marginBottom: 10 }}>
+        <div className="form-group">
+          <label className="form-label">Età al momento della valutazione <span>(facoltativo)</span></label>
+          <input
+            className="form-input"
+            placeholder="es. 10 anni e 4 mesi"
+            value={data.eta_valutazione || ''}
+            onChange={e => dispatch({ type: 'SET', section: 'cognitivo', k: 'eta_valutazione', v: e.target.value })}
+          />
+        </div>
+        <div className="form-group">
+          <label className="form-label">Strumenti utilizzati <span>(facoltativo)</span></label>
+          <input
+            className="form-input"
+            placeholder="es. WISC-IV"
+            value={data.strumenti_utilizzati || ''}
+            onChange={e => dispatch({ type: 'SET', section: 'cognitivo', k: 'strumenti_utilizzati', v: e.target.value })}
+          />
+        </div>
+      </div>
+
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         {WISC_IV_CAMPI.map(campo => {
           const val = data.punteggi[campo.key] || ''
@@ -320,6 +350,47 @@ function StepCognitivo({ data, dispatch }) {
         })}
       </div>
 
+      <div className="form-group" style={{ marginTop: 14 }}>
+        <label className="form-label">Riferimenti ai subtest per indice <span>(consigliato dal profilo di stile)</span></label>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+          <input
+            className="form-input"
+            placeholder="ICV: es. Similarità, Vocabolario"
+            value={data.riferimenti_subtest?.icv || ''}
+            onChange={e => dispatch({ type: 'SET_NESTED', section: 'cognitivo', group: 'riferimenti_subtest', k: 'icv', v: e.target.value })}
+          />
+          <input
+            className="form-input"
+            placeholder="RP/IRP: es. Disegno con cubi, Concetti figurati"
+            value={data.riferimenti_subtest?.rp || ''}
+            onChange={e => dispatch({ type: 'SET_NESTED', section: 'cognitivo', group: 'riferimenti_subtest', k: 'rp', v: e.target.value })}
+          />
+          <input
+            className="form-input"
+            placeholder="IML/ML: es. Memoria di cifre, Riordinamento lettere-numeri"
+            value={data.riferimenti_subtest?.iml || ''}
+            onChange={e => dispatch({ type: 'SET_NESTED', section: 'cognitivo', group: 'riferimenti_subtest', k: 'iml', v: e.target.value })}
+          />
+          <input
+            className="form-input"
+            placeholder="VE/IVE: es. Cifrario, Ricerca di simboli"
+            value={data.riferimenti_subtest?.ve || ''}
+            onChange={e => dispatch({ type: 'SET_NESTED', section: 'cognitivo', group: 'riferimenti_subtest', k: 've', v: e.target.value })}
+          />
+        </div>
+      </div>
+
+      <div className="form-group" style={{ marginTop: 10 }}>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5 }}>
+          <input
+            type="checkbox"
+            checked={Boolean(data.includi_nota_range)}
+            onChange={e => dispatch({ type: 'SET', section: 'cognitivo', k: 'includi_nota_range', v: e.target.checked })}
+          />
+          Includi nota standard sui range WISC-IV
+        </label>
+      </div>
+
       <div className="form-group" style={{ marginTop: 18 }}>
         <label className="form-label">Note cliniche aggiuntive <span>(facoltativo)</span></label>
         <textarea className="form-textarea" rows={3} placeholder="Osservazioni durante la somministrazione…"
@@ -335,6 +406,16 @@ function StepNepsy({ data, dispatch }) {
     <div>
       <h3 style={sh}>Approfondimento neuropsicologico — NEPSY-II</h3>
       <p style={shSub}>Punteggi scalari per subtest (media 10, DS 3). Compila solo i subtest somministrati.</p>
+
+      <div className="form-group" style={{ marginBottom: 12 }}>
+        <label className="form-label">Strumenti utilizzati <span>(facoltativo)</span></label>
+        <input
+          className="form-input"
+          placeholder="es. NEPSY-II, prove complementari"
+          value={data.strumenti_utilizzati || ''}
+          onChange={e => dispatch({ type: 'SET', section: 'nepsy', k: 'strumenti_utilizzati', v: e.target.value })}
+        />
+      </div>
 
       {NEPSY_II_DOMINI.map(dom => (
         <div key={dom.dominio} style={{ marginBottom: 18 }}>
@@ -363,6 +444,17 @@ function StepNepsy({ data, dispatch }) {
           </div>
         </div>
       ))}
+
+      <div className="form-group" style={{ marginTop: 8 }}>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5 }}>
+          <input
+            type="checkbox"
+            checked={Boolean(data.includi_nota_range)}
+            onChange={e => dispatch({ type: 'SET', section: 'nepsy', k: 'includi_nota_range', v: e.target.checked })}
+          />
+          Includi nota standard sui punteggi scalari NEPSY-II
+        </label>
+      </div>
 
       <div className="form-group">
         <label className="form-label">Note cliniche aggiuntive <span>(facoltativo)</span></label>
@@ -499,10 +591,88 @@ function buildSteps(sezioniAttive) {
   return steps
 }
 
+function getChecklistAderenza(reqProfilo, data) {
+  const items = []
+
+  if (reqProfilo.richiedeRiferimentiSubtest && data.sezioni_attive.includes('cognitivo')) {
+    items.push({
+      id: 'subtest',
+      label: 'Riferimenti subtest WISC per indice compilati',
+      ok: haRiferimentiSubtestCompilati(data.cognitivo),
+    })
+  }
+
+  if (reqProfilo.richiedeEtaValutazione && data.sezioni_attive.includes('cognitivo')) {
+    items.push({
+      id: 'eta_valutazione',
+      label: 'Età al momento della valutazione compilata (WISC)',
+      ok: String(data.cognitivo?.eta_valutazione || '').trim().length > 0,
+    })
+  }
+
+  if (reqProfilo.richiedeStrumenti) {
+    if (data.sezioni_attive.includes('cognitivo')) {
+      items.push({
+        id: 'strumenti_cognitivo',
+        label: 'Strumenti WISC compilati',
+        ok: String(data.cognitivo?.strumenti_utilizzati || '').trim().length > 0,
+      })
+    }
+    if (data.sezioni_attive.includes('nepsy')) {
+      items.push({
+        id: 'strumenti_nepsy',
+        label: 'Strumenti NEPSY compilati',
+        ok: String(data.nepsy?.strumenti_utilizzati || '').trim().length > 0,
+      })
+    }
+  }
+
+  if (reqProfilo.richiedeNoteRangeWisc && data.sezioni_attive.includes('cognitivo')) {
+    items.push({
+      id: 'nota_range_wisc',
+      label: 'Nota standard range WISC abilitata',
+      ok: Boolean(data.cognitivo?.includi_nota_range),
+    })
+  }
+
+  return items
+}
+
 // ── Componente principale ──────────────────────────────────
 export default function WizardNuovaRelazione({ onGenera, datiIniziali }) {
-  const [data, dispatch] = useReducer(wizardReducer, datiIniziali ? { ...INIT, ...datiIniziali } : INIT)
+  const initialData = datiIniziali
+    ? {
+        ...INIT,
+        ...datiIniziali,
+        cognitivo: {
+          ...INIT.cognitivo,
+          ...(datiIniziali.cognitivo || {}),
+          riferimenti_subtest:
+            typeof datiIniziali.cognitivo?.riferimenti_subtest === 'string'
+              ? {
+                  ...INIT.cognitivo.riferimenti_subtest,
+                  icv: datiIniziali.cognitivo.riferimenti_subtest,
+                }
+              : {
+                  ...INIT.cognitivo.riferimenti_subtest,
+                  ...(datiIniziali.cognitivo?.riferimenti_subtest || {}),
+                },
+        },
+        nepsy: {
+          ...INIT.nepsy,
+          ...(datiIniziali.nepsy || {}),
+        },
+      }
+    : INIT
+
+  const [data, dispatch] = useReducer(wizardReducer, initialData)
   const [step, dispatchStep] = useReducer((s, a) => a.type === 'NEXT' ? s + 1 : a.type === 'PREV' ? Math.max(0, s - 1) : a.value, 0)
+  const [reqProfilo, dispatchReqProfilo] = useReducer((s, a) => ({ ...s, ...a }), {
+    richiedeRiferimentiSubtest: false,
+    richiedeStrumenti: false,
+    richiedeEtaValutazione: false,
+    richiedeNoteRangeWisc: false,
+  })
   const sessionIdRef = useRef(null)
   const [saving, toggleSaving] = useReducer(s => !s, false)
   const saveTimer = useRef(null)
@@ -510,6 +680,8 @@ export default function WizardNuovaRelazione({ onGenera, datiIniziali }) {
   const STEPS = buildSteps(data.sezioni_attive)
   const safeStep = Math.min(step, STEPS.length - 1)
   const current = STEPS[safeStep]
+  const checklistAderenza = getChecklistAderenza(reqProfilo, data)
+  const checklistKO = checklistAderenza.filter(i => !i.ok)
 
   useEffect(() => {
     clearTimeout(saveTimer.current)
@@ -522,10 +694,25 @@ export default function WizardNuovaRelazione({ onGenera, datiIniziali }) {
     return () => clearTimeout(saveTimer.current)
   }, [data])
 
+  useEffect(() => {
+    let live = true
+    ;(async () => {
+      const profilo = await getProfiloStile()
+      if (!live) return
+      dispatchReqProfilo(estraiRequisitiDaProfilo(profilo || ''))
+    })()
+    return () => { live = false }
+  }, [])
+
   function setField(k, v) { dispatch({ type: 'SET', section: current.section, k, v }) }
 
   function canProceed() {
     if (current.id === 'sezioni' && data.sezioni_attive.length === 0) return false
+    if (current.id === 'cognitivo' && checklistKO.some(i => i.id === 'subtest' || i.id === 'eta_valutazione' || i.id === 'strumenti_cognitivo' || i.id === 'nota_range_wisc')) {
+      return false
+    }
+    if (current.id === 'nepsy' && checklistKO.some(i => i.id === 'strumenti_nepsy')) return false
+    if (current.id === 'finale' && checklistKO.length > 0) return false
     return true
   }
 
@@ -544,6 +731,24 @@ export default function WizardNuovaRelazione({ onGenera, datiIniziali }) {
       </div>
 
       <div className="page-body">
+        {checklistAderenza.length > 0 && (
+          <div className="alert alert-info" style={{ marginBottom: 16 }}>
+            <ShieldAlert size={15} style={{ flexShrink: 0, marginTop: 1 }} />
+            <div style={{ width: '100%' }}>
+              <div style={{ fontSize: 12.5, fontWeight: 600, marginBottom: 6 }}>
+                Checklist aderenza Profilo di Stile {checklistKO.length === 0 ? 'completa' : `incompleta (${checklistKO.length})`}
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12.5 }}>
+                {checklistAderenza.map(item => (
+                  <div key={item.id} style={{ color: item.ok ? 'var(--success)' : 'var(--text)' }}>
+                    {item.ok ? '✓' : '•'} {item.label}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
         {USE_MOCK && (
           <div className="alert alert-warn" style={{ marginBottom: 16 }}>
             <FlaskConical size={15} style={{ flexShrink: 0 }} />
@@ -574,7 +779,7 @@ export default function WizardNuovaRelazione({ onGenera, datiIniziali }) {
               Avanti <ChevronRight size={15} />
             </button>
           ) : (
-            <button className="btn btn-primary" onClick={() => onGenera(data, sessionIdRef.current)}>
+            <button className="btn btn-primary" onClick={() => onGenera(data, sessionIdRef.current)} disabled={!canProceed()}>
               <Save size={15} /> Genera relazione
             </button>
           )}

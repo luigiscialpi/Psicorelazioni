@@ -53,6 +53,25 @@ function emptyLine(spaceAfter = 120) {
   return new Paragraph({ spacing: { after: spaceAfter }, children: [new TextRun('')] })
 }
 
+function formatDataIt(value) {
+  if (!value) return ''
+  const d = new Date(value)
+  if (Number.isNaN(d.getTime())) return ''
+  return d.toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit', year: 'numeric' })
+}
+
+function deAnonimizzaTesto(md, anagrafica) {
+  const fullName = [anagrafica?.nome, anagrafica?.cognome].filter(Boolean).join(' ').trim()
+  const birthDate = formatDataIt(anagrafica?.data_nascita)
+  const scuolaClasse = String(anagrafica?.scuola_classe || '').trim()
+
+  let out = String(md || '')
+  if (fullName) out = out.replace(/\[PAZIENTE\]/g, fullName)
+  if (birthDate) out = out.replace(/\[DATA\]/g, birthDate)
+  if (scuolaClasse) out = out.replace(/\[SCUOLA\]/g, scuolaClasse)
+  return out
+}
+
 // ── Parser Markdown minimale → array di Paragraph ─────────
 // Gestisce: ## titoli, **grassetto** inline, testo normale,
 // blocchi monospace (tabelle incollate dal software di scoring)
@@ -128,7 +147,10 @@ function parseInline(text) {
 // la converte in una vera Table Word con intestazione in grassetto.
 // Altrimenti il testo viene riportato in monospace come fallback.
 function parseMarkdownTable(text) {
-  const lines = text.split('\n').filter(l => l.startsWith('|'))
+  const lines = text
+    .split('\n')
+    .map(l => l.trim())
+    .filter(l => /^\|.*\|$/.test(l))
   if (lines.length < 2) return null
 
   const rows = lines
@@ -168,6 +190,66 @@ function parseMarkdownTable(text) {
     columnWidths: colWidths,
     rows:         tableRows,
   })
+}
+
+function isTableLine(line) {
+  const l = String(line || '').trim()
+  return /^\|.*\|$/.test(l)
+}
+
+function isTableSeparatorLine(line) {
+  const l = String(line || '').trim()
+  return /^\|[\-:\s|]+\|$/.test(l)
+}
+
+function splitMarkdownBlocks(md) {
+  const lines = String(md || '').split('\n')
+  const blocks = []
+  let textBuffer = []
+  let tableBuffer = []
+
+  const flushText = () => {
+    if (textBuffer.length === 0) return
+    blocks.push({ type: 'text', content: textBuffer.join('\n') })
+    textBuffer = []
+  }
+
+  const flushTable = () => {
+    if (tableBuffer.length === 0) return
+    blocks.push({ type: 'table', content: tableBuffer.join('\n') })
+    tableBuffer = []
+  }
+
+  for (const line of lines) {
+    if (isTableLine(line)) {
+      flushText()
+      tableBuffer.push(line.trim())
+      continue
+    }
+
+    // riga vuota immediatamente dopo una tabella: chiude il blocco tabella
+    if (tableBuffer.length > 0 && line.trim() === '') {
+      flushTable()
+      textBuffer.push('')
+      continue
+    }
+
+    // separatore markdown tabella fuori contesto: trattalo come testo
+    if (isTableSeparatorLine(line) && tableBuffer.length === 0) {
+      textBuffer.push(line)
+      continue
+    }
+
+    if (tableBuffer.length > 0) {
+      flushTable()
+    }
+    textBuffer.push(line)
+  }
+
+  flushTable()
+  flushText()
+
+  return blocks
 }
 
 // ── Intestazione fissa dello studio ───────────────────────
@@ -240,25 +322,25 @@ function anagraficaParagraph(anagrafica) {
 
 export async function esportaDocx({ testo, data, nomeStudio, anagrafica }) {
   const oggi = data || new Date().toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit', year: 'numeric' })
+  const testoPulito = deAnonimizzaTesto(testo, anagrafica)
 
-  // Separa le tabelle Markdown dal testo normale e genera
-  // blocchi misti: Paragraph normali + Table quando trova | ... |
+  // Separa in blocchi testuali/tabellari senza duplicare righe tabella.
   const blocchi = []
-  const sezioni = testo.split(/\n(?=##? )/)  // split sui titoli H1/H2
 
-  for (const sez of sezioni) {
-    const tableLine = sez.split('\n').find(l => l.startsWith('|'))
-    if (tableLine) {
-      const tableText = sez.split('\n').filter(l => l.startsWith('|')).join('\n')
-      const preText   = sez.split('\n').filter(l => !l.startsWith('|') && !l.match(/^\|[-\s|]+\|$/)).join('\n')
-      blocchi.push(...markdownToParagraphs(preText))
-      const table = parseMarkdownTable(tableText)
-      if (table) {
-        blocchi.push(table)
-        blocchi.push(emptyLine(120))
-      }
+  for (const block of splitMarkdownBlocks(testoPulito)) {
+    if (block.type === 'text') {
+      blocchi.push(...markdownToParagraphs(block.content))
+      continue
+    }
+
+    const table = parseMarkdownTable(block.content)
+    if (table) {
+      blocchi.push(table)
+      blocchi.push(emptyLine(120))
     } else {
-      blocchi.push(...markdownToParagraphs(sez))
+      // fallback: se il parser tabella non riconosce la struttura,
+      // mantieni comunque il contenuto come testo per non perdere informazioni.
+      blocchi.push(...markdownToParagraphs(block.content))
     }
   }
 
