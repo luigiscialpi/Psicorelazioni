@@ -10,6 +10,8 @@ import {
   anamnesiRemotaToTesto, anamnesiRecenteToTesto, osservazioneToTesto,
   wiscToMarkdownTable, wiscToNarrativa, nepsyToMarkdownTable, nepsyToNarrativa,
 } from './wizardToText'
+import { getPazienteById } from './dataService'
+import { anonimizzaTesto } from './anonimizza'
 
 const API_KEY = import.meta.env.VITE_GEMINI_API_KEY || ''
 const USE_MOCK_AI = !API_KEY || API_KEY === 'YOUR_GEMINI_KEY'
@@ -32,12 +34,36 @@ async function callGemini(systemPrompt, userPrompt) {
   return data.candidates?.[0]?.content?.parts?.[0]?.text || ''
 }
 
+async function anonimizzaRelazioniPerAnalisi(relazioni) {
+  return Promise.all((relazioni || []).map(async (r) => {
+    let paziente = null
+    if (r?.paziente_id) {
+      try {
+        paziente = await getPazienteById(r.paziente_id)
+      } catch {
+        paziente = null
+      }
+    }
+
+    return {
+      ...r,
+      testo_anonimizzato: anonimizzaTesto(r?.testo_markdown || '', { paziente }),
+    }
+  }))
+}
+
+export async function preparaAnteprimaAnonimizzazione(relazioni) {
+  return anonimizzaRelazioniPerAnalisi(relazioni)
+}
+
 // ── ANALISI STILE ──────────────────────────────────────────
 export async function analizzaStile(relazioni) {
+  const relazioniAnonimizzate = await anonimizzaRelazioniPerAnalisi(relazioni)
+
   if (USE_MOCK_AI) {
     await new Promise(r => setTimeout(r, 1800))
     return `# PROFILO DI STILE — Valutazioni neuropsicologiche
-Ultimo aggiornamento: ${new Date().toISOString().slice(0,10)} | Relazioni analizzate: ${relazioni.length} | Versione: 1
+Ultimo aggiornamento: ${new Date().toISOString().slice(0,10)} | Relazioni analizzate: ${relazioniAnonimizzate.length} | Versione: 1
 
 ## 1. Struttura standard (ORDINE INVARIABILE)
 1. Intestazione professionale (nome, qualifica, specializzazione) — fissa, da template
@@ -84,8 +110,8 @@ Ultimo aggiornamento: ${new Date().toISOString().slice(0,10)} | Relazioni analiz
 `
   }
 
-  const corpus = relazioni.map((r, i) =>
-    `--- RELAZIONE ${i+1} (${r.tipo_relazione || 'tipo non specificato'}) ---\n${r.testo_markdown}`
+  const corpus = relazioniAnonimizzate.map((r, i) =>
+    `--- RELAZIONE ${i+1} (${r.tipo_relazione || 'tipo non specificato'}) ---\n${r.testo_anonimizzato}`
   ).join('\n\n')
 
   return callGemini(
@@ -99,7 +125,7 @@ Il documento deve avere esattamente queste sezioni numerate:
 5. Terminologia preferita vs da evitare (tabella)
 6. Lunghezza e ritmo (indicazioni quantitative)
 Rispondi SOLO con il documento Markdown, senza introduzioni.`,
-    `Analizza queste ${relazioni.length} relazioni di valutazione neuropsicologica e produci il Profilo di Stile:\n\n${corpus}`
+    `Analizza queste ${relazioniAnonimizzate.length} relazioni di valutazione neuropsicologica e produci il Profilo di Stile:\n\n${corpus}`
   )
 }
 
@@ -245,18 +271,20 @@ Istruzione aggiuntiva: ${istruzione}`
 // esistente con le sole relazioni nuove (aggiunte dopo l'ultimo
 // aggiornamento). Molto più efficiente con Gemini gratuito.
 export async function aggiornaProfiloIncrementale(profiloEsistente, nuoveRelazioni) {
+  const relazioniAnonimizzate = await anonimizzaRelazioniPerAnalisi(nuoveRelazioni)
+
   if (USE_MOCK_AI) {
     await new Promise(r => setTimeout(r, 1400))
     // In mock: aggiunge solo una riga di nota in fondo al profilo
     const dataNow = new Date().toISOString().slice(0, 10)
     return profiloEsistente
-      .replace(/Relazioni analizzate: \d+/, `Relazioni analizzate: ${profiloEsistente.match(/Relazioni analizzate: (\d+)/)?.[1] ?? '?'} + ${nuoveRelazioni.length} nuove`)
+      .replace(/Relazioni analizzate: \d+/, `Relazioni analizzate: ${profiloEsistente.match(/Relazioni analizzate: (\d+)/)?.[1] ?? '?'} + ${relazioniAnonimizzate.length} nuove`)
       .replace(/Ultimo aggiornamento: [\d-]+/, `Ultimo aggiornamento: ${dataNow}`)
-      + `\n\n> *Aggiornamento incrementale del ${dataNow}: analizzate ${nuoveRelazioni.length} nuove relazioni. Nessuna modifica sostanziale rilevata rispetto al profilo precedente (demo).*`
+      + `\n\n> *Aggiornamento incrementale del ${dataNow}: analizzate ${relazioniAnonimizzate.length} nuove relazioni. Nessuna modifica sostanziale rilevata rispetto al profilo precedente (demo).*`
   }
 
-  const corpus = nuoveRelazioni.map((r, i) =>
-    `--- NUOVA RELAZIONE ${i + 1} (${r.tipo_relazione || 'tipo non specificato'}) ---\n${r.testo_markdown}`
+  const corpus = relazioniAnonimizzate.map((r, i) =>
+    `--- NUOVA RELAZIONE ${i + 1} (${r.tipo_relazione || 'tipo non specificato'}) ---\n${r.testo_anonimizzato}`
   ).join('\n\n')
 
   return callGemini(
@@ -270,7 +298,7 @@ Rispondi SOLO con il documento Markdown aggiornato, senza introduzioni.`,
     `=== PROFILO DI STILE ATTUALE ===
 ${profiloEsistente}
 
-=== NUOVE RELAZIONI DA INTEGRARE (${nuoveRelazioni.length}) ===
+=== NUOVE RELAZIONI DA INTEGRARE (${relazioniAnonimizzate.length}) ===
 ${corpus}
 
 Aggiorna il profilo integrando le osservazioni dalle nuove relazioni.`

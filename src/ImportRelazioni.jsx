@@ -224,6 +224,13 @@ export default function ImportRelazioni() {
       </div>
 
       <div className="page-body">
+        <div className="alert alert-warn" style={{ marginBottom: 16 }}>
+          <AlertTriangle size={15} style={{ flexShrink: 0 }} />
+          <span>
+            Il testo delle relazioni viene anonimizzato automaticamente prima di essere inviato a Gemini per l'analisi dello stile, ma l'anonimizzazione automatica non è garantita al 100% — verifica sempre l'anteprima prima di confermare.
+          </span>
+        </div>
+
         {USE_MOCK && (
           <div className="alert alert-warn" style={{ marginBottom: 16 }}>
             <FlaskConical size={15} style={{ flexShrink: 0 }} />

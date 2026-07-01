@@ -1,7 +1,7 @@
 import { useReducer, useEffect } from 'react'
 import { Sparkles, RefreshCw, Edit3, Check, AlertTriangle, FlaskConical, GitMerge, RotateCcw } from 'lucide-react'
 import { getRelazioni, getProfiloStileCompleto, saveProfiloStile, USE_MOCK } from './dataService'
-import { analizzaStile, aggiornaProfiloIncrementale, USE_MOCK_AI } from './geminiService'
+import { analizzaStile, aggiornaProfiloIncrementale, preparaAnteprimaAnonimizzazione, USE_MOCK_AI } from './geminiService'
 
 // ── Reducer ────────────────────────────────────────────────
 const INIT = {
@@ -16,6 +16,11 @@ const INIT = {
   draft:            '',
   saving:           false,
   msg:              null,     // { type: 'ok'|'warn'|'err', text }
+  previewOpen:      false,
+  previewMode:      null,     // 'completa' | 'incrementale'
+  previewRelazioni: [],       // relazioni originali da analizzare dopo conferma
+  previewItems:     [],       // relazioni anonimizzate per anteprima utente
+  previewChecked:   false,
 }
 
 function reducer(state, action) {
@@ -35,8 +40,61 @@ function reducer(state, action) {
                                   profilo: state.draft, draft: '',
                                   msg: { type: 'ok', text: 'Modifiche manuali salvate.' } }
     case 'MSG':          return { ...state, msg: action.msg }
+    case 'PREVIEW_OPEN': return {
+      ...state,
+      previewOpen: true,
+      previewMode: action.mode,
+      previewRelazioni: action.relazioni,
+      previewItems: action.items,
+      previewChecked: false,
+      msg: null,
+    }
+    case 'PREVIEW_CLOSE':return {
+      ...state,
+      previewOpen: false,
+      previewMode: null,
+      previewRelazioni: [],
+      previewItems: [],
+      previewChecked: false,
+    }
+    case 'PREVIEW_CHECK': return { ...state, previewChecked: action.value }
+    case 'START_ANALISI_DA_PREVIEW':
+      return {
+        ...state,
+        analyzing: true,
+        previewOpen: false,
+        previewMode: null,
+        previewRelazioni: [],
+        previewItems: [],
+        previewChecked: false,
+        msg: null,
+      }
     default:             return state
   }
+}
+
+function renderPreviewTokens(line) {
+  const parts = line.split(/(\[PAZIENTE\]|\[DATA\]|\[TELEFONO\]|\[PIVA\]|\[CF\]|\[INDIRIZZO\]|\[PERSONA\]|\[SCUOLA\])/g)
+  return parts.map((part, idx) => {
+    if (/^\[(PAZIENTE|DATA|TELEFONO|PIVA|CF|INDIRIZZO|PERSONA|SCUOLA)\]$/.test(part)) {
+      return (
+        <span
+          key={idx}
+          style={{
+            background: 'var(--accent-lt)',
+            color: 'var(--accent-dk)',
+            fontWeight: 600,
+            borderRadius: 4,
+            padding: '1px 4px',
+            margin: '0 1px',
+          }}
+        >
+          {part}
+        </span>
+      )
+    }
+    return <span key={idx}>{part}</span>
+  })
 }
 
 // ── Render Markdown minimale ───────────────────────────────
@@ -58,7 +116,8 @@ function renderMd(md) {
 export default function ProfiloStile() {
   const [state, dispatch] = useReducer(reducer, INIT)
   const { profilo, updatedAt, numAnalizzate, nuoveCount, totalCount,
-          loading, analyzing, editing, draft, saving, msg } = state
+          loading, analyzing, editing, draft, saving, msg,
+          previewOpen, previewMode, previewRelazioni, previewItems, previewChecked } = state
 
   useEffect(() => { load() }, [])
 
@@ -85,18 +144,14 @@ export default function ProfiloStile() {
 
   // ── Analisi completa (da zero) ─────────────────────────
   async function handleAnalizzaCompleta() {
-    dispatch({ type: 'START_ANALISI' })
     try {
       const relazioni = await getRelazioni()
       if (relazioni.length === 0) {
         dispatch({ type: 'MSG', msg: { type: 'warn', text: 'Nessuna relazione trovata. Importa prima alcune relazioni.' } })
-        dispatch({ type: 'ANALISI_ERR', text: '' })
         return
       }
-      const risultato = await analizzaStile(relazioni)
-      await saveProfiloStile(risultato, relazioni.length)
-      dispatch({ type: 'ANALISI_DONE', profilo: risultato, num: relazioni.length,
-        msg: `Profilo generato analizzando ${relazioni.length} relazioni.` })
+      const anteprima = await preparaAnteprimaAnonimizzazione(relazioni)
+      dispatch({ type: 'PREVIEW_OPEN', mode: 'completa', relazioni, items: anteprima })
     } catch (e) {
       dispatch({ type: 'ANALISI_ERR', text: 'Errore durante l\'analisi: ' + e.message })
     }
@@ -104,7 +159,6 @@ export default function ProfiloStile() {
 
   // ── Aggiornamento incrementale ─────────────────────────
   async function handleAggiornamento() {
-    dispatch({ type: 'START_ANALISI' })
     try {
       const relazioni  = await getRelazioni()
       const ultimoAgg  = updatedAt ? new Date(updatedAt) : null
@@ -114,16 +168,43 @@ export default function ProfiloStile() {
 
       if (nuove.length === 0) {
         dispatch({ type: 'MSG', msg: { type: 'warn', text: 'Nessuna relazione nuova da integrare.' } })
-        dispatch({ type: 'ANALISI_ERR', text: '' })
         return
       }
 
-      const risultato = await aggiornaProfiloIncrementale(profilo, nuove)
-      await saveProfiloStile(risultato, totalCount)
-      dispatch({ type: 'ANALISI_DONE', profilo: risultato, num: totalCount,
-        msg: `Profilo aggiornato con ${nuove.length} nuova/e relazione/i. Corpus totale: ${totalCount}.` })
+      const anteprima = await preparaAnteprimaAnonimizzazione(nuove)
+      dispatch({ type: 'PREVIEW_OPEN', mode: 'incrementale', relazioni: nuove, items: anteprima })
     } catch (e) {
       dispatch({ type: 'ANALISI_ERR', text: 'Errore durante l\'aggiornamento: ' + e.message })
+    }
+  }
+
+  async function confermaPreviewEAnalizza() {
+    if (!previewChecked || previewRelazioni.length === 0) return
+
+    dispatch({ type: 'START_ANALISI_DA_PREVIEW' })
+    try {
+      if (previewMode === 'incrementale') {
+        const risultato = await aggiornaProfiloIncrementale(profilo, previewRelazioni)
+        await saveProfiloStile(risultato, totalCount)
+        dispatch({
+          type: 'ANALISI_DONE',
+          profilo: risultato,
+          num: totalCount,
+          msg: `Profilo aggiornato con ${previewRelazioni.length} nuova/e relazione/i. Corpus totale: ${totalCount}.`,
+        })
+        return
+      }
+
+      const risultato = await analizzaStile(previewRelazioni)
+      await saveProfiloStile(risultato, previewRelazioni.length)
+      dispatch({
+        type: 'ANALISI_DONE',
+        profilo: risultato,
+        num: previewRelazioni.length,
+        msg: `Profilo generato analizzando ${previewRelazioni.length} relazioni.`,
+      })
+    } catch (e) {
+      dispatch({ type: 'ANALISI_ERR', text: 'Errore durante l\'analisi: ' + e.message })
     }
   }
 
@@ -175,6 +256,13 @@ export default function ProfiloStile() {
       </div>
 
       <div className="page-body">
+        <div className="alert alert-warn" style={{ marginBottom: 16 }}>
+          <AlertTriangle size={15} style={{ flexShrink: 0 }} />
+          <span>
+            Il testo delle relazioni viene anonimizzato automaticamente prima di essere inviato a Gemini per l'analisi dello stile, ma l'anonimizzazione automatica non è garantita al 100% — verifica sempre l'anteprima prima di confermare.
+          </span>
+        </div>
+
         {/* Banner mock */}
         {(USE_MOCK || USE_MOCK_AI) && (
           <div className="alert alert-warn" style={{ marginBottom: 16 }}>
@@ -220,6 +308,57 @@ export default function ProfiloStile() {
         )}
 
         {loading && <p style={{ color: 'var(--text-muted)', fontSize: 13 }}>Caricamento…</p>}
+
+        {previewOpen && !analyzing && (
+          <div className="card" style={{ marginBottom: 16 }}>
+            <div className="card-title" style={{ marginBottom: 10 }}>Anteprima anonimizzazione (obbligatoria)</div>
+            <p style={{ fontSize: 12.5, color: 'var(--text-muted)', marginBottom: 12, lineHeight: 1.6 }}>
+              Prima di inviare i testi a Gemini, verifica questa anteprima anonimizzata e conferma esplicitamente.
+              Se annulli, non verrà effettuata alcuna chiamata esterna.
+            </p>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxHeight: 360, overflow: 'auto', paddingRight: 4, marginBottom: 12 }}>
+              {previewItems.map((item, idx) => (
+                <div key={item.id || idx} style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: 10, background: '#fff' }}>
+                  <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 6 }}>
+                    Relazione {idx + 1} {item.tipo_relazione ? `· ${item.tipo_relazione}` : ''}
+                  </div>
+                  <div style={{ fontFamily: 'monospace', fontSize: 12, lineHeight: 1.55, whiteSpace: 'pre-wrap' }}>
+                    {(item.testo_anonimizzato || '').slice(0, 2000).split('\n').map((line, lineIdx) => (
+                      <div key={lineIdx}>{renderPreviewTokens(line)}</div>
+                    ))}
+                    {(item.testo_anonimizzato || '').length > 2000 && (
+                      <div style={{ color: 'var(--text-muted)' }}>…</div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', fontSize: 12.5, marginBottom: 12 }}>
+              <input
+                type="checkbox"
+                checked={previewChecked}
+                onChange={e => dispatch({ type: 'PREVIEW_CHECK', value: e.target.checked })}
+                style={{ marginTop: 2 }}
+              />
+              <span>Ho verificato l'anteprima anonimizzata e confermo di procedere con l'analisi.</span>
+            </label>
+
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button
+                className="btn btn-primary"
+                onClick={confermaPreviewEAnalizza}
+                disabled={!previewChecked}
+              >
+                <Check size={14} /> Ho verificato, procedi con l'analisi
+              </button>
+              <button className="btn btn-secondary" onClick={() => dispatch({ type: 'PREVIEW_CLOSE' })}>
+                Annulla
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Analisi in corso */}
         {analyzing && (
