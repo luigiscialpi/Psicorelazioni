@@ -50,15 +50,16 @@ export default function App() {
 
   function renderPage() {
     switch (page) {
-      case 'dashboard': return <Dashboard onNav={onNav} />
+      case 'dashboard': return <Dashboard onNav={onNav} onApriInWizard={data => dispatch({ type: 'APRI_IN_WIZARD', data })} />
       case 'import':    return <ImportRelazioni />
       case 'stile':     return <ProfiloStile />
       case 'professionista': return <ProfiloProfessionista />
       case 'nuova':     return (
         <WizardNuovaRelazione
-          key={wizardDatiIniziali?._relazioneId || 'nuova'}
+          key={wizardDatiIniziali?._relazioneId || wizardDatiIniziali?._sessionId || 'nuova'}
           datiIniziali={wizardDatiIniziali}
           onGenera={data => dispatch({ type: 'WIZARD_DONE', data })}
+          onAnnullaModifica={() => onNav('nuova')}
         />
       )
       case 'risultato': return <RisultatoGenerazione wizardData={wizardResult} onBack={() => onNav('nuova')} />
@@ -67,9 +68,16 @@ export default function App() {
     }
   }
 
+  let activeSidebarTab = page
+  if (page === 'risultato') {
+    activeSidebarTab = 'nuova'
+  } else if (page === 'nuova' && wizardDatiIniziali) {
+    activeSidebarTab = wizardDatiIniziali._relazioneId ? 'archivio' : 'dashboard'
+  }
+
   return (
     <div className="app-shell">
-      <Sidebar current={page === 'risultato' ? 'nuova' : page} onNav={onNav} mockMode={USE_MOCK} />
+      <Sidebar current={activeSidebarTab} onNav={onNav} mockMode={USE_MOCK} />
       <main className="main-content">{renderPage()}</main>
     </div>
   )

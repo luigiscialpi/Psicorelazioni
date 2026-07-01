@@ -639,7 +639,7 @@ function getChecklistAderenza(reqProfilo, data) {
 }
 
 // ── Componente principale ──────────────────────────────────
-export default function WizardNuovaRelazione({ onGenera, datiIniziali }) {
+export default function WizardNuovaRelazione({ onGenera, datiIniziali, onAnnullaModifica }) {
   const initialData = datiIniziali
     ? {
         ...INIT,
@@ -673,7 +673,7 @@ export default function WizardNuovaRelazione({ onGenera, datiIniziali }) {
     richiedeEtaValutazione: false,
     richiedeNoteRangeWisc: false,
   })
-  const sessionIdRef = useRef(null)
+  const sessionIdRef = useRef(datiIniziali?._sessionId || null)
   const [saving, toggleSaving] = useReducer(s => !s, false)
   const saveTimer = useRef(null)
 
@@ -720,14 +720,31 @@ export default function WizardNuovaRelazione({ onGenera, datiIniziali }) {
     <>
       <div className="topbar">
         <div>
-          <div className="topbar-title">Nuova relazione</div>
+          <div className="topbar-title">{datiIniziali ? (datiIniziali._relazioneId ? 'Modifica relazione' : 'Modifica bozza') : 'Nuova relazione'}</div>
           <div className="topbar-sub">Step {safeStep + 1} di {STEPS.length} — {current.label}</div>
         </div>
-        {saving && (
-          <span style={{ fontSize: 12, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 6 }}>
-            <span className="spinner" style={{ width: 12, height: 12 }} /> Salvataggio automatico…
-          </span>
-        )}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          {datiIniziali && (
+            <button
+              className="btn btn-sm"
+              onClick={onAnnullaModifica}
+              style={{
+                whiteSpace: 'nowrap',
+                backgroundColor: '#d97706',
+                borderColor: '#b45309',
+                color: '#ffffff',
+                fontWeight: 600
+              }}
+            >
+              Crea nuova da zero
+            </button>
+          )}
+          {saving && (
+            <span style={{ fontSize: 12, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap' }}>
+              <span className="spinner" style={{ width: 12, height: 12 }} /> Salvataggio automatico…
+            </span>
+          )}
+        </div>
       </div>
 
       <div className="page-body">

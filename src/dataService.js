@@ -251,4 +251,13 @@ export async function upsertSessione(id, patch) {
   return data
 }
 
+export async function deleteSessione(id) {
+  if (USE_MOCK) {
+    mockSessioni = mockSessioni.filter(s => s.id !== id)
+    return true
+  }
+  const { error } = await supabase.from('sessioni_wizard').delete().eq('id', id)
+  return !error
+}
+
 export { USE_MOCK }

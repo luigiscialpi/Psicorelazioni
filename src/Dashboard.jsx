@@ -1,12 +1,13 @@
 import { useEffect, useReducer } from 'react'
-import { FileText, Upload, TrendingUp, Clock } from 'lucide-react'
-import { getRelazioni, getPazienti, getSessioniInCorso } from './dataService'
+import { FileText, Upload, TrendingUp, Clock, Trash2 } from 'lucide-react'
+import { getRelazioni, getPazienti, getSessioniInCorso, deleteSessione } from './dataService'
 
 const init = { stats: { totale: 0, questo_mese: 0, pazienti: 0 }, recenti: [], sospese: [], loading: true }
 
 function reducer(state, action) {
   switch (action.type) {
     case 'LOADED': return { ...state, ...action.payload, loading: false }
+    case 'DELETE_SOSPESA': return { ...state, sospese: state.sospese.filter(s => s.id !== action.id) }
     default: return state
   }
 }
@@ -14,10 +15,13 @@ function reducer(state, action) {
 const MESI = ['gen','feb','mar','apr','mag','giu','lug','ago','set','ott','nov','dic']
 function formatData(iso) {
   const d = new Date(iso)
-  return `${d.getDate()} ${MESI[d.getMonth()]} ${d.getFullYear()}`
+  const dateStr = `${d.getDate()} ${MESI[d.getMonth()]} ${d.getFullYear()}`
+  const pad = (n) => String(n).padStart(2, '0')
+  const timeStr = `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+  return `${dateStr} ${timeStr}`
 }
 
-export default function Dashboard({ onNav }) {
+export default function Dashboard({ onNav, onApriInWizard }) {
   const [state, dispatch] = useReducer(reducer, init)
   const { stats, recenti, sospese, loading } = state
 
@@ -77,9 +81,24 @@ export default function Dashboard({ onNav }) {
                 <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>
                   Wizard avviato il {formatData(s.created_at)} — {s.risposte_wizard?.tipo || 'tipo non definito'}
                 </span>
-                <button className="btn btn-secondary btn-sm" onClick={() => onNav('nuova')}>
-                  Riprendi
-                </button>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                  <button className="btn btn-secondary btn-sm" onClick={() => onApriInWizard({ ...s.risposte_wizard, _sessionId: s.id })}>
+                    Riprendi
+                  </button>
+                  <button
+                    className="btn btn-secondary btn-sm"
+                    style={{ color: 'var(--danger)', padding: 6, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                    onClick={async () => {
+                      if (confirm('Vuoi eliminare questa bozza?')) {
+                        const ok = await deleteSessione(s.id)
+                        if (ok) dispatch({ type: 'DELETE_SOSPESA', id: s.id })
+                      }
+                    }}
+                    title="Elimina bozza"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
               </div>
             ))}
           </div>
