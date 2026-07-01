@@ -1,4 +1,5 @@
 import { useEffect, useReducer } from 'react'
+import { Routes, Route, Navigate, Outlet } from 'react-router-dom'
 import { supabase } from './supabase'
 import { USE_MOCK } from './dataService'
 import AuthScreen          from './AuthScreen'
@@ -10,23 +11,35 @@ import ProfiloProfessionista from './ProfiloProfessionista'
 import WizardNuovaRelazione from './WizardNuovaRelazione'
 import RisultatoGenerazione from './RisultatoGenerazione'
 import Archivio              from './Archivio'
-import PlaceholderPage      from './PlaceholderPage'
 
 function reducer(state, action) {
   switch (action.type) {
     case 'SET_SESSION':  return { ...state, session: action.session, loading: false }
-    case 'SET_PAGE':     return { ...state, page: action.page, wizardResult: null, wizardDatiIniziali: null }
-    case 'WIZARD_DONE':  return { ...state, page: 'risultato', wizardResult: action.data }
-    case 'APRI_IN_WIZARD': return { ...state, page: 'nuova', wizardDatiIniziali: action.data, wizardResult: null }
     default: return state
   }
 }
 
+function ProtectedRoute({ session }) {
+  if (!session) return <Navigate to="/auth" replace />
+  return <Outlet />
+}
+
+function AppLayout() {
+  return (
+    <div className="app-shell">
+      <Sidebar mockMode={USE_MOCK} />
+      <main className="main-content">
+        <Outlet />
+      </main>
+    </div>
+  )
+}
+
 export default function App() {
   const [state, dispatch] = useReducer(reducer, {
-    session: null, loading: true, page: 'dashboard', wizardResult: null, wizardDatiIniziali: null,
+    session: null, loading: true,
   })
-  const { session, loading, page, wizardResult, wizardDatiIniziali } = state
+  const { session, loading } = state
 
   useEffect(() => {
     if (USE_MOCK) {
@@ -38,47 +51,31 @@ export default function App() {
     return () => subscription.unsubscribe()
   }, [])
 
-  function onNav(p) { dispatch({ type: 'SET_PAGE', page: p }) }
-
   if (loading) return (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh' }}>
       <span className="spinner" style={{ width: 28, height: 28 }} />
     </div>
   )
 
-  if (!session) return <AuthScreen />
-
-  function renderPage() {
-    switch (page) {
-      case 'dashboard': return <Dashboard onNav={onNav} onApriInWizard={data => dispatch({ type: 'APRI_IN_WIZARD', data })} />
-      case 'import':    return <ImportRelazioni />
-      case 'stile':     return <ProfiloStile />
-      case 'professionista': return <ProfiloProfessionista />
-      case 'nuova':     return (
-        <WizardNuovaRelazione
-          key={wizardDatiIniziali?._relazioneId || wizardDatiIniziali?._sessionId || 'nuova'}
-          datiIniziali={wizardDatiIniziali}
-          onGenera={data => dispatch({ type: 'WIZARD_DONE', data })}
-          onAnnullaModifica={() => onNav('nuova')}
-        />
-      )
-      case 'risultato': return <RisultatoGenerazione wizardData={wizardResult} onBack={() => onNav('nuova')} />
-      case 'archivio':  return <Archivio onApriInWizard={data => dispatch({ type: 'APRI_IN_WIZARD', data })} />
-      default:          return <PlaceholderPage page={page} />
-    }
-  }
-
-  let activeSidebarTab = page
-  if (page === 'risultato') {
-    activeSidebarTab = 'nuova'
-  } else if (page === 'nuova' && wizardDatiIniziali) {
-    activeSidebarTab = wizardDatiIniziali._relazioneId ? 'archivio' : 'dashboard'
-  }
-
   return (
-    <div className="app-shell">
-      <Sidebar current={activeSidebarTab} onNav={onNav} mockMode={USE_MOCK} />
-      <main className="main-content">{renderPage()}</main>
-    </div>
+    <Routes>
+      <Route path="/auth" element={session ? <Navigate to="/dashboard" replace /> : <AuthScreen />} />
+      <Route element={<ProtectedRoute session={session} />}>
+        <Route element={<AppLayout />}>
+          <Route path="/dashboard" element={<Dashboard />} />
+          <Route path="/bozza" element={<Dashboard mode="bozze" />} />
+          <Route path="/bozza/riprendi" element={<WizardNuovaRelazione />} />
+          <Route path="/import" element={<ImportRelazioni />} />
+          <Route path="/stile" element={<ProfiloStile />} />
+          <Route path="/professionista" element={<ProfiloProfessionista />} />
+          <Route path="/archivio" element={<Archivio />} />
+          <Route path="/nuova" element={<WizardNuovaRelazione />} />
+          <Route path="/modifica" element={<WizardNuovaRelazione />} />
+          <Route path="/risultato" element={<RisultatoGenerazione />} />
+          <Route path="/" element={<Navigate to="/dashboard" replace />} />
+          <Route path="*" element={<Navigate to="/dashboard" replace />} />
+        </Route>
+      </Route>
+    </Routes>
   )
 }

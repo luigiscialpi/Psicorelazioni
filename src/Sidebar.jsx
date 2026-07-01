@@ -1,16 +1,25 @@
-import { LayoutDashboard, Upload, FileText, BookOpen, Settings, UserRound, LogOut, FlaskConical } from 'lucide-react'
+import { LayoutDashboard, Upload, FileText, Clock, BookOpen, Settings, UserRound, LogOut, FlaskConical } from 'lucide-react'
+import { NavLink, useLocation } from 'react-router-dom'
 import { supabase } from './supabase'
 
 const NAV = [
-  { id: 'dashboard', label: 'Pannello',        icon: LayoutDashboard },
-  { id: 'import',    label: 'Importa relazioni',icon: Upload },
-  { id: 'nuova',     label: 'Nuova relazione',  icon: FileText },
-  { id: 'archivio',  label: 'Archivio',         icon: BookOpen },
-  { id: 'stile',     label: 'Profilo di stile', icon: Settings },
-  { id: 'professionista', label: 'Scheda professionista', icon: UserRound },
+  { id: 'dashboard', path: '/dashboard', label: 'Pannello', icon: LayoutDashboard },
+  { id: 'import', path: '/import', label: 'Importa relazioni', icon: Upload },
+  { id: 'nuova', path: '/nuova', label: 'Nuova relazione', icon: FileText },
+  { id: 'bozza', path: '/bozza', label: 'Bozze in corso', icon: Clock },
+  { id: 'archivio', path: '/archivio', label: 'Archivio', icon: BookOpen },
+  { id: 'stile', path: '/stile', label: 'Profilo di stile', icon: Settings },
+  { id: 'professionista', path: '/professionista', label: 'Scheda professionista', icon: UserRound },
 ]
 
-export default function Sidebar({ current, onNav, mockMode }) {
+export default function Sidebar({ mockMode }) {
+  const location = useLocation()
+
+  function isNavItemActive(path) {
+    if (path === '/bozza') return location.pathname === '/bozza' || location.pathname.startsWith('/bozza/')
+    return location.pathname === path
+  }
+
   async function handleLogout() {
     if (mockMode) return // nessuna sessione reale da chiudere
     await supabase.auth.signOut()
@@ -39,15 +48,15 @@ export default function Sidebar({ current, onNav, mockMode }) {
       <nav className="sidebar-nav">
         <div className="sidebar-section-label">Navigazione</div>
 
-        {NAV.map(({ id, label, icon: Icon }) => (
-          <button
+        {NAV.map(({ id, path, label, icon: Icon }) => (
+          <NavLink
             key={id}
-            className={`nav-item ${current === id ? 'active' : ''}`}
-            onClick={() => onNav(id)}
+            to={path}
+            className={`nav-item ${isNavItemActive(path) ? 'active' : ''}`}
           >
             <Icon size={16} />
             {label}
-          </button>
+          </NavLink>
         ))}
       </nav>
 

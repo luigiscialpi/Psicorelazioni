@@ -1,8 +1,9 @@
 import { useReducer, useEffect } from 'react'
-import { Search, FileText, Calendar, Tag, Edit3, Eye, X, User } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
+import { Search, FileText, Calendar, Tag, Edit3, X, User } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { getRelazioni, getRelazioneById, getPazienteById, USE_MOCK } from './dataService'
+import { getRelazioni, getPazienteById } from './dataService'
 
 const INIT = {
   relazioni: [], loading: true, query: '', filtroTipo: '',
@@ -28,7 +29,8 @@ function formatData(iso) {
   return `${d.getDate()} ${MESI[d.getMonth()]} ${d.getFullYear()}`
 }
 
-export default function Archivio({ onApriInWizard }) {
+export default function Archivio() {
+  const navigate = useNavigate()
   const [state, dispatch] = useReducer(reducer, INIT)
   const { relazioni, loading, query, filtroTipo, aperta, pazienteAperta } = state
 
@@ -51,15 +53,7 @@ export default function Archivio({ onApriInWizard }) {
     }
     // Ricompone i dati per il wizard: snapshot delle risposte + anagrafica
     // recuperata separatamente da `pazienti` + riferimenti per l'update
-    onApriInWizard({
-      ...relazione.wizard_snapshot,
-      anagrafica: pazienteAperta ? {
-        nome: pazienteAperta.nome, cognome: pazienteAperta.cognome,
-        data_nascita: pazienteAperta.data_nascita, scuola_classe: pazienteAperta.scuola_classe,
-      } : { nome: '', cognome: '', data_nascita: '', scuola_classe: '' },
-      _relazioneId: relazione.id,
-      _pazienteId: relazione.paziente_id,
-    })
+    navigate(`/modifica?relazioneId=${encodeURIComponent(relazione.id)}`)
   }
 
   const filtrate = relazioni.filter(r => {

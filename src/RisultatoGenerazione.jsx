@@ -1,4 +1,5 @@
-import { useReducer, useEffect } from 'react'
+import { useReducer, useEffect, useCallback } from 'react'
+import { Navigate, useLocation, useNavigate } from 'react-router-dom'
 import { FileDown, RotateCcw, Save, FlaskConical, RefreshCw, ShieldCheck } from 'lucide-react'
 import {
   getProfiloStile, getRelazioniSimilari, insertRelazione, updateRelazione,
@@ -25,16 +26,25 @@ function reducer(state, action) {
 // riapre una relazione esistente dall'Archivio (vedi Archivio.jsx):
 //   wizardData._relazioneId  → id della relazione da AGGIORNARE invece di duplicare
 //   wizardData._pazienteId   → id del paziente già collegato, da aggiornare invece di ricreare
-export default function RisultatoGenerazione({ wizardData, onBack }) {
+export default function RisultatoGenerazione() {
+  const location = useLocation()
+  const navigate = useNavigate()
+  const wizardData = location.state?.wizardData || null
+  const sourceRoute = wizardData?._sourceRoute || '/nuova'
+  const breadcrumb = sourceRoute.includes('/modifica')
+    ? 'Archivio > Modifica relazione > Risultato'
+    : (sourceRoute.includes('/bozza/riprendi')
+      ? 'Bozze > Ripresa > Risultato'
+      : 'Nuova relazione > Risultato')
+
   const [state, dispatch] = useReducer(reducer, {
     status: 'generating', testo: '', error: null, exporting: false, saved: false, savingArchivio: false,
   })
 
-  const isModifica = Boolean(wizardData._relazioneId)
+  const isModifica = Boolean(wizardData?._relazioneId)
 
-  useEffect(() => { run() }, [])
-
-  async function run() {
+  const run = useCallback(async () => {
+    if (!wizardData) return
     dispatch({ type: 'START' })
     try {
       const profilo = await getProfiloStile()
@@ -44,6 +54,12 @@ export default function RisultatoGenerazione({ wizardData, onBack }) {
     } catch (e) {
       dispatch({ type: 'ERROR', error: e.message })
     }
+  }, [wizardData])
+
+  useEffect(() => { run() }, [run])
+
+  if (!wizardData) {
+    return <Navigate to="/nuova" replace />
   }
 
   // Salva (o aggiorna) sia l'anagrafica reale in `pazienti` sia il contenuto
@@ -54,7 +70,7 @@ export default function RisultatoGenerazione({ wizardData, onBack }) {
 
     const paziente = await upsertPazienteAnagrafica(wizardData.anagrafica, wizardData._pazienteId || null)
 
-    const { anagrafica, _relazioneId, _pazienteId, ...wizardSnapshot } = wizardData
+    const { anagrafica: _anagrafica, _relazioneId, _pazienteId, ...wizardSnapshot } = wizardData
 
     const payload = {
       titolo:         `Relazione — ${wizardData.anagrafica?.cognome || 'paziente'} — ${new Date().toLocaleDateString('it-IT')}`,
@@ -103,8 +119,9 @@ export default function RisultatoGenerazione({ wizardData, onBack }) {
         <div>
           <div className="topbar-title">{isModifica ? 'Relazione aggiornata' : 'Relazione generata'}</div>
           <div className="topbar-sub">Revisiona e correggi prima di esportare</div>
+          <div style={{ marginTop: 4, fontSize: 11.5, color: 'var(--text-muted)' }}>{breadcrumb}</div>
         </div>
-        <button className="btn btn-ghost" onClick={onBack}>
+        <button className="btn btn-ghost" onClick={() => navigate(sourceRoute)}>
           <RotateCcw size={14} /> Torna al wizard
         </button>
       </div>

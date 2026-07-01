@@ -1,6 +1,7 @@
 import { useReducer, useEffect, useRef } from 'react'
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { ChevronRight, ChevronLeft, Save, FlaskConical, Check, ShieldAlert } from 'lucide-react'
-import { getProfiloStile, upsertSessione, USE_MOCK } from './dataService'
+import { getProfiloStile, getRelazioneById, getPazienteById, getSessioneById, upsertSessione, USE_MOCK } from './dataService'
 import { WISC_IV_CAMPI, NEPSY_II_DOMINI, fasciaWISC, fasciaScalare } from './testDefinitions'
 import { estraiRequisitiDaProfilo, haRiferimentiSubtestCompilati } from './profileAlignment'
 import {
@@ -639,41 +640,22 @@ function getChecklistAderenza(reqProfilo, data) {
 }
 
 // ── Componente principale ──────────────────────────────────
-export default function WizardNuovaRelazione({ onGenera, datiIniziali, onAnnullaModifica }) {
-  const initialData = datiIniziali
-    ? {
-        ...INIT,
-        ...datiIniziali,
-        cognitivo: {
-          ...INIT.cognitivo,
-          ...(datiIniziali.cognitivo || {}),
-          riferimenti_subtest:
-            typeof datiIniziali.cognitivo?.riferimenti_subtest === 'string'
-              ? {
-                  ...INIT.cognitivo.riferimenti_subtest,
-                  icv: datiIniziali.cognitivo.riferimenti_subtest,
-                }
-              : {
-                  ...INIT.cognitivo.riferimenti_subtest,
-                  ...(datiIniziali.cognitivo?.riferimenti_subtest || {}),
-                },
-        },
-        nepsy: {
-          ...INIT.nepsy,
-          ...(datiIniziali.nepsy || {}),
-        },
-      }
-    : INIT
-
-  const [data, dispatch] = useReducer(wizardReducer, initialData)
+export default function WizardNuovaRelazione() {
+  const location = useLocation()
+  const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
+  const isBozzaRoute = location.pathname === '/bozza/riprendi'
+  const isModificaRoute = location.pathname === '/modifica'
+  const [data, dispatch] = useReducer(wizardReducer, INIT)
   const [step, dispatchStep] = useReducer((s, a) => a.type === 'NEXT' ? s + 1 : a.type === 'PREV' ? Math.max(0, s - 1) : a.value, 0)
+  const [hydrating, setHydrating] = useReducer((_s, a) => Boolean(a), true)
   const [reqProfilo, dispatchReqProfilo] = useReducer((s, a) => ({ ...s, ...a }), {
     richiedeRiferimentiSubtest: false,
     richiedeStrumenti: false,
     richiedeEtaValutazione: false,
     richiedeNoteRangeWisc: false,
   })
-  const sessionIdRef = useRef(datiIniziali?._sessionId || null)
+  const sessionIdRef = useRef(null)
   const [saving, toggleSaving] = useReducer(s => !s, false)
   const saveTimer = useRef(null)
 
@@ -683,7 +665,98 @@ export default function WizardNuovaRelazione({ onGenera, datiIniziali, onAnnulla
   const checklistAderenza = getChecklistAderenza(reqProfilo, data)
   const checklistKO = checklistAderenza.filter(i => !i.ok)
 
+  const relazioneId = searchParams.get('relazioneId')
+  const sessionId = searchParams.get('sessionId')
+  const isModificaFlow = Boolean(isModificaRoute || relazioneId || data._relazioneId)
+  const modeBadge = isModificaFlow
+    ? 'Modifica da Archivio'
+    : (isBozzaRoute || sessionId ? 'Bozza in corso' : null)
+  const breadcrumb = isModificaFlow
+    ? 'Archivio > Modifica relazione'
+    : ((isBozzaRoute || sessionId)
+      ? 'Bozze > Ripresa'
+      : 'Nuova relazione')
+  const title = isModificaFlow ? 'Modifica relazione' : (isBozzaRoute || sessionId ? 'Bozza in corso' : 'Nuova relazione')
+  const subtitle = isModificaFlow
+    ? `Step ${safeStep + 1} di ${STEPS.length} — Modifica guidata`
+    : (isBozzaRoute || sessionId
+      ? `Step ${safeStep + 1} di ${STEPS.length} — Ripresa bozza`
+      : `Step ${safeStep + 1} di ${STEPS.length} — ${current.label}`)
+
+  function normalizzaDatiIniziali(raw) {
+    if (!raw) return INIT
+    return {
+      ...INIT,
+      ...raw,
+      cognitivo: {
+        ...INIT.cognitivo,
+        ...(raw.cognitivo || {}),
+        riferimenti_subtest:
+          typeof raw.cognitivo?.riferimenti_subtest === 'string'
+            ? {
+                ...INIT.cognitivo.riferimenti_subtest,
+                icv: raw.cognitivo.riferimenti_subtest,
+              }
+            : {
+                ...INIT.cognitivo.riferimenti_subtest,
+                ...(raw.cognitivo?.riferimenti_subtest || {}),
+              },
+      },
+      nepsy: {
+        ...INIT.nepsy,
+        ...(raw.nepsy || {}),
+      },
+    }
+  }
+
   useEffect(() => {
+    let live = true
+    ;(async () => {
+      try {
+        if (relazioneId) {
+          const relazione = await getRelazioneById(relazioneId)
+          if (relazione?.wizard_snapshot) {
+            const paziente = relazione.paziente_id ? await getPazienteById(relazione.paziente_id) : null
+            const payload = normalizzaDatiIniziali({
+              ...relazione.wizard_snapshot,
+              anagrafica: paziente ? {
+                nome: paziente.nome || '',
+                cognome: paziente.cognome || '',
+                data_nascita: paziente.data_nascita || '',
+                scuola_classe: paziente.scuola_classe || '',
+              } : INIT.anagrafica,
+              _relazioneId: relazione.id,
+              _pazienteId: relazione.paziente_id,
+              _relazioneTitolo: relazione.titolo || '',
+            })
+            if (live) {
+              dispatch({ type: 'HYDRATE', payload })
+              sessionIdRef.current = null
+            }
+          }
+        } else if (sessionId) {
+          const sessione = await getSessioneById(sessionId)
+          if (sessione?.risposte_wizard) {
+            const payload = normalizzaDatiIniziali({
+              ...sessione.risposte_wizard,
+              _sessionId: sessione.id,
+            })
+            if (live) {
+              dispatch({ type: 'HYDRATE', payload })
+              sessionIdRef.current = sessione.id
+            }
+          }
+        }
+      } finally {
+        if (live) setHydrating(false)
+      }
+    })()
+
+    return () => { live = false }
+  }, [searchParams])
+
+  useEffect(() => {
+    if (hydrating) return
     clearTimeout(saveTimer.current)
     saveTimer.current = setTimeout(async () => {
       toggleSaving()
@@ -692,7 +765,7 @@ export default function WizardNuovaRelazione({ onGenera, datiIniziali, onAnnulla
       toggleSaving()
     }, 1500)
     return () => clearTimeout(saveTimer.current)
-  }, [data])
+  }, [data, hydrating])
 
   useEffect(() => {
     let live = true
@@ -720,34 +793,43 @@ export default function WizardNuovaRelazione({ onGenera, datiIniziali, onAnnulla
     <>
       <div className="topbar">
         <div>
-          <div className="topbar-title">{datiIniziali ? (datiIniziali._relazioneId ? 'Modifica relazione' : 'Modifica bozza') : 'Nuova relazione'}</div>
-          <div className="topbar-sub">Step {safeStep + 1} di {STEPS.length} — {current.label}</div>
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          {datiIniziali && (
-            <button
-              className="btn btn-sm"
-              onClick={onAnnullaModifica}
-              style={{
-                whiteSpace: 'nowrap',
-                backgroundColor: '#d97706',
-                borderColor: '#b45309',
-                color: '#ffffff',
-                fontWeight: 600
-              }}
-            >
-              Crea nuova da zero
-            </button>
-          )}
-          {saving && (
-            <span style={{ fontSize: 12, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap' }}>
-              <span className="spinner" style={{ width: 12, height: 12 }} /> Salvataggio automatico…
-            </span>
+          <div className="topbar-title">{title}</div>
+          <div className="topbar-sub">{subtitle}</div>
+          <div style={{ marginTop: 4, fontSize: 11.5, color: 'var(--text-muted)' }}>{breadcrumb}</div>
+          {modeBadge && (
+            <div style={{ marginTop: 6 }}>
+              <span style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+                fontSize: 11.5,
+                fontWeight: 600,
+                color: 'var(--accent-dk)',
+                background: 'var(--accent-lt)',
+                border: '1px solid var(--border)',
+                borderRadius: 999,
+                padding: '4px 10px',
+              }}>
+                {modeBadge}
+              </span>
+            </div>
           )}
         </div>
+        {saving && (
+          <span style={{ fontSize: 12, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span className="spinner" style={{ width: 12, height: 12 }} /> Salvataggio automatico…
+          </span>
+        )}
       </div>
 
       <div className="page-body">
+        {hydrating && (
+          <div className="card" style={{ textAlign: 'center', padding: '34px 24px', marginBottom: 16 }}>
+            <span className="spinner" style={{ width: 24, height: 24, margin: '0 auto 10px', display: 'block' }} />
+            <p style={{ color: 'var(--text-muted)', fontSize: 13 }}>Caricamento bozza/modifica in corso…</p>
+          </div>
+        )}
+
         {checklistAderenza.length > 0 && (
           <div className="alert alert-info" style={{ marginBottom: 16 }}>
             <ShieldAlert size={15} style={{ flexShrink: 0, marginTop: 1 }} />
@@ -796,7 +878,19 @@ export default function WizardNuovaRelazione({ onGenera, datiIniziali, onAnnulla
               Avanti <ChevronRight size={15} />
             </button>
           ) : (
-            <button className="btn btn-primary" onClick={() => onGenera(data, sessionIdRef.current)} disabled={!canProceed()}>
+            <button
+              className="btn btn-primary"
+              onClick={() => navigate('/risultato', {
+                state: {
+                  wizardData: {
+                    ...data,
+                    _sessionId: sessionIdRef.current,
+                    _sourceRoute: `${location.pathname}${location.search || ''}`,
+                  },
+                },
+              })}
+              disabled={!canProceed()}
+            >
               <Save size={15} /> Genera relazione
             </button>
           )}

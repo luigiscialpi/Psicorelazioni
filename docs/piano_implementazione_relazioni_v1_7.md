@@ -75,6 +75,14 @@ Questa sezione traccia le modifiche attualmente in stage, per mantenere il piano
 - Prima della generazione viene mostrata una checklist aderenza profilo; se incompleta, il pulsante "Genera relazione" resta disabilitato.
 - I nuovi campi vengono passati a Gemini in payload esplicito (`eta_valutazione`, `strumenti_utilizzati`, `nota_range_wisc`, `nota_range_nepsy`) per ridurre ambiguità e migliorare coerenza output.
 
+**Chiarezza flussi URL: Bozza vs Modifica (iterazione UX)**
+- Distinte due rotte con semantica diversa: `/bozza/riprendi?sessionId=...` (ripresa sessione) e `/modifica?relazioneId=...` (ingresso da Archivio).
+- Se una sessione bozza deriva da una relazione d'archivio, il wizard mantiene il contesto "modifica" anche in ripresa (topbar e breadcrumb coerenti: Archivio > Modifica relazione).
+- Dashboard Bozze: sostituita la dicitura generica "Wizard avviato il..." con etichette contestuali:
+    - "Modifica da archivio: <titolo relazione>" se la bozza deriva da una relazione esistente
+    - "Bozza nuova relazione (<tipo>)" negli altri casi
+- Obiettivo: ridurre ambiguità cognitiva tra "nuova relazione", "ripresa bozza" e "modifica da archivio".
+
 **Dipendenze aggiunte (staged)**
 - `react-markdown`, `remark-gfm`
 - `docx-preview`, `turndown`
@@ -627,7 +635,7 @@ La schermata home mostra:
 - Pulsante "Nuova relazione" prominente
 - Statistiche: totale relazioni, relazioni questo mese, pazienti attivi
 - Stato del Profilo di Stile (quando è stato aggiornato l'ultima volta)
-- Eventuali sessioni wizard in sospeso
+- Eventuali sessioni wizard in sospeso, con etichetta contestuale ("Modifica da archivio: <titolo>" oppure "Bozza nuova relazione (<tipo>)")
 
 ---
 
