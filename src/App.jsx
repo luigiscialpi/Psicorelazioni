@@ -6,6 +6,7 @@ import Sidebar              from './Sidebar'
 import Dashboard            from './Dashboard'
 import ImportRelazioni      from './ImportRelazioni'
 import ProfiloStile         from './ProfiloStile'
+import ProfiloProfessionista from './ProfiloProfessionista'
 import WizardNuovaRelazione from './WizardNuovaRelazione'
 import RisultatoGenerazione from './RisultatoGenerazione'
 import Archivio              from './Archivio'
@@ -52,6 +53,7 @@ export default function App() {
       case 'dashboard': return <Dashboard onNav={onNav} />
       case 'import':    return <ImportRelazioni />
       case 'stile':     return <ProfiloStile />
+      case 'professionista': return <ProfiloProfessionista />
       case 'nuova':     return (
         <WizardNuovaRelazione
           key={wizardDatiIniziali?._relazioneId || 'nuova'}

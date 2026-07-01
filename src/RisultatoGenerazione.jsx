@@ -2,7 +2,7 @@ import { useReducer, useEffect } from 'react'
 import { FileDown, RotateCcw, Save, FlaskConical, RefreshCw, ShieldCheck } from 'lucide-react'
 import {
   getProfiloStile, getRelazioniSimilari, insertRelazione, updateRelazione,
-  upsertPazienteAnagrafica, USE_MOCK,
+  upsertPazienteAnagrafica, getProfiloProfessionista, USE_MOCK,
 } from './dataService'
 import { generaRelazione, USE_MOCK_AI } from './geminiService'
 import { esportaDocx, scaricaDocx } from './exportDocx'
@@ -80,7 +80,12 @@ export default function RisultatoGenerazione({ wizardData, onBack }) {
   async function handleEsportaDocx() {
     dispatch({ type: 'EXPORTING' })
     try {
-      const blob    = await esportaDocx({ testo: state.testo, anagrafica: wizardData.anagrafica })
+      const professionista = await getProfiloProfessionista()
+      const blob    = await esportaDocx({
+        testo: state.testo,
+        anagrafica: wizardData.anagrafica,
+        professionista,
+      })
       const cognome = (wizardData.anagrafica?.cognome || 'paziente').replace(/\s+/g, '_')
       const oggi    = new Date().toISOString().slice(0, 10)
       scaricaDocx(blob, `relazione_${cognome}_${oggi}.docx`)

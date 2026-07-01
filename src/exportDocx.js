@@ -253,8 +253,43 @@ function splitMarkdownBlocks(md) {
 }
 
 // ── Intestazione fissa dello studio ───────────────────────
-function makeHeader(nomeStudio) {
-  const [nome, ...resto] = (nomeStudio || 'Dr.ssa [Nome Cognome]\nPsicologa\nEsperta in Psicopatologia dell\'Apprendimento').split('\n')
+function splitHeaderLines(nomeStudio, professionista) {
+  if (professionista && (professionista.nome_completo || professionista.titolo || professionista.specializzazione)) {
+    const lines = []
+    const nome = String(professionista.nome_completo || '').trim()
+    const titolo = String(professionista.titolo || '').trim()
+    const specializzazione = String(professionista.specializzazione || '').trim()
+    const indirizzo = String(professionista.indirizzo || '').trim()
+    const citta = String(professionista.citta || '').trim()
+    const telefono = String(professionista.telefono || '').trim()
+    const email = String(professionista.email || '').trim()
+    const piva = String(professionista.partita_iva || '').trim()
+    const cf = String(professionista.codice_fiscale || '').trim()
+
+    if (nome) lines.push(nome)
+    if (titolo) lines.push(titolo)
+    if (specializzazione) lines.push(specializzazione)
+
+    const location = [indirizzo, citta].filter(Boolean).join(', ')
+    if (location) lines.push(location)
+
+    const contatti = [telefono ? `Cell. ${telefono}` : '', email].filter(Boolean).join('  •  ')
+    if (contatti) lines.push(contatti)
+
+    const fisc = [piva ? `P.IVA ${piva}` : '', cf ? `CF ${cf}` : ''].filter(Boolean).join('  •  ')
+    if (fisc) lines.push(fisc)
+
+    if (lines.length) return lines
+  }
+
+  return (nomeStudio || 'Dr.ssa [Nome Cognome]\nPsicologa\nEsperta in Psicopatologia dell\'Apprendimento')
+    .split('\n')
+    .map(x => x.trim())
+    .filter(Boolean)
+}
+
+function makeHeader(nomeStudio, professionista) {
+  const [nome = 'Dr.ssa [Nome Cognome]', ...resto] = splitHeaderLines(nomeStudio, professionista)
   return new Header({
     children: [
       new Paragraph({
@@ -275,6 +310,26 @@ function makeHeader(nomeStudio) {
       }),
     ],
   })
+}
+
+function firmaProfessionistaParagraphs(professionista) {
+  if (!professionista) return []
+  const nome = String(professionista.nome_completo || '').trim()
+  const titolo = String(professionista.titolo || '').trim()
+  if (!nome && !titolo) return []
+
+  const lines = [
+    new Paragraph({ spacing: { before: 260, after: 60 }, children: [new TextRun({ text: 'Firma', font: FONT, size: SIZE_BODY, bold: true })] }),
+  ]
+
+  if (nome) {
+    lines.push(new Paragraph({ spacing: { after: 40 }, children: [new TextRun({ text: nome, font: FONT, size: SIZE_BODY, bold: true })] }))
+  }
+  if (titolo) {
+    lines.push(new Paragraph({ spacing: { after: 40 }, children: [new TextRun({ text: titolo, font: FONT, size: SIZE_BODY })] }))
+  }
+
+  return lines
 }
 
 // ── Footer con numero pagina ───────────────────────────────
@@ -320,7 +375,7 @@ function anagraficaParagraph(anagrafica) {
   })
 }
 
-export async function esportaDocx({ testo, data, nomeStudio, anagrafica }) {
+export async function esportaDocx({ testo, data, nomeStudio, anagrafica, professionista }) {
   const oggi = data || new Date().toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit', year: 'numeric' })
   const testoPulito = deAnonimizzaTesto(testo, anagrafica)
 
@@ -361,7 +416,7 @@ export async function esportaDocx({ testo, data, nomeStudio, anagrafica }) {
           pageNumbers: { start: 1, formatType: NumberFormat.DECIMAL },
         },
       },
-      headers: { default: makeHeader(nomeStudio) },
+      headers: { default: makeHeader(nomeStudio, professionista) },
       footers: { default: makeFooter() },
       children: [
         // Data e titolo
@@ -378,6 +433,7 @@ export async function esportaDocx({ testo, data, nomeStudio, anagrafica }) {
         ...(paraAnagrafica ? [paraAnagrafica] : []),
         // Corpo generato
         ...blocchi,
+        ...firmaProfessionistaParagraphs(professionista),
       ],
     }],
   })

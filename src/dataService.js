@@ -16,6 +16,26 @@ let mockRelazioni  = [...MOCK_RELAZIONI]
 let mockPazienti   = [...MOCK_PAZIENTI]
 let mockSessioni   = [...MOCK_SESSIONI]
 let mockProfilo    = MOCK_PROFILO_STILE
+let mockProfessionista = null
+
+const PROFESSIONISTA_LS_KEY = 'psicorelazioni_professionista_v1'
+
+function loadProfessionistaLocal() {
+  try {
+    const raw = localStorage.getItem(PROFESSIONISTA_LS_KEY)
+    return raw ? JSON.parse(raw) : null
+  } catch {
+    return null
+  }
+}
+
+function saveProfessionistaLocal(value) {
+  try {
+    localStorage.setItem(PROFESSIONISTA_LS_KEY, JSON.stringify(value || null))
+  } catch {
+    // no-op
+  }
+}
 
 const uid = () => Math.random().toString(36).slice(2, 10)
 
@@ -150,6 +170,62 @@ export async function saveProfiloStile(testo, numRelazioni) {
     updated_at: new Date().toISOString(),
     versione: 1,
   })
+}
+
+// ── PROFILO PROFESSIONISTA ────────────────────────────────
+export async function getProfiloProfessionista() {
+  if (USE_MOCK) {
+    if (mockProfessionista) return mockProfessionista
+    mockProfessionista = loadProfessionistaLocal()
+    return mockProfessionista
+  }
+
+  try {
+    const { data, error } = await supabase.from('professionista').select('*').eq('id', 1).single()
+    if (!error && data) {
+      saveProfessionistaLocal(data)
+      return data
+    }
+  } catch {
+    // fallback locale
+  }
+
+  return loadProfessionistaLocal()
+}
+
+export async function saveProfiloProfessionista(payload) {
+  const row = {
+    id: 1,
+    nome_completo: payload.nome_completo || null,
+    titolo: payload.titolo || null,
+    specializzazione: payload.specializzazione || null,
+    email: payload.email || null,
+    telefono: payload.telefono || null,
+    indirizzo: payload.indirizzo || null,
+    citta: payload.citta || null,
+    partita_iva: payload.partita_iva || null,
+    codice_fiscale: payload.codice_fiscale || null,
+    updated_at: new Date().toISOString(),
+  }
+
+  if (USE_MOCK) {
+    mockProfessionista = row
+    saveProfessionistaLocal(row)
+    return row
+  }
+
+  try {
+    const { data, error } = await supabase.from('professionista').upsert(row).select().single()
+    if (!error && data) {
+      saveProfessionistaLocal(data)
+      return data
+    }
+  } catch {
+    // fallback locale
+  }
+
+  saveProfessionistaLocal(row)
+  return row
 }
 
 // ── SESSIONI WIZARD ────────────────────────────────────────

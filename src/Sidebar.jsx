@@ -1,4 +1,4 @@
-import { LayoutDashboard, Upload, FileText, BookOpen, Settings, LogOut, FlaskConical } from 'lucide-react'
+import { LayoutDashboard, Upload, FileText, BookOpen, Settings, UserRound, LogOut, FlaskConical } from 'lucide-react'
 import { supabase } from './supabase'
 
 const NAV = [
@@ -7,6 +7,7 @@ const NAV = [
   { id: 'nuova',     label: 'Nuova relazione',  icon: FileText },
   { id: 'archivio',  label: 'Archivio',         icon: BookOpen },
   { id: 'stile',     label: 'Profilo di stile', icon: Settings },
+  { id: 'professionista', label: 'Scheda professionista', icon: UserRound },
 ]
 
 export default function Sidebar({ current, onNav, mockMode }) {
