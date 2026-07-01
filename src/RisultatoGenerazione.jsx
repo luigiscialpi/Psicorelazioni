@@ -1,0 +1,183 @@
+import { useReducer, useEffect } from 'react'
+import { FileDown, RotateCcw, Save, FlaskConical, RefreshCw, ShieldCheck } from 'lucide-react'
+import {
+  getProfiloStile, getRelazioniSimilari, insertRelazione, updateRelazione,
+  upsertPazienteAnagrafica, USE_MOCK,
+} from './dataService'
+import { generaRelazione, USE_MOCK_AI } from './geminiService'
+import { esportaDocx, scaricaDocx } from './exportDocx'
+
+function reducer(state, action) {
+  switch (action.type) {
+    case 'START':        return { ...state, status: 'generating', error: null }
+    case 'DONE':         return { ...state, status: 'done', testo: action.testo }
+    case 'ERROR':        return { ...state, status: 'error', error: action.error }
+    case 'EDIT':         return { ...state, testo: action.testo }
+    case 'EXPORTING':    return { ...state, exporting: true }
+    case 'EXPORT_DONE':  return { ...state, exporting: false }
+    case 'SAVING':        return { ...state, savingArchivio: true }
+    case 'SAVED':         return { ...state, savingArchivio: false, saved: true }
+    default: return state
+  }
+}
+
+// wizardData può includere due campi opzionali "di contesto" quando si
+// riapre una relazione esistente dall'Archivio (vedi Archivio.jsx):
+//   wizardData._relazioneId  → id della relazione da AGGIORNARE invece di duplicare
+//   wizardData._pazienteId   → id del paziente già collegato, da aggiornare invece di ricreare
+export default function RisultatoGenerazione({ wizardData, onBack }) {
+  const [state, dispatch] = useReducer(reducer, {
+    status: 'generating', testo: '', error: null, exporting: false, saved: false, savingArchivio: false,
+  })
+
+  const isModifica = Boolean(wizardData._relazioneId)
+
+  useEffect(() => { run() }, [])
+
+  async function run() {
+    dispatch({ type: 'START' })
+    try {
+      const profilo = await getProfiloStile()
+      const esempi  = await getRelazioniSimilari(wizardData.tipo, [])
+      const testo   = await generaRelazione(profilo || '', wizardData, esempi)
+      dispatch({ type: 'DONE', testo })
+    } catch (e) {
+      dispatch({ type: 'ERROR', error: e.message })
+    }
+  }
+
+  // Salva (o aggiorna) sia l'anagrafica reale in `pazienti` sia il contenuto
+  // clinico + snapshot del wizard in `relazioni`, collegati da paziente_id.
+  // wizard_snapshot NON include mai `anagrafica` — vive solo in `pazienti`.
+  async function handleSalvaArchivio() {
+    dispatch({ type: 'SAVING' })
+
+    const paziente = await upsertPazienteAnagrafica(wizardData.anagrafica, wizardData._pazienteId || null)
+
+    const { anagrafica, _relazioneId, _pazienteId, ...wizardSnapshot } = wizardData
+
+    const payload = {
+      titolo:         `Relazione — ${wizardData.anagrafica?.cognome || 'paziente'} — ${new Date().toLocaleDateString('it-IT')}`,
+      tipo:           'generata',
+      tipo_relazione: 'valutazione',
+      anno:           new Date().getFullYear(),
+      testo_markdown: state.testo,
+      tag:            wizardData.sezioni_attive || [],
+      paziente_id:    paziente?.id || null,
+      wizard_snapshot: wizardSnapshot,
+      updated_at:     new Date().toISOString(),
+    }
+
+    if (isModifica) {
+      await updateRelazione(wizardData._relazioneId, payload)
+    } else {
+      await insertRelazione(payload)
+    }
+
+    dispatch({ type: 'SAVED' })
+  }
+
+  async function handleEsportaDocx() {
+    dispatch({ type: 'EXPORTING' })
+    try {
+      const blob    = await esportaDocx({ testo: state.testo, anagrafica: wizardData.anagrafica })
+      const cognome = (wizardData.anagrafica?.cognome || 'paziente').replace(/\s+/g, '_')
+      const oggi    = new Date().toISOString().slice(0, 10)
+      scaricaDocx(blob, `relazione_${cognome}_${oggi}.docx`)
+    } catch (e) {
+      console.error('Errore export DOCX:', e)
+      alert('Errore durante la generazione del DOCX: ' + e.message)
+    } finally {
+      dispatch({ type: 'EXPORT_DONE' })
+    }
+  }
+
+  return (
+    <>
+      <div className="topbar">
+        <div>
+          <div className="topbar-title">{isModifica ? 'Relazione aggiornata' : 'Relazione generata'}</div>
+          <div className="topbar-sub">Revisiona e correggi prima di esportare</div>
+        </div>
+        <button className="btn btn-ghost" onClick={onBack}>
+          <RotateCcw size={14} /> Torna al wizard
+        </button>
+      </div>
+
+      <div className="page-body">
+        {(USE_MOCK || USE_MOCK_AI) && (
+          <div className="alert alert-warn" style={{ marginBottom: 16 }}>
+            <FlaskConical size={15} style={{ flexShrink: 0 }} />
+            <span>Generazione simulata — Gemini API non configurata. Il testo è un esempio strutturale, non clinicamente accurato.</span>
+          </div>
+        )}
+
+        {state.status === 'generating' && (
+          <div className="card" style={{ textAlign: 'center', padding: '48px 24px' }}>
+            <span className="spinner" style={{ width: 28, height: 28, margin: '0 auto 14px', display: 'block' }} />
+            <p style={{ color: 'var(--text-muted)', fontSize: 13.5 }}>Generazione bozza in corso…</p>
+          </div>
+        )}
+
+        {state.status === 'error' && (
+          <div className="card" style={{ padding: 24 }}>
+            <p style={{ color: 'var(--danger)', fontSize: 13.5, marginBottom: 12 }}>Errore: {state.error}</p>
+            <button className="btn btn-secondary btn-sm" onClick={run}>
+              <RefreshCw size={13} /> Riprova
+            </button>
+          </div>
+        )}
+
+        {state.status === 'done' && (
+          <div className="alert alert-info" style={{ marginBottom: 16 }}>
+            <ShieldCheck size={15} style={{ flexShrink: 0, marginTop: 1 }} />
+            <span>
+              I dati anagrafici ({wizardData.anagrafica?.nome} {wizardData.anagrafica?.cognome}) non sono stati inviati a Gemini —
+              vengono salvati separatamente e inseriti automaticamente solo nel DOCX esportato.
+            </span>
+          </div>
+        )}
+
+        {state.status === 'done' && (
+          <div className="card">
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14, flexWrap: 'wrap', gap: 8 }}>
+              <div className="card-title" style={{ marginBottom: 0 }}>Bozza (editabile)</div>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <button
+                  className="btn btn-secondary btn-sm"
+                  onClick={handleSalvaArchivio}
+                  disabled={state.savingArchivio}
+                >
+                  {state.savingArchivio
+                    ? <><span className="spinner" style={{ width: 12, height: 12 }} /> Salvo…</>
+                    : <><Save size={13} /> {state.saved ? (isModifica ? 'Aggiornata ✓ (salva di nuovo)' : 'Salvata ✓ (salva di nuovo)') : (isModifica ? 'Salva modifiche' : 'Salva in archivio')}</>}
+                </button>
+                <button
+                  className="btn btn-primary btn-sm"
+                  onClick={handleEsportaDocx}
+                  disabled={state.exporting}
+                >
+                  {state.exporting
+                    ? <><span className="spinner" style={{ width: 12, height: 12 }} /> Generazione DOCX…</>
+                    : <><FileDown size={13} /> Esporta DOCX</>}
+                </button>
+              </div>
+            </div>
+
+            <textarea
+              className="form-textarea"
+              value={state.testo}
+              onChange={e => dispatch({ type: 'EDIT', testo: e.target.value })}
+              style={{ minHeight: 520, fontFamily: 'var(--font-ui)', fontSize: 13.5, lineHeight: 1.8 }}
+            />
+
+            <p style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: 8 }}>
+              Il testo sopra è in Markdown — i titoli (##), il <strong>grassetto</strong> e le tabelle (|) vengono convertiti automaticamente nel DOCX finale.
+              {isModifica && ' Puoi anche tornare al wizard per aggiungere sezioni (es. un test dimenticato) e rigenerare.'}
+            </p>
+          </div>
+        )}
+      </div>
+    </>
+  )
+}
