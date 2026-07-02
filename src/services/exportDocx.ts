@@ -1,13 +1,17 @@
 // ============================================================
 // EXPORT DOCX — genera un .docx fedele al template reale
-// Struttura ricavata da screenshot della relazione originale:
-//   - Intestazione: nome, qualifica, specializzazione (serif, sx)
+// Struttura ricavata dall'analisi XML diretta di un template reale
+// anonimizzato (docs/COGNOME NOME (feb25).docx), non solo da
+// screenshot — quindi valori esatti, non stimati:
+//   - Font: Calibri (non Times New Roman), 11pt corpo, 12pt intestazione
+//   - Margini asimmetrici: top 4cm, right 2.25cm, bottom 3cm, left 2cm
+//     (il template reale non usa margini uniformi)
+//   - Intestazione: nome, qualifica, specializzazione, poi linea separatrice
 //   - Data a sinistra, "RELAZIONE" centrato e sottolineato
 //   - Corpo giustificato con rientro prima riga
-//   - Tabelle WISC/NEPSY con intestazione in grassetto, bordi
-//   - Numero pagina in basso a destra (X/Y)
-//   - Font: Times New Roman, 11pt corpo, 12pt intestazione
-//   - Margini A4: 2.5cm tutti i lati
+//   - Tabelle WISC/NEPSY: intestazione con sfondo azzurro chiaro (D5DCE4,
+//     non grigio), bordi sottili neri, colonne centrate
+//   - Numero pagina "N /Totale" in basso (formato confermato via XML footer)
 // ============================================================
 
 import {
@@ -47,15 +51,22 @@ type ExportDocxInput = {
   nepsy?: NepsyBlock
 }
 
-// ── Costanti layout ────────────────────────────────────────
-const FONT        = 'Times New Roman'
-const SIZE_BODY   = 22   // 11pt in half-points
-const SIZE_HEADER = 24   // 12pt
-const SIZE_SMALL  = 18   // 9pt (note sotto tabella)
-const PAGE_W      = 11906 // A4 in DXA
-const PAGE_H      = 16838
-const MARGIN      = 1418  // ~2.5cm in DXA
-const CONTENT_W   = PAGE_W - MARGIN * 2  // ~8070 DXA
+// ── Costanti layout — valori reali estratti dal template ────
+const FONT          = 'Calibri'
+const SIZE_BODY     = 22   // 11pt in half-points
+const SIZE_HEADER   = 24   // 12pt
+const SIZE_SMALL    = 18   // 9pt (note sotto tabella)
+const PAGE_W        = 11906 // A4 in DXA
+const PAGE_H        = 16838
+// Margini reali (non uniformi) letti da word/document.xml → w:pgMar
+const MARGIN_TOP    = 2269
+const MARGIN_RIGHT  = 1274
+const MARGIN_BOTTOM = 1702
+const MARGIN_LEFT   = 1134
+const CONTENT_W     = PAGE_W - MARGIN_LEFT - MARGIN_RIGHT  // ~9498 DXA
+// Colore di sfondo intestazione tabella nel template reale (azzurro
+// chiaro, non il grigio E8E8E8 usato in precedenza)
+const TABLE_HEADER_FILL = 'D5DCE4'
 
 // ── Helpers paragrafo ──────────────────────────────────────
 type ParagraphOptions = {
@@ -230,20 +241,21 @@ function makeHeader(nomeStudio?: string, professionista?: ProfiloProfessionista 
     children: [
       new Paragraph({
         spacing: { after: 40 },
-        children: [new TextRun({ text: nome, font: FONT, size: SIZE_HEADER, bold: true })],
+        // Nel template reale il nome è a 14pt (sz=28), non 12pt —
+        // valore confermato via XML, non stimato dallo screenshot.
+        children: [new TextRun({ text: nome, font: FONT, size: 28, bold: false })],
       }),
       ...resto.map(r =>
         new Paragraph({
           spacing: { after: 40 },
-          children: [new TextRun({ text: r, font: FONT, size: SIZE_BODY })],
+          // Qualifica e specializzazione sono a 10pt (sz=20) nel
+          // template reale, leggermente più piccole del corpo (11pt).
+          children: [new TextRun({ text: r, font: FONT, size: 20 })],
         })
       ),
-      // Linea separatrice sotto l'intestazione
-      new Paragraph({
-        border: { bottom: { style: BorderStyle.SINGLE, size: 6, color: '333333', space: 4 } },
-        spacing: { after: 0 },
-        children: [new TextRun('')],
-      }),
+      // Nessuna linea separatrice: il template reale ha tutti i bordi
+      // del paragrafo intestazione esplicitamente a "nil" nell'XML —
+      // l'intestazione è solo testo, senza riga sotto.
     ],
   })
 }
@@ -276,7 +288,9 @@ function makeFooter(): Footer {
         alignment: AlignmentType.RIGHT,
         children: [
           new TextRun({ children: [PageNumber.CURRENT], font: FONT, size: SIZE_BODY }),
-          new TextRun({ text: '/', font: FONT, size: SIZE_BODY }),
+          // Il template reale usa "N /Totale" (spazio prima dello slash,
+          // nessuno spazio dopo) — confermato dal testo del footer XML.
+          new TextRun({ text: ' /', font: FONT, size: SIZE_BODY }),
           new TextRun({ children: [PageNumber.TOTAL_PAGES], font: FONT, size: SIZE_BODY }),
         ],
       }),
@@ -315,7 +329,7 @@ function makeWiscTable(punteggi: ScoreMap): Table {
   const righeValide = WISC_IV_CAMPI.filter(c => punteggi[c.key])
   const colW = Math.floor(CONTENT_W / 4)
   const colWidths = [colW * 2, colW, colW, colW]
-  const border = { style: BorderStyle.SINGLE, size: 4, color: '999999' }
+  const border = { style: BorderStyle.SINGLE, size: 4, color: '000000' }
   const borders = { top: border, bottom: border, left: border, right: border }
 
   const rows = [
@@ -325,7 +339,7 @@ function makeWiscTable(punteggi: ScoreMap): Table {
           borders,
           width: { size: colW, type: WidthType.DXA },
           margins: { top: 80, bottom: 80, left: 120, right: 120 },
-          shading: { fill: 'E8E8E8', type: ShadingType.CLEAR },
+          shading: { fill: TABLE_HEADER_FILL, type: ShadingType.CLEAR },
           children: [new Paragraph({
             alignment: AlignmentType.CENTER,
             children: [new TextRun({ text, font: FONT, size: SIZE_BODY, bold: true })],
@@ -391,7 +405,7 @@ function makeNepsyTable(punteggi: ScoreMap): Table {
 
   const colW = Math.floor(CONTENT_W / 3)
   const colWidths = [colW * 2, colW, colW]
-  const border = { style: BorderStyle.SINGLE, size: 4, color: '999999' }
+  const border = { style: BorderStyle.SINGLE, size: 4, color: '000000' }
   const borders = { top: border, bottom: border, left: border, right: border }
 
   const rows = [
@@ -401,7 +415,7 @@ function makeNepsyTable(punteggi: ScoreMap): Table {
           borders,
           width: { size: colW, type: WidthType.DXA },
           margins: { top: 80, bottom: 80, left: 120, right: 120 },
-          shading: { fill: 'E8E8E8', type: ShadingType.CLEAR },
+          shading: { fill: TABLE_HEADER_FILL, type: ShadingType.CLEAR },
           children: [new Paragraph({
             alignment: AlignmentType.CENTER,
             children: [new TextRun({ text, font: FONT, size: SIZE_BODY, bold: true })],
@@ -607,7 +621,7 @@ export async function esportaDocx({ testo, data, nomeStudio, anagrafica, profess
       properties: {
         page: {
           size:   { width: PAGE_W, height: PAGE_H },
-          margin: { top: MARGIN, right: MARGIN, bottom: MARGIN, left: MARGIN },
+          margin: { top: MARGIN_TOP, right: MARGIN_RIGHT, bottom: MARGIN_BOTTOM, left: MARGIN_LEFT },
           pageNumbers: { start: 1, formatType: NumberFormat.DECIMAL },
         },
       },

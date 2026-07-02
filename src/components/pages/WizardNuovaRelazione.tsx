@@ -1,14 +1,12 @@
-import { useReducer, useEffect, useRef } from 'react'
+import { useReducer, useEffect, useRef, useState } from 'react'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { ChevronRight, ChevronLeft, Save, FlaskConical, Check, ShieldAlert } from 'lucide-react'
-import { getProfiloStile } from '../../data/profiloData'
 import { getRelazioneById } from '../../data/relazioniData'
 import { getPazienteById } from '../../data/pazientiData'
 import { getSessioneById, upsertSessione } from '../../data/sessioniData'
 import { USE_MOCK } from '../../core/config'
 import type { UnknownRecord } from '../../core/types'
 import { WISC_IV_CAMPI, NEPSY_II_DOMINI, fasciaWISC, fasciaScalare } from '../constants/testDefinitions'
-import { estraiRequisitiDaProfilo, haRiferimentiSubtestCompilati } from '../../services/profileAlignment'
 import {
   ANAMNESI_REMOTA_VOCI, ANAMNESI_RECENTE_VOCI,
   OSSERVAZIONE_ADATTAMENTO_VOCI, OSSERVAZIONE_ATTEGGIAMENTO_VOCI,
@@ -106,28 +104,56 @@ function wizardReducer(state, action) {
 const sh    = { fontFamily: 'var(--font-serif)', fontSize: 17, fontWeight: 600, marginBottom: 6, color: 'var(--accent-dk)' }
 const shSub = { fontSize: 12.5, color: 'var(--text-muted)', marginBottom: 20, lineHeight: 1.5 }
 
-function isFilled(value: unknown) {
-  return String(value || '').trim().length > 0
-}
+// ── Validazione per step ────────────────────────────────────
+// Ogni step dichiara qui i propri campi obbligatori. Restituisce
+// un array di messaggi (label leggibili) per i campi mancanti —
+// array vuoto = step completo. Usato per: disabilitare "Avanti",
+// mostrare il messaggio inline sotto al bottone, e colorare di
+// rosso il segmento nella barra di progresso se lo step è stato
+// visitato ma resta incompleto.
+function validateStep(stepId, data) {
+  const mancanti: string[] = []
 
-function hasAtLeastOneFilled(values: unknown[]) {
-  return values.some(v => isFilled(v))
-}
+  switch (stepId) {
+    case 'sezioni':
+      if (!data.sezioni_attive || data.sezioni_attive.length === 0) mancanti.push('Almeno una sezione')
+      break
 
-function hasAnyNumericValue(obj: Record<string, unknown> | undefined) {
-  if (!obj) return false
-  return Object.values(obj).some(v => isFilled(v))
-}
+    case 'anagrafica':
+      if (!data.anagrafica?.nome?.trim()) mancanti.push('Nome')
+      if (!data.anagrafica?.cognome?.trim()) mancanti.push('Cognome')
+      if (!data.anagrafica?.data_nascita?.trim()) mancanti.push('Data di nascita')
+      break
 
-function hasAllRequiredVoiceDetails(
-  selectedVoiceIds: string[],
-  details: Record<string, unknown>,
-  allVoices: Array<{ id: string; richiedeDettaglio?: boolean }>,
-) {
-  const requiredDetailIds = allVoices
-    .filter(v => v.richiedeDettaglio && selectedVoiceIds.includes(v.id))
-    .map(v => v.id)
-  return requiredDetailIds.every(id => isFilled(details?.[id]))
+    case 'contesto':
+      if (!String(data.motivo_invio || '').trim()) mancanti.push('Motivo dell\'invio')
+      break
+
+    case 'cognitivo': {
+      const punteggi = data.cognitivo?.punteggi || {}
+      const almenoUno = Object.values(punteggi).some(v => String(v ?? '').trim() !== '')
+      if (!almenoUno) mancanti.push('Almeno un punteggio WISC-IV (o deseleziona la sezione)')
+      break
+    }
+
+    case 'nepsy': {
+      const punteggi = data.nepsy?.punteggi || {}
+      const almenoUno = Object.values(punteggi).some(v => String(v ?? '').trim() !== '')
+      if (!almenoUno) mancanti.push('Almeno un punteggio NEPSY-II (o deseleziona la sezione)')
+      break
+    }
+
+    case 'conclusioni':
+      if (!String(data.conclusioni?.diagnosi || '').trim()) mancanti.push('Diagnosi')
+      break
+
+    // 'contesto' via anamnesi/osservazione/apprendimenti/questionari/finale:
+    // nessun campo bloccante — sono step a compilazione libera per costruzione
+    default:
+      break
+  }
+
+  return mancanti
 }
 
 // ── Checkbox riutilizzabile con dettaglio opzionale ────────
@@ -202,21 +228,21 @@ function StepAnagrafica({ data, set }) {
 
       <div className="meta-row">
         <div className="form-group">
-          <label className="form-label">Nome</label>
+          <label className="form-label">Nome *</label>
           <input className="form-input" value={data.nome} onChange={e => set('nome', e.target.value)} />
         </div>
         <div className="form-group">
-          <label className="form-label">Cognome</label>
+          <label className="form-label">Cognome *</label>
           <input className="form-input" value={data.cognome} onChange={e => set('cognome', e.target.value)} />
         </div>
       </div>
       <div className="meta-row">
         <div className="form-group">
-          <label className="form-label">Data di nascita</label>
+          <label className="form-label">Data di nascita *</label>
           <input className="form-input" type="date" value={data.data_nascita} onChange={e => set('data_nascita', e.target.value)} />
         </div>
         <div className="form-group">
-          <label className="form-label">Scuola / classe</label>
+          <label className="form-label">Scuola / classe <span>(facoltativo)</span></label>
           <input className="form-input" placeholder="es. 1° Liceo Linguistico" value={data.scuola_classe} onChange={e => set('scuola_classe', e.target.value)} />
         </div>
       </div>
@@ -237,7 +263,7 @@ function StepContesto({ data, set }) {
       </div>
 
       <div className="form-group">
-        <label className="form-label">Motivo dell'invio</label>
+        <label className="form-label">Motivo dell'invio *</label>
         <textarea className="form-textarea" rows={2} placeholder="es. rivalutazione per rinnovo PDP…" value={data.motivo_invio} onChange={e => set('motivo_invio', e.target.value)} />
       </div>
 
@@ -332,7 +358,7 @@ function StepCognitivo({ data, dispatch }) {
   return (
     <div>
       <h3 style={sh}>Valutazione cognitiva — WISC-IV</h3>
-      <p style={shSub}>Inserisci i punteggi standard per ciascun indice. Fascia interpretativa calcolata automaticamente.</p>
+      <p style={shSub}>Inserisci i punteggi standard per ciascun indice. Fascia interpretativa calcolata automaticamente. <strong>Almeno un punteggio è richiesto</strong> per proseguire, dato che la sezione è stata selezionata.</p>
 
       <div className="meta-row" style={{ marginBottom: 10 }}>
         <div className="form-group">
@@ -435,7 +461,7 @@ function StepNepsy({ data, dispatch }) {
   return (
     <div>
       <h3 style={sh}>Approfondimento neuropsicologico — NEPSY-II</h3>
-      <p style={shSub}>Punteggi scalari per subtest (media 10, DS 3). Compila solo i subtest somministrati.</p>
+      <p style={shSub}>Punteggi scalari per subtest (media 10, DS 3). Compila solo i subtest somministrati. <strong>Almeno un punteggio è richiesto</strong> per proseguire, dato che la sezione è stata selezionata.</p>
 
       <div className="form-group" style={{ marginBottom: 12 }}>
         <label className="form-label">Strumenti utilizzati <span>(facoltativo)</span></label>
@@ -545,10 +571,10 @@ function StepConclusioni({ data, set }) {
     <div>
       <h3 style={sh}>Conclusioni e diagnosi</h3>
       <div className="meta-row">
-        <div className="form-group"><label className="form-label">Diagnosi</label><input className="form-input" value={data.diagnosi} onChange={e => set('diagnosi', e.target.value)} /></div>
+        <div className="form-group"><label className="form-label">Diagnosi *</label><input className="form-input" value={data.diagnosi} onChange={e => set('diagnosi', e.target.value)} /></div>
         <div className="form-group"><label className="form-label">Codice ICD <span>(facoltativo)</span></label><input className="form-input" value={data.codice_icd} onChange={e => set('codice_icd', e.target.value)} /></div>
       </div>
-      <div className="form-group"><label className="form-label">Consigli al paziente / famiglia</label><textarea className="form-textarea" rows={3} value={data.consigli_paziente} onChange={e => set('consigli_paziente', e.target.value)} /></div>
+      <div className="form-group"><label className="form-label">Consigli al paziente / famiglia <span>(facoltativo)</span></label><textarea className="form-textarea" rows={3} value={data.consigli_paziente} onChange={e => set('consigli_paziente', e.target.value)} /></div>
       <div className="form-group"><label className="form-label">Consigli alla scuola <span>(facoltativo)</span></label><textarea className="form-textarea" rows={3} value={data.consigli_scuola} onChange={e => set('consigli_scuola', e.target.value)} /></div>
       <div className="meta-row">
         <div className="form-group"><label className="form-label">Strumenti compensativi <span>(facoltativo)</span></label><textarea className="form-textarea" rows={3} value={data.strumenti_compensativi} onChange={e => set('strumenti_compensativi', e.target.value)} /></div>
@@ -621,54 +647,7 @@ function buildSteps(sezioniAttive) {
   return steps
 }
 
-function getChecklistAderenza(reqProfilo, data) {
-  const items = []
 
-  if (reqProfilo.richiedeRiferimentiSubtest && data.sezioni_attive.includes('cognitivo')) {
-    items.push({
-      id: 'subtest',
-      label: 'Riferimenti subtest WISC per indice compilati',
-      ok: haRiferimentiSubtestCompilati(data.cognitivo),
-    })
-  }
-
-  if (reqProfilo.richiedeEtaValutazione && data.sezioni_attive.includes('cognitivo')) {
-    items.push({
-      id: 'eta_valutazione',
-      label: 'Età al momento della valutazione compilata (WISC)',
-      ok: String(data.cognitivo?.eta_valutazione || '').trim().length > 0,
-    })
-  }
-
-  if (reqProfilo.richiedeStrumenti) {
-    if (data.sezioni_attive.includes('cognitivo')) {
-      items.push({
-        id: 'strumenti_cognitivo',
-        label: 'Strumenti WISC compilati',
-        ok: String(data.cognitivo?.strumenti_utilizzati || '').trim().length > 0,
-      })
-    }
-    if (data.sezioni_attive.includes('nepsy')) {
-      items.push({
-        id: 'strumenti_nepsy',
-        label: 'Strumenti NEPSY compilati',
-        ok: String(data.nepsy?.strumenti_utilizzati || '').trim().length > 0,
-      })
-    }
-  }
-
-  if (reqProfilo.richiedeNoteRangeWisc && data.sezioni_attive.includes('cognitivo')) {
-    items.push({
-      id: 'nota_range_wisc',
-      label: 'Nota standard range WISC abilitata',
-      ok: Boolean(data.cognitivo?.includi_nota_range),
-    })
-  }
-
-  return items
-}
-
-// ── Componente principale ──────────────────────────────────
 export default function WizardNuovaRelazione() {
   const location = useLocation()
   const navigate = useNavigate()
@@ -678,21 +657,18 @@ export default function WizardNuovaRelazione() {
   const [data, dispatch] = useReducer(wizardReducer, INIT)
   const [step, dispatchStep] = useReducer((s, a) => a.type === 'NEXT' ? s + 1 : a.type === 'PREV' ? Math.max(0, s - 1) : a.value, 0)
   const [hydrating, setHydrating] = useReducer((_s, a) => Boolean(a), true)
-  const [reqProfilo, dispatchReqProfilo] = useReducer((s, a) => ({ ...s, ...a }), {
-    richiedeRiferimentiSubtest: false,
-    richiedeStrumenti: false,
-    richiedeEtaValutazione: false,
-    richiedeNoteRangeWisc: false,
-  })
   const sessionIdRef = useRef(null)
   const [saving, toggleSaving] = useReducer(s => !s, false)
   const saveTimer = useRef(null)
+  const [validationError, setValidationError] = useState('')
+  // Step già visitati almeno una volta — serve per non marcare di rosso
+  // step che l'utente non ha ancora raggiunto (sarebbe un falso allarme,
+  // dato che partono vuoti per costruzione).
+  const [visitedSteps, setVisitedSteps] = useState<Set<string>>(new Set(['sezioni']))
 
   const STEPS = buildSteps(data.sezioni_attive)
   const safeStep = Math.min(step, STEPS.length - 1)
   const current = STEPS[safeStep]
-  const checklistAderenza = getChecklistAderenza(reqProfilo, data)
-  const checklistKO = checklistAderenza.filter(i => !i.ok)
 
   const relazioneId = searchParams.get('relazioneId')
   const sessionId = searchParams.get('sessionId')
@@ -796,137 +772,41 @@ export default function WizardNuovaRelazione() {
     return () => clearTimeout(saveTimer.current)
   }, [data, hydrating])
 
+  // Marca lo step corrente come visitato — usato per decidere se
+  // mostrare l'indicatore rosso nella barra di progresso (uno step
+  // mai visitato è "vuoto per natura", non "incompleto per errore").
   useEffect(() => {
-    let live = true
-    ;(async () => {
-      const profilo = await getProfiloStile()
-      if (!live) return
-      dispatchReqProfilo(estraiRequisitiDaProfilo(profilo || ''))
-    })()
-    return () => { live = false }
-  }, [])
+    setVisitedSteps(prev => {
+      if (prev.has(current.id)) return prev
+      const next = new Set(prev)
+      next.add(current.id)
+      return next
+    })
+  }, [current.id])
 
   function setField(k, v) { dispatch({ type: 'SET', section: current.section, k, v }) }
 
-  function getStepValidation() {
-    const reasons: string[] = []
-
-    if (current.id === 'sezioni' && data.sezioni_attive.length === 0) {
-      reasons.push('Seleziona almeno una sezione da includere.')
-    }
-
-    if (current.id === 'anagrafica') {
-      if (!isFilled(data.anagrafica?.nome)) reasons.push('Inserisci il nome.')
-      if (!isFilled(data.anagrafica?.cognome)) reasons.push('Inserisci il cognome.')
-      if (!isFilled(data.anagrafica?.data_nascita)) reasons.push('Inserisci la data di nascita.')
-    }
-
-    if (current.id === 'contesto') {
-      if (!isFilled(data.motivo_invio)) reasons.push('Compila il motivo dell\'invio.')
-      if (!isFilled(data.tipo_invio)) reasons.push('Seleziona chi invia.')
-    }
-
-    if (current.id === 'anamnesi') {
-      const hasContent = hasAtLeastOneFilled([
-        ...(data.anamnesi?.remota_voci || []),
-        ...(data.anamnesi?.recente_voci || []),
-        data.anamnesi?.remota_extra,
-        data.anamnesi?.recente_extra,
-      ])
-
-      const detailsOk = hasAllRequiredVoiceDetails(
-        data.anamnesi?.remota_voci || [],
-        data.anamnesi?.remota_dettagli || {},
-        ANAMNESI_REMOTA_VOCI,
-      ) && hasAllRequiredVoiceDetails(
-        data.anamnesi?.recente_voci || [],
-        data.anamnesi?.recente_dettagli || {},
-        ANAMNESI_RECENTE_VOCI,
-      )
-
-      if (!hasContent) reasons.push('Inserisci almeno una informazione anamnestica (voce o testo libero).')
-      if (!detailsOk) reasons.push('Completa i dettagli richiesti per le voci selezionate.')
-    }
-
-    if (current.id === 'osservazione') {
-      const hasContent = hasAtLeastOneFilled([
-        ...(data.osservazione?.adattamento_voci || []),
-        ...(data.osservazione?.atteggiamento_voci || []),
-        data.osservazione?.note,
-      ])
-      if (!hasContent) reasons.push('Inserisci almeno una osservazione (voce o nota libera).')
-    }
-
-    if (current.id === 'cognitivo') {
-      const hasWiscScore = hasAtLeastOneFilled([
-        data.cognitivo?.punteggi?.icv,
-        data.cognitivo?.punteggi?.rp,
-        data.cognitivo?.punteggi?.iml,
-        data.cognitivo?.punteggi?.ve,
-        data.cognitivo?.punteggi?.qit,
-      ])
-      if (!hasWiscScore) reasons.push('Inserisci almeno un punteggio WISC-IV (consigliato: QIT e indici principali).')
-
-      if (checklistKO.some(i => i.id === 'subtest' || i.id === 'eta_valutazione' || i.id === 'strumenti_cognitivo' || i.id === 'nota_range_wisc')) {
-        reasons.push('Completa i requisiti obbligatori del Profilo di Stile per lo step Cognitivo.')
-      }
-    }
-
-    if (current.id === 'nepsy') {
-      if (!hasAnyNumericValue(data.nepsy?.punteggi)) {
-        reasons.push('Inserisci almeno un punteggio NEPSY-II.')
-      }
-      if (checklistKO.some(i => i.id === 'strumenti_nepsy')) {
-        reasons.push('Completa i requisiti obbligatori del Profilo di Stile per lo step NEPSY.')
-      }
-    }
-
-    if (current.id === 'apprendimenti') {
-      const hasContent = hasAtLeastOneFilled([
-        data.apprendimenti?.strumenti,
-        data.apprendimenti?.punteggi_grezzi,
-        data.apprendimenti?.lettura,
-        data.apprendimenti?.scrittura,
-        data.apprendimenti?.matematica,
-      ])
-      if (!hasContent) reasons.push('Inserisci almeno un contenuto nella sezione Apprendimenti.')
-    }
-
-    if (current.id === 'questionari') {
-      const hasContent = hasAtLeastOneFilled([
-        data.questionari?.tipo,
-        data.questionari?.punteggi_grezzi,
-        data.questionari?.note_cliniche,
-      ])
-      if (!hasContent) reasons.push('Inserisci almeno un contenuto nella sezione Questionari.')
-    }
-
-    if (current.id === 'conclusioni') {
-      const hasContent = hasAtLeastOneFilled([
-        data.conclusioni?.diagnosi,
-        data.conclusioni?.consigli_paziente,
-        data.conclusioni?.consigli_scuola,
-        data.conclusioni?.strumenti_compensativi,
-        data.conclusioni?.misure_dispensative,
-      ])
-      if (!hasContent) reasons.push('Inserisci almeno una conclusione clinica (diagnosi o consigli).')
-    }
-
-    if (current.id === 'finale' && checklistKO.length > 0) {
-      reasons.push('Completa la checklist di aderenza al Profilo di Stile prima della generazione.')
-    }
-
-    return {
-      ok: reasons.length === 0,
-      reasons,
-      firstReason: reasons[0] || null,
-    }
-  }
-
-  const stepValidation = getStepValidation()
+  // Errori dello step corrente — array vuoto = step completo
+  const currentStepErrors = validateStep(current.id, data)
 
   function canProceed() {
-    return stepValidation.ok
+    return currentStepErrors.length === 0
+  }
+
+  function canGenerate() {
+    // La generazione richiede che OGNI step visitabile sia valido,
+    // non solo l'ultimo — copre il caso in cui l'utente sia arrivato
+    // alla fine saltando avanti da uno step con errori irrisolti.
+    return STEPS.every(s => validateStep(s.id, data).length === 0)
+  }
+
+  // Messaggi di errore aggregati per la generazione finale, utile
+  // per lo StepFinale che mostra un riepilogo di cosa manca prima
+  // di abilitare "Genera relazione".
+  function erroriGenerazione() {
+    return STEPS
+      .map(s => ({ label: s.label, errori: validateStep(s.id, data) }))
+      .filter(s => s.errori.length > 0)
   }
 
   return (
@@ -970,24 +850,6 @@ export default function WizardNuovaRelazione() {
           </div>
         )}
 
-        {checklistAderenza.length > 0 && (
-          <div className="alert alert-info" style={{ marginBottom: 16 }}>
-            <ShieldAlert size={15} style={{ flexShrink: 0, marginTop: 1 }} />
-            <div style={{ width: '100%' }}>
-              <div style={{ fontSize: 12.5, fontWeight: 600, marginBottom: 6 }}>
-                Checklist aderenza Profilo di Stile {checklistKO.length === 0 ? 'completa' : `incompleta (${checklistKO.length})`}
-              </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12.5 }}>
-                {checklistAderenza.map(item => (
-                  <div key={item.id} style={{ color: item.ok ? 'var(--success)' : 'var(--text)' }}>
-                    {item.ok ? '✓' : '•'} {item.label}
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
-
         {USE_MOCK && (
           <div className="alert alert-warn" style={{ marginBottom: 16 }}>
             <FlaskConical size={15} style={{ flexShrink: 0 }} />
@@ -995,25 +857,63 @@ export default function WizardNuovaRelazione() {
           </div>
         )}
 
-        <div style={{ display: 'flex', gap: 4, marginBottom: 24 }}>
-          {STEPS.map((s, i) => (
-            <div key={s.id} style={{
-              flex: 1, height: 4, borderRadius: 2,
-              background: i <= safeStep ? 'var(--accent)' : 'var(--border)',
-              cursor: i < safeStep ? 'pointer' : 'default', transition: 'background .2s',
-            }} onClick={() => i < safeStep && dispatchStep({ type: 'SET', value: i })} title={s.label} />
-          ))}
+        {/* Barra di progresso — 3 stati per segmento:
+            grigio = mai visitato, accent = completo, rosso = visitato
+            ma con campi obbligatori mancanti. Sempre cliccabile: la
+            navigazione libera non è mai bloccata, solo segnalata. */}
+        <div style={{ display: 'flex', gap: 4, marginBottom: 8 }}>
+          {STEPS.map((s, i) => {
+            const errori = validateStep(s.id, data)
+            const isVisited = visitedSteps.has(s.id)
+            const isIncomplete = isVisited && errori.length > 0 && i !== safeStep
+            const color = isIncomplete
+              ? 'var(--danger)'
+              : (i <= safeStep ? 'var(--accent)' : 'var(--border)')
+            return (
+              <div
+                key={s.id}
+                style={{
+                  flex: 1, height: 4, borderRadius: 2, background: color,
+                  cursor: 'pointer', transition: 'background .2s',
+                }}
+                onClick={() => dispatchStep({ type: 'SET', value: i })}
+                title={isIncomplete ? `${s.label} — incompleto: ${errori.join(', ')}` : s.label}
+              />
+            )
+          })}
         </div>
+
+        {/* Elenco testuale degli step incompleti — visibile solo se
+            ce ne sono, per dare un quadro d'insieme senza dover
+            passare il mouse su ogni singolo segmento colorato. */}
+        {visitedSteps.size > 1 && STEPS.some(s => s.id !== current.id && visitedSteps.has(s.id) && validateStep(s.id, data).length > 0) && (
+          <div style={{ fontSize: 11.5, color: 'var(--danger)', marginBottom: 16, display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
+            <span style={{ fontWeight: 600 }}>Da completare:</span>
+            {STEPS.filter(s => s.id !== current.id && visitedSteps.has(s.id) && validateStep(s.id, data).length > 0).map(s => (
+              <button
+                key={s.id}
+                type="button"
+                onClick={() => dispatchStep({ type: 'SET', value: STEPS.findIndex(x => x.id === s.id) })}
+                style={{
+                  background: 'var(--danger-lt)', border: '1px solid #f5c6c2', color: 'var(--danger)',
+                  borderRadius: 20, padding: '2px 9px', fontSize: 11, cursor: 'pointer',
+                }}
+              >
+                {s.label}
+              </button>
+            ))}
+          </div>
+        )}
 
         <div className="card">
           {current.render(current.section ? data[current.section] : data, dispatch, setField)}
         </div>
 
-        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 16 }}>
-          <button className="btn btn-secondary" onClick={() => dispatchStep({ type: 'PREV' })} disabled={safeStep === 0}>
-            <ChevronLeft size={15} /> Indietro
-          </button>
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6 }}>
+        <div style={{ marginTop: 16 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+            <button className="btn btn-secondary" onClick={() => dispatchStep({ type: 'PREV' })} disabled={safeStep === 0}>
+              <ChevronLeft size={15} /> Indietro
+            </button>
             {safeStep < STEPS.length - 1 ? (
               <button className="btn btn-primary" onClick={() => dispatchStep({ type: 'NEXT' })} disabled={!canProceed()}>
                 Avanti <ChevronRight size={15} />
@@ -1030,17 +930,33 @@ export default function WizardNuovaRelazione() {
                     },
                   },
                 })}
-                disabled={!canProceed()}
+                disabled={!canGenerate()}
               >
                 <Save size={15} /> Genera relazione
               </button>
             )}
-            {!stepValidation.ok && stepValidation.firstReason && (
-              <span style={{ fontSize: 12, color: 'var(--danger)', maxWidth: 420, textAlign: 'right' }}>
-                {stepValidation.firstReason}
-              </span>
-            )}
           </div>
+
+          {/* Messaggio inline con i campi mancanti dello step corrente —
+              mai un bottone disabilitato senza spiegazione. */}
+          {safeStep < STEPS.length - 1 && currentStepErrors.length > 0 && (
+            <p style={{ fontSize: 12, color: 'var(--danger)', marginTop: 8, textAlign: 'right' }}>
+              Per proseguire completa: {currentStepErrors.join(', ')}
+            </p>
+          )}
+
+          {/* Sull'ultimo step, riepilogo di TUTTI gli step ancora
+              incompleti — copre il caso in cui l'utente sia arrivato
+              qui saltando step con errori mai risolti. */}
+          {safeStep === STEPS.length - 1 && !canGenerate() && (
+            <div style={{ marginTop: 10, fontSize: 12, color: 'var(--danger)', textAlign: 'right' }}>
+              {erroriGenerazione().map(({ label, errori }) => (
+                <p key={label} style={{ margin: '2px 0' }}>
+                  <strong>{label}:</strong> {errori.join(', ')}
+                </p>
+              ))}
+            </div>
+          )}
         </div>
       </div>
     </>

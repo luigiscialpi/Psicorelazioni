@@ -44,6 +44,49 @@ export function osservazioneToTesto(osservazione) {
   return [adattamento, atteggiamento, osservazione.note?.trim()].filter(Boolean).join(' ')
 }
 
+// ── Rimozione di tabelle Markdown residue dal testo narrativo ──
+// Gemini riceve istruzione esplicita di non riportare tabelle (già
+// inserite deterministicamente altrove), ma i modelli linguistici
+// tendono a "confermare visivamente" i dati numerici appena
+// processati ripetendoli in una tabella — nonostante l'istruzione.
+// Questa è una difesa STRUTTURALE, non un'ulteriore istruzione:
+// rimuove qualunque blocco che assomigli a una tabella Markdown
+// (righe consecutive che iniziano con "|") dal testo prima di
+// concatenarlo con la tabella vera in assemblaDocumentoMarkdown().
+// Rimuove anche eventuali righe di intestazione ripetute (es. "WISC-IV
+// scale | Indici/QI | ...") che a volte Gemini include come titolo
+// prima della tabella indesiderata.
+export function rimuoviTabelleMarkdown(testo: string): string {
+  if (!testo) return testo
+
+  const righe = testo.split('\n')
+  const risultato: string[] = []
+  let dentroTabella = false
+
+  for (const riga of righe) {
+    const isRigaTabella = /^\s*\|.*\|\s*$/.test(riga)
+    const isSeparatoreTabella = /^\s*\|?[\s:|-]+\|?\s*$/.test(riga) && riga.includes('-')
+
+    if (isRigaTabella || (dentroTabella && isSeparatoreTabella)) {
+      dentroTabella = true
+      continue
+    }
+
+    // Riga vuota subito dopo una tabella: la si scarta una sola volta
+    // per non lasciare doppio spazio, poi si torna al testo normale
+    if (dentroTabella && riga.trim() === '') {
+      dentroTabella = false
+      continue
+    }
+
+    dentroTabella = false
+    risultato.push(riga)
+  }
+
+  // Collassa eventuali righe vuote multiple lasciate dalla rimozione
+  return risultato.join('\n').replace(/\n{3,}/g, '\n\n').trim()
+}
+
 // ── Tabella WISC-IV in Markdown, pronta per Gemini e per il parser di exportDocx.ts ──
 export function wiscToMarkdownTable(punteggi) {
   const righeValide = WISC_IV_CAMPI.filter(c => punteggi[c.key])
@@ -159,7 +202,7 @@ export function assemblaDocumentoMarkdown(wizard, narrativaPerSezione = {}) {
     const wiscTabella = wiscToMarkdownTable(wizard.cognitivo.punteggi || {})
     if (wiscTabella) out += wiscTabella + '\n'
     if (wizard.cognitivo?.includi_nota_range) out += notaRangeWisc() + '\n'
-    const narrativaC = narrativaPerSezione['cognitivo'] || ''
+    const narrativaC = rimuoviTabelleMarkdown(narrativaPerSezione['cognitivo'] || '')
     if (narrativaC) out += narrativaC + '\n'
     if (wizard.cognitivo?.note_cliniche) out += wizard.cognitivo.note_cliniche + '\n'
   }
@@ -171,7 +214,7 @@ export function assemblaDocumentoMarkdown(wizard, narrativaPerSezione = {}) {
     const nepsyTabella = nepsyToMarkdownTable(wizard.nepsy.punteggi || {})
     if (nepsyTabella) out += nepsyTabella + '\n'
     if (wizard.nepsy?.includi_nota_range) out += notaRangeNepsy() + '\n'
-    const narrativaN = narrativaPerSezione['nepsy'] || ''
+    const narrativaN = rimuoviTabelleMarkdown(narrativaPerSezione['nepsy'] || '')
     if (narrativaN) out += narrativaN + '\n'
     if (wizard.nepsy?.note_cliniche) out += wizard.nepsy.note_cliniche + '\n'
   }

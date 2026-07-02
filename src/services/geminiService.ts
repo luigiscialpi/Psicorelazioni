@@ -522,7 +522,7 @@ ${userData.join('\n\n')}`
 
   const risposta = await callGemini(systemPrompt, userPrompt, { maxOutputTokens: 4096, temperature: 0.7 })
 
-  const sezioneRegex = /=== SEZIONE: (\w+) ===\n([\s\S]*?)(?=\n=== SEZIONE:|\n*$)/
+  const sezioneRegex = /=== SEZIONE: (\w+) ===\n([\s\S]*?)(?=\n=== SEZIONE:|\n*$)/g
   const matches = risposta.matchAll(sezioneRegex)
   for (const match of matches) {
     const nome = match[1]
