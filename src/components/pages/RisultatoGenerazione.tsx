@@ -1,4 +1,4 @@
-import { useReducer, useEffect, useCallback } from 'react'
+import { useReducer, useEffect, useCallback, useRef } from 'react'
 import { Navigate, useLocation, useNavigate } from 'react-router-dom'
 import { FileDown, RotateCcw, Save, FlaskConical, RefreshCw, ShieldCheck } from 'lucide-react'
 import { getProfiloStile, getProfiloProfessionista } from '../../data/profiloData'
@@ -43,6 +43,21 @@ export default function RisultatoGenerazione() {
 
   const isModifica = Boolean(wizardData?._relazioneId)
 
+  // Guardia contro doppia esecuzione della generazione. Necessaria per due
+  // motivi indipendenti:
+  // 1) React.StrictMode (attivo in main.tsx) monta ogni componente due volte
+  //    in sviluppo apposta per scovare effetti non idempotenti — normale,
+  //    ma senza guardia genera due chiamate reali a Gemini per la stessa
+  //    relazione, sprecando quota API (15 richieste/minuto nel tier gratuito).
+  // 2) `wizardData` arriva da `location.state`, che può ricevere un nuovo
+  //    riferimento oggetto a ogni render anche a contenuto invariato — questo
+  //    rende `useCallback`/`useEffect` instabili anche fuori da StrictMode.
+  // La guardia si basa sull'identità del wizardData "loggato" nella sessione
+  // (via JSON.stringify su un sottoinsieme stabile), non sul riferimento
+  // dell'oggetto, così una vera modifica dei dati fa ripartire la generazione
+  // mentre un remount con dati identici no.
+  const ultimaGenerazioneRef = useRef<string | null>(null)
+
   const run = useCallback(async () => {
     if (!wizardData) return
     dispatch({ type: 'START' })
@@ -56,7 +71,19 @@ export default function RisultatoGenerazione() {
     }
   }, [wizardData])
 
-  useEffect(() => { run() }, [run])
+  useEffect(() => {
+    if (!wizardData) return
+    const chiaveGenerazione = JSON.stringify({
+      sezioni: wizardData.sezioni_attive,
+      cognitivo: wizardData.cognitivo,
+      nepsy: wizardData.nepsy,
+      conclusioni: wizardData.conclusioni,
+      relazioneId: wizardData._relazioneId,
+    })
+    if (ultimaGenerazioneRef.current === chiaveGenerazione) return
+    ultimaGenerazioneRef.current = chiaveGenerazione
+    run()
+  }, [wizardData, run])
 
   if (!wizardData) {
     return <Navigate to="/nuova" replace />

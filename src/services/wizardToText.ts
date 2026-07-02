@@ -55,13 +55,23 @@ export function osservazioneToTesto(osservazione) {
 // concatenarlo con la tabella vera in assemblaDocumentoMarkdown().
 // Rimuove anche eventuali righe di intestazione ripetute (es. "WISC-IV
 // scale | Indici/QI | ...") che a volte Gemini include come titolo
-// prima della tabella indesiderata.
+// prima della tabella indesiderata, e la nota esplicativa in corsivo
+// che tipicamente segue una tabella (es. "*WISC-IV: QI >129 molto
+// superiore...*") — anche questa viene ripetuta da Gemini nonostante
+// non contenga "|", quindi sfuggiva al filtro basato solo sulle righe
+// tabellari. Riconosciuta genericamente come riga in corsivo che
+// inizia con un nome di test seguito da ":", presente SOLO se segue
+// immediatamente (a distanza di una riga vuota) una tabella appena
+// rimossa — non tocca note legittime che compaiono altrove nel testo.
+const PATTERN_NOTA_RANGE = /^\s*\*[A-Z][\w-]*(-II)?:\s.*\*\s*$/
+
 export function rimuoviTabelleMarkdown(testo: string): string {
   if (!testo) return testo
 
   const righe = testo.split('\n')
   const risultato: string[] = []
   let dentroTabella = false
+  let appenaUscitoDaTabella = false
 
   for (const riga of righe) {
     const isRigaTabella = /^\s*\|.*\|\s*$/.test(riga)
@@ -76,15 +86,29 @@ export function rimuoviTabelleMarkdown(testo: string): string {
     // per non lasciare doppio spazio, poi si torna al testo normale
     if (dentroTabella && riga.trim() === '') {
       dentroTabella = false
+      appenaUscitoDaTabella = true
+      continue
+    }
+
+    // Nota range in corsivo, presente solo se la riga precedente utile
+    // era la tabella appena rimossa — evita di scartare una nota che
+    // compare legittimamente altrove nel testo narrativo.
+    if (appenaUscitoDaTabella && PATTERN_NOTA_RANGE.test(riga)) {
+      appenaUscitoDaTabella = false
       continue
     }
 
     dentroTabella = false
+    appenaUscitoDaTabella = false
     risultato.push(riga)
   }
 
   // Collassa eventuali righe vuote multiple lasciate dalla rimozione
-  return risultato.join('\n').replace(/\n{3,}/g, '\n\n').trim()
+  const output = risultato.join('\n').replace(/\n{3,}/g, '\n\n').trim()
+  if (output.includes('|')) {
+    console.warn('[rimuoviTabelleMarkdown] Possibile tabella Markdown non rimossa completamente dal testo generato da Gemini.')
+  }
+  return output
 }
 
 // ── Tabella WISC-IV in Markdown, pronta per Gemini e per il parser di exportDocx.ts ──
@@ -171,6 +195,64 @@ export function nepsyToNarrativa(punteggi) {
   return `Le prestazioni ai sottotest somministrati risultano: ${nomi.join(', ')}.`
 }
 
+// ── Rimozione di tabelle Markdown duplicate a livello DOCUMENTO ──
+// Rete di sicurezza aggiuntiva rispetto a rimuoviTabelleMarkdown():
+// quella agisce SOLO sul testo narrativo di cognitivo/nepsy prima
+// che venga concatenato. Questa agisce sul documento GIÀ assemblato,
+// individuando blocchi tabella con contenuto duplicato (stessa
+// sequenza di righe "| ... |") ovunque si trovino nel testo finale,
+// e tenendo solo la prima occorrenza di ciascuna. Copre casi in cui
+// una tabella indesiderata sfugge al filtro per-sezione — ad esempio
+// se finisce, per un fallimento di parsing non ancora identificato,
+// in una porzione di testo diversa da quella attesa.
+function rimuoviTabelleDuplicateDalDocumento(documento: string): string {
+  const righe = documento.split('\n')
+  const blocchi: { start: number; end: number; firma: string }[] = []
+  let i = 0
+
+  while (i < righe.length) {
+    if (/^\s*\|.*\|\s*$/.test(righe[i])) {
+      const start = i
+      const contenutoBlocco: string[] = []
+      while (i < righe.length && /^\s*\|.*\|\s*$/.test(righe[i])) {
+        contenutoBlocco.push(righe[i].trim())
+        i++
+      }
+      // Firma = solo le righe dati (esclude l'eventuale riga separatore
+      // |---|---|), normalizzata su spazi, per confrontare il CONTENUTO
+      // informativo della tabella indipendentemente da spaziature diverse.
+      const firma = contenutoBlocco
+        .filter(r => !/^\|[\s:|-]+\|$/.test(r))
+        .join('\n')
+        .replace(/\s+/g, ' ')
+      blocchi.push({ start, end: i - 1, firma })
+    } else {
+      i++
+    }
+  }
+
+  const firmeViste = new Set<string>()
+  const daRimuovere = new Set<number>()
+
+  for (const b of blocchi) {
+    if (!b.firma) continue
+    if (firmeViste.has(b.firma)) {
+      for (let r = b.start; r <= b.end; r++) daRimuovere.add(r)
+    } else {
+      firmeViste.add(b.firma)
+    }
+  }
+
+  if (daRimuovere.size === 0) return documento
+
+  console.warn('[rimuoviTabelleDuplicateDalDocumento] Rilevata e rimossa una tabella duplicata nel documento finale — verificare la causa a monte (parsing risposta Gemini).')
+
+  return righe
+    .filter((_, idx) => !daRimuovere.has(idx))
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+}
+
 export function assemblaDocumentoMarkdown(wizard, narrativaPerSezione = {}) {
   const sez = wizard.sezioni_attive || []
   let out = '# Relazione di Valutazione Neuropsicologica\n\n'
@@ -223,6 +305,10 @@ export function assemblaDocumentoMarkdown(wizard, narrativaPerSezione = {}) {
     out += '\n## Valutazione apprendimenti\n'
     if (wizard.apprendimenti?.strumenti) out += `${wizard.apprendimenti.strumenti}\n\n`
     if (wizard.apprendimenti?.punteggi_grezzi) out += `${wizard.apprendimenti.punteggi_grezzi}\n\n`
+    // Testo narrativo di Gemini (se presente) integra, non sostituisce,
+    // i campi lettura/scrittura/matematica inseriti manualmente.
+    const narrativaApp = rimuoviTabelleMarkdown(narrativaPerSezione['apprendimenti'] || '')
+    if (narrativaApp) out += narrativaApp + '\n'
     const parti = [wizard.apprendimenti?.lettura, wizard.apprendimenti?.scrittura, wizard.apprendimenti?.matematica].filter(Boolean)
     if (parti.length) out += parti.join(' ') + '\n'
   }
@@ -231,11 +317,20 @@ export function assemblaDocumentoMarkdown(wizard, narrativaPerSezione = {}) {
     out += '\n## Questionari\n'
     if (wizard.questionari?.tipo) out += `${wizard.questionari.tipo}\n\n`
     if (wizard.questionari?.punteggi_grezzi) out += `${wizard.questionari.punteggi_grezzi}\n\n`
+    const narrativaQ = rimuoviTabelleMarkdown(narrativaPerSezione['questionari'] || '')
+    if (narrativaQ) out += narrativaQ + '\n'
     if (wizard.questionari?.note_cliniche) out += wizard.questionari.note_cliniche + '\n'
   }
 
   if (sez.includes('conclusioni')) {
     out += '\n## Conclusioni\n'
+    // Il testo narrativo di Gemini (sintesi articolata del quadro
+    // complessivo, vedi generaNarrativaSezioni) viene anteposto al
+    // template fisso di diagnosi/consigli — prima era generato ma mai
+    // usato, il che contribuiva a relazioni percepite come "scarne"
+    // anche quando Gemini aveva prodotto un'analisi ricca.
+    const narrativaConcl = rimuoviTabelleMarkdown(narrativaPerSezione['conclusioni'] || '')
+    if (narrativaConcl) out += narrativaConcl + '\n\n'
     if (wizard.conclusioni?.diagnosi) {
       out += `Alla luce di quanto emerso dalla valutazione, si rileva ${wizard.conclusioni.diagnosi}`
       if (wizard.conclusioni?.codice_icd) out += ` (${wizard.conclusioni.codice_icd})`
@@ -248,5 +343,5 @@ export function assemblaDocumentoMarkdown(wizard, narrativaPerSezione = {}) {
     out += '\nSi rilascia alla famiglia per gli usi consentiti dalla Legge 170/2010.\n'
   }
 
-  return out.trim()
+  return rimuoviTabelleDuplicateDalDocumento(out.trim())
 }

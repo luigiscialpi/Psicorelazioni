@@ -462,12 +462,19 @@ export async function generaNarrativaSezioni(
     ? esempi.map((e: Relazione, i: number) => `--- ESEMPIO ${i+1} ---\n${e.testo_anonimizzato || e.testo_markdown}`).join('\n\n')
     : ''
 
+  const istruzioneLunghezza = {
+    sintetica:   'Scrivi in modo SINTETICO: 2-3 frasi essenziali per sezione, dritto al punto, senza elaborazioni superflue.',
+    standard:    'Scrivi con un livello di dettaglio STANDARD: una descrizione completa ma non ridondante per ciascun indice/subtest, coerente con la lunghezza media osservata nel Profilo di Stile.',
+    dettagliata: 'Scrivi in modo DETTAGLIATO ED ESTESO: per ogni indice/subtest, oltre al punteggio e alla fascia, includi un\'interpretazione clinica articolata (implicazioni pratiche, confronto con altri indici quando pertinente, eventuali osservazioni qualitative). Le sezioni cognitivo e nepsy devono risultare sensibilmente più ricche rispetto a una versione standard — non limitarti a una frase per indice.',
+  }[wizard.lunghezza as string] || ''
+
   const systemPrompt = `Sei un assistente specializzato nella redazione di relazioni di valutazione neuropsicologica e dell'apprendimento in età evolutiva.
 REGOLA ASSOLUTA: scrivi ESCLUSIVAMENTE seguendo il Profilo di Stile fornito.
 Non inventare mai punteggi o dati non presenti nell'input.
 Genera SOLO il testo narrativo per ogni sezione richiesta. NON generare tabelle, le tabelle sono già pronte.
 Usa le frasi-cornice standard del Profilo di Stile per le sezioni cognitivo e nepsy.
 Non usare mai nomi reali o dati identificativi: usa solo "il/la paziente".
+${istruzioneLunghezza ? `\nLIVELLO DI DETTAGLIO RICHIESTO: ${istruzioneLunghezza}\n` : ''}
 Rispondi SOLO con il testo narrativo per ogni sezione, separato da intestazioni "=== SEZIONE: nome ===".
 
 === PROFILO DI STILE (priorità massima) ===
@@ -520,14 +527,19 @@ Per ogni sezione, fornisci un testo fluido e coerente con il Profilo di Stile.
 
 ${userData.join('\n\n')}`
 
-  const risposta = await callGemini(systemPrompt, userPrompt, { maxOutputTokens: 4096, temperature: 0.7 })
+  const maxTokens = wizard.lunghezza === 'dettagliata' ? 6144 : 4096
+  const risposta = await callGemini(systemPrompt, userPrompt, { maxOutputTokens: maxTokens, temperature: 0.7 })
 
   const sezioneRegex = /=== SEZIONE: (\w+) ===\n([\s\S]*?)(?=\n=== SEZIONE:|\n*$)/g
   const matches = risposta.matchAll(sezioneRegex)
+  let numSezioniTrovate = 0
   for (const match of matches) {
     const nome = match[1]
     const testo = match[2].trim()
-    if (nome && testo) out[nome] = testo
+    if (nome && testo) { out[nome] = testo; numSezioniTrovate++ }
+  }
+  if (numSezioniTrovate === 0) {
+    console.warn('[generaNarrativaSezioni] Parsing fallito: nessuna sezione ha rispettato il formato atteso "=== SEZIONE: nome ===". Verificare il prompt o la risposta di Gemini.')
   }
 
   return out

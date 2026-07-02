@@ -473,12 +473,11 @@ export async function esportaDocx({ testo, data, nomeStudio, anagrafica, profess
   let cognitivoNarrativaLines: string[] = []
   let nepsyNarrativaLines: string[] = []
 
-  const flushCognitivo = () => {
+const flushCognitivo = () => {
     if (inCognitivo) {
       const narrativa = cognitivoNarrativaLines.join('\n').trim()
       if (cognitivo?.punteggi && Object.keys(cognitivo.punteggi).length > 0) {
         blocchi.push(makeWiscTable(cognitivo.punteggi))
-        blocchi.push(emptyLine(120))
         if (cognitivo.includi_nota_range) {
           blocchi.push(new Paragraph({
             spacing: { after: 120 },
@@ -494,12 +493,11 @@ export async function esportaDocx({ testo, data, nomeStudio, anagrafica, profess
     }
   }
 
-  const flushNepsy = () => {
+const flushNepsy = () => {
     if (inNepsy) {
       const narrativa = nepsyNarrativaLines.join('\n').trim()
       if (nepsy?.punteggi && Object.keys(nepsy.punteggi).length > 0) {
         blocchi.push(makeNepsyTable(nepsy.punteggi))
-        blocchi.push(emptyLine(120))
         if (nepsy.includi_nota_range) {
           blocchi.push(new Paragraph({
             spacing: { after: 120 },
@@ -533,7 +531,13 @@ export async function esportaDocx({ testo, data, nomeStudio, anagrafica, profess
       flushNepsy()
       inCognitivo = true
       i++
-      while (i < lines.length && lines[i].match(/^\s*(\*WISC|===)/)) i++
+      // Salta: righe di tabella Markdown (già presenti nel testo, ricostruita
+      // da makeWiscTable in flushCognitivo), la nota range in corsivo, e i
+      // vecchi marcatori \*WISC/===. Prima si saltavano solo questi ultimi
+      // due, lasciando che la tabella Markdown finisse catturata come
+      // "narrativa" e ristampata come testo grezzo — causa della doppia
+      // tabella nel DOCX finale.
+      while (i < lines.length && lines[i].match(/^\s*(\|.*\||\*WISC|===)/)) i++
       if (i < lines.length && lines[i].trim() && !lines[i].startsWith('#')) {
         cognitivoNarrativaLines.push(lines[i])
         i++
@@ -545,7 +549,9 @@ export async function esportaDocx({ testo, data, nomeStudio, anagrafica, profess
       flushCognitivo()
       inNepsy = true
       i++
-      while (i < lines.length && lines[i].match(/^\s*(\*Nepsy|===)/)) i++
+      // Stessa correzione della sezione cognitivo: salta anche le righe
+      // tabella, non solo la nota Nepsy/===.
+      while (i < lines.length && lines[i].match(/^\s*(\|.*\||\*Nepsy|===)/)) i++
       if (i < lines.length && lines[i].trim() && !lines[i].startsWith('#')) {
         nepsyNarrativaLines.push(lines[i])
         i++
@@ -558,7 +564,12 @@ export async function esportaDocx({ testo, data, nomeStudio, anagrafica, profess
         flushCognitivo()
         continue
       }
-      if (line.trim()) cognitivoNarrativaLines.push(line)
+      // Scarta eventuali righe tabella residue: possono comparire qui se
+      // Gemini ha incluso una tabella indesiderata più in basso nel testo
+      // narrativo, non solo subito dopo l'intestazione di sezione.
+      const isRigaTabella = /^\s*\|.*\|\s*$/.test(line)
+      const isNotaRange = /^\s*\*[A-Z][\w-]*(-II)?:\s.*\*\s*$/.test(line)
+      if (line.trim() && !isRigaTabella && !isNotaRange) cognitivoNarrativaLines.push(line)
       i++
       continue
     }
@@ -568,7 +579,9 @@ export async function esportaDocx({ testo, data, nomeStudio, anagrafica, profess
         flushNepsy()
         continue
       }
-      if (line.trim()) nepsyNarrativaLines.push(line)
+      const isRigaTabella = /^\s*\|.*\|\s*$/.test(line)
+      const isNotaRange = /^\s*\*[A-Z][\w-]*(-II)?:\s.*\*\s*$/.test(line)
+      if (line.trim() && !isRigaTabella && !isNotaRange) nepsyNarrativaLines.push(line)
       i++
       continue
     }
