@@ -1,4 +1,4 @@
-import { useReducer, useEffect, useRef, useState } from 'react'
+import { useReducer, useEffect, useRef, useState, useMemo } from 'react'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { ChevronRight, ChevronLeft, Save, FlaskConical, Check, ShieldAlert } from 'lucide-react'
 import { getRelazioneById } from '../../data/relazioniData'
@@ -14,6 +14,9 @@ import {
   ANAMNESI_REMOTA_VOCI, ANAMNESI_RECENTE_VOCI,
   OSSERVAZIONE_ADATTAMENTO_VOCI, OSSERVAZIONE_ATTEGGIAMENTO_VOCI,
 } from '../constants/anamnesiVoci'
+import { getTestTemplatesAttivi } from '../../data/testTemplatesData'
+import { calcolaFascia, getScalaApplicabile } from '../../services/testTemplateEngine'
+import type { TestTemplate, RisultatoTest } from '../../core/testTemplate'
 
 // ─────────────────────────────────────────────────────────────
 // Wizard calibrato sulla struttura reale di relazioni di
@@ -32,20 +35,25 @@ import {
 // automatico, non richiedono che tua sorella le scriva a mano.
 // ─────────────────────────────────────────────────────────────
 
-const SEZIONI_DISPONIBILI = [
-  { id: 'anamnesi',      label: 'Anamnesi (remota e recente)',         default: true },
-  { id: 'osservazione',  label: 'Osservazione comportamentale',         default: true },
-  { id: 'cognitivo',     label: 'Valutazione cognitiva (WISC-IV)',      default: true },
-  { id: 'nepsy',         label: 'Approfondimento neuropsicologico (NEPSY-II)', default: false },
-  { id: 'apprendimenti', label: 'Valutazione apprendimenti (lettura/scrittura/matematica)', default: false },
-  { id: 'questionari',   label: 'Questionari (CBCL/YSR/Conners...)',    default: false },
-  { id: 'conclusioni',   label: 'Conclusioni e diagnosi',               default: true },
+// ── Sezioni non-test (invariate) ─────────────────────────────
+const SEZIONI_NON_TEST = [
+  { id: 'anamnesi',      label: 'Anamnesi (remota e recente)',         default: true,  isTest: false },
+  { id: 'osservazione',  label: 'Osservazione comportamentale',         default: true,  isTest: false },
+  { id: 'apprendimenti', label: 'Valutazione apprendimenti (lettura/scrittura/matematica)', default: false, isTest: false },
+  { id: 'questionari',   label: 'Questionari (CBCL/YSR/Conners...)',    default: false, isTest: false },
+  { id: 'conclusioni',   label: 'Conclusioni e diagnosi',               default: true,  isTest: false },
 ]
+
+// SEZIONI_DISPONIBILI sarà costruita dinamicamente in WizardNuovaRelazione
+// combinando SEZIONI_NON_TEST + template attivi da testTemplatesData.
+// Per i componenti che ne hanno bisogno al di fuori del componente principale,
+// si usa SEZIONI_NON_TEST o si passa la lista come prop.
 
 const TIPI_INVIO = ['neuropsichiatra infantile', 'scuola', 'famiglia (privato)', 'altro specialista', 'altro']
 
 const INIT = {
-  sezioni_attive: SEZIONI_DISPONIBILI.filter(s => s.default).map(s => s.id),
+  // sezioni_attive contiene ID sia di sezioni non-test sia di template (es. 'wisc-iv', 'nepsy-ii')
+  sezioni_attive: [...SEZIONI_NON_TEST.filter(s => s.default).map(s => s.id), 'wisc-iv'],
 
   // ⚠️ ANAGRAFICA REALE — non va mai a Gemini, solo nel DOCX finale
   anagrafica: { nome: '', cognome: '', data_nascita: '', scuola_classe: '' },
@@ -56,17 +64,15 @@ const INIT = {
 
   anamnesi:      { remota_voci: [], remota_dettagli: {}, remota_extra: '', recente_voci: [], recente_dettagli: {}, recente_extra: '' },
   osservazione:  { adattamento_voci: [], atteggiamento_voci: [], note: '' },
+  // Legacy fields mantenuti per retrocompatibilità e per il path di export che li legge ancora
   cognitivo:     {
-    somministrato: true,
-    punteggi: {},
-    interpretabilita: {},
-    subtest_pp: {}, // punti ponderati per subtest, chiave = st.key (es. 'vc', 'so'...), tutti facoltativi
-    eta_valutazione: '',
-    strumenti_utilizzati: '',
-    includi_nota_range: true,
-    note_cliniche: '',
+    somministrato: true, punteggi: {}, interpretabilita: {},
+    subtest_pp: {}, eta_valutazione: '', strumenti_utilizzati: '',
+    includi_nota_range: true, note_cliniche: '',
   },
   nepsy:         { somministrato: true, punteggi: {}, strumenti_utilizzati: '', includi_nota_range: true, note_cliniche: '' },
+  // test_risultati: nuovo formato dinamico per template generici
+  test_risultati: {} as Record<string, RisultatoTest>,
   apprendimenti: { strumenti: '', punteggi_grezzi: '', lettura: '', scrittura: '', matematica: '' },
   questionari:   { tipo: '', punteggi_grezzi: '', note_cliniche: '' },
   conclusioni:   { diagnosi: '', codice_icd: '', consigli_paziente: '', consigli_scuola: '', strumenti_compensativi: '', misure_dispensative: '' },
@@ -86,6 +92,23 @@ function wizardReducer(state, action) {
     case 'SET_NESTED': // per punteggi.wisc.icv = 102 ecc.
       return { ...state, [action.section]: { ...state[action.section],
         [action.group]: { ...state[action.section][action.group], [action.k]: action.v } } }
+    // Nuovo: aggiorna un campo dentro test_risultati[templateId]
+    case 'SET_TEST_RISULTATO': {
+      const prevRis = state.test_risultati?.[action.templateId] || { somministrato: true, punteggi: {} }
+      const prevGroup = prevRis[action.group] || {}
+      return {
+        ...state,
+        test_risultati: {
+          ...(state.test_risultati || {}),
+          [action.templateId]: {
+            ...prevRis,
+            [action.group]: action.k
+              ? { ...prevGroup, [action.k]: action.v }
+              : action.v,
+          },
+        },
+      }
+    }
     case 'TOGGLE_SEZIONE': {
       const attive = state.sezioni_attive.includes(action.id)
         ? state.sezioni_attive.filter(s => s !== action.id)
@@ -109,13 +132,7 @@ const sh    = { fontFamily: 'var(--font-serif)', fontSize: 17, fontWeight: 600, 
 const shSub = { fontSize: 12.5, color: 'var(--text-muted)', marginBottom: 20, lineHeight: 1.5 }
 
 // ── Validazione per step ────────────────────────────────────
-// Ogni step dichiara qui i propri campi obbligatori. Restituisce
-// un array di messaggi (label leggibili) per i campi mancanti —
-// array vuoto = step completo. Usato per: disabilitare "Avanti",
-// mostrare il messaggio inline sotto al bottone, e colorare di
-// rosso il segmento nella barra di progresso se lo step è stato
-// visitato ma resta incompleto.
-function validateStep(stepId, data) {
+function validateStep(stepId, data, templates: TestTemplate[] = []) {
   const mancanti: string[] = []
 
   switch (stepId) {
@@ -134,14 +151,16 @@ function validateStep(stepId, data) {
       break
 
     case 'cognitivo': {
-      const punteggi = data.cognitivo?.punteggi || {}
+      // Retrocompatibilità con sessioni legacy che usano ancora wizard.cognitivo
+      const punteggi = data.cognitivo?.punteggi || data.test_risultati?.['wisc-iv']?.punteggi || {}
       const almenoUno = Object.values(punteggi).some(v => String(v ?? '').trim() !== '')
       if (!almenoUno) mancanti.push('Almeno un punteggio WISC-IV (o deseleziona la sezione)')
       break
     }
 
     case 'nepsy': {
-      const punteggi = data.nepsy?.punteggi || {}
+      // Retrocompatibilità
+      const punteggi = data.nepsy?.punteggi || data.test_risultati?.['nepsy-ii']?.punteggi || {}
       const almenoUno = Object.values(punteggi).some(v => String(v ?? '').trim() !== '')
       if (!almenoUno) mancanti.push('Almeno un punteggio NEPSY-II (o deseleziona la sezione)')
       break
@@ -151,10 +170,17 @@ function validateStep(stepId, data) {
       if (!String(data.conclusioni?.diagnosi || '').trim()) mancanti.push('Diagnosi')
       break
 
-    // 'contesto' via anamnesi/osservazione/apprendimenti/questionari/finale:
-    // nessun campo bloccante — sono step a compilazione libera per costruzione
-    default:
+    default: {
+      // Caso generico: cerca tra i template attivi
+      const template = templates.find(t => t.id === stepId)
+      if (template) {
+        const risultato = data.test_risultati?.[stepId]
+        const punteggi = risultato?.punteggi || {}
+        const almenoUno = Object.values(punteggi).some(v => String(v ?? '').trim() !== '')
+        if (!almenoUno) mancanti.push(`Almeno un punteggio ${template.nome} (o deseleziona la sezione)`)
+      }
       break
+    }
   }
 
   return mancanti
@@ -191,14 +217,29 @@ function VoceCheckbox({ voce, checked, onToggle, dettaglio, onDettaglio }: any) 
 }
 
 // ── Step 0 — Selezione sezioni ─────────────────────────────
-function StepSezioni({ data, dispatch }) {
+function StepSezioni({ data, dispatch, templates }: { data: any, dispatch: any, templates: TestTemplate[] }) {
+  // Costruisce la lista completa: sezioni non-test + template attivi
+  // Le sezioni non-test si inseriscono in posizioni fisse (prima i test, poi le altre)
+  const sezioniTest = templates.map(t => ({ id: t.id, label: t.nome, default: t.builtIn, isTest: true, badge: t.categoria }))
+  
+  // Ordine: anamnesi, osservazione, [test...], apprendimenti, questionari, conclusioni
+  const sezioniDisponibili = [
+    SEZIONI_NON_TEST[0], // anamnesi
+    SEZIONI_NON_TEST[1], // osservazione
+    ...sezioniTest,
+    SEZIONI_NON_TEST[2], // apprendimenti
+    SEZIONI_NON_TEST[3], // questionari
+    SEZIONI_NON_TEST[4], // conclusioni
+  ]
+
   return (
     <div>
       <h3 style={sh}>Quali sezioni includere?</h3>
       <p style={shSub}>Seleziona solo le valutazioni effettivamente svolte per questo caso.</p>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        {SEZIONI_DISPONIBILI.map(s => {
+        {sezioniDisponibili.map(s => {
           const attiva = data.sezioni_attive.includes(s.id)
+          const isTest = 'isTest' in s && s.isTest
           return (
             <button key={s.id} type="button" onClick={() => dispatch({ type: 'TOGGLE_SEZIONE', id: s.id })} style={{
               display: 'flex', alignItems: 'center', gap: 10, padding: '12px 14px', borderRadius: 'var(--radius)',
@@ -211,7 +252,12 @@ function StepSezioni({ data, dispatch }) {
                 display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 {attiva && <Check size={12} color="#fff" strokeWidth={3} />}
               </div>
-              <span style={{ fontSize: 13.5, color: attiva ? 'var(--accent-dk)' : 'var(--text)', fontWeight: attiva ? 500 : 400 }}>{s.label}</span>
+              <span style={{ fontSize: 13.5, color: attiva ? 'var(--accent-dk)' : 'var(--text)', fontWeight: attiva ? 500 : 400, flex: 1 }}>{s.label}</span>
+              {isTest && (
+                <span style={{ fontSize: 10.5, color: 'var(--text-muted)', border: '1px solid var(--border)', borderRadius: 12, padding: '1px 7px' }}>
+                  {'badge' in s ? s.badge : 'test'}
+                </span>
+              )}
             </button>
           )
         })}
@@ -358,194 +404,217 @@ function StepOsservazione({ data, dispatch }) {
 }
 
 // ── Step Cognitivo — input numerici guidati WISC-IV ─────────
-function StepCognitivo({ data, dispatch }) {
+// ── Step Test Generico — rimpiazza StepCognitivo e StepNepsy ─
+// Questo componente si auto-adatta a qualsiasi TestTemplate.
+// Per WISC-IV e NEPSY-II usa ancora wizard.cognitivo / wizard.nepsy
+// per retrocompatibilità con le sessioni esistenti.
+function StepTestGenerico({ template, data, dispatch }: { template: TestTemplate, data: any, dispatch: any }) {
+  // Retrocompatibilità: WISC-IV e NEPSY-II leggono ancora dal vecchio formato
+  const isWisc = template.id === 'wisc-iv'
+  const isNepsy = template.id === 'nepsy-ii'
+  const legacySection = isWisc ? 'cognitivo' : isNepsy ? 'nepsy' : null
+
+  // Legge i dati dalla sezione legacy O da test_risultati
+  const risultato: RisultatoTest = legacySection
+    ? {
+        somministrato: data[legacySection]?.somministrato ?? true,
+        punteggi: data[legacySection]?.punteggi || {},
+        punteggiSecondari: data[legacySection]?.subtest_pp || {},
+        interpretabilita: data[legacySection]?.interpretabilita || {},
+        includiNotaRange: data[legacySection]?.includi_nota_range ?? true,
+        etaValutazione: data[legacySection]?.eta_valutazione || '',
+        strumentiUtilizzati: data[legacySection]?.strumenti_utilizzati || '',
+        noteCliniche: data[legacySection]?.note_cliniche || '',
+      }
+    : (data.test_risultati?.[template.id] || { somministrato: true, punteggi: {} })
+
+  // Helper per dispatch verso la sezione corretta
+  function setPunteggio(key: string, v: string) {
+    if (legacySection) {
+      dispatch({ type: 'SET_NESTED', section: legacySection, group: 'punteggi', k: key, v })
+    } else {
+      dispatch({ type: 'SET_TEST_RISULTATO', templateId: template.id, group: 'punteggi', k: key, v })
+    }
+  }
+  function setSubtest(key: string, v: string) {
+    if (legacySection === 'cognitivo') {
+      dispatch({ type: 'SET_NESTED', section: 'cognitivo', group: 'subtest_pp', k: key, v })
+    } else if (!legacySection) {
+      dispatch({ type: 'SET_TEST_RISULTATO', templateId: template.id, group: 'punteggiSecondari', k: key, v })
+    }
+  }
+  function setInterp(key: string, v: boolean) {
+    if (legacySection === 'cognitivo') {
+      dispatch({ type: 'SET_NESTED', section: 'cognitivo', group: 'interpretabilita', k: key, v })
+    } else if (!legacySection) {
+      dispatch({ type: 'SET_TEST_RISULTATO', templateId: template.id, group: 'interpretabilita', k: key, v })
+    }
+  }
+  function setField(k: string, v: any) {
+    if (legacySection) {
+      const legacyKey = k === 'includiNotaRange' ? 'includi_nota_range'
+        : k === 'etaValutazione' ? 'eta_valutazione'
+        : k === 'strumentiUtilizzati' ? 'strumenti_utilizzati'
+        : k === 'noteCliniche' ? 'note_cliniche' : k
+      dispatch({ type: 'SET', section: legacySection, k: legacyKey, v })
+    } else {
+      dispatch({ type: 'SET_TEST_RISULTATO', templateId: template.id, group: k, k: null, v })
+    }
+  }
+
+  const categoriaLabel = template.categoria === 'cognitivo'
+    ? 'Valutazione cognitiva'
+    : template.categoria === 'nepsy'
+    ? 'Approfondimento neuropsicologico'
+    : 'Test neuropsicologico'
+
+  const haInterpretabilita = template.campiPrincipali.some(c => c.scala?.tipo === 'qi_wisc' || template.scalaDefault.tipo === 'qi_wisc')
+
   return (
     <div>
-      <h3 style={sh}>Valutazione cognitiva — WISC-IV</h3>
-      <p style={shSub}>Inserisci i punteggi standard per ciascun indice. Fascia interpretativa calcolata automaticamente. <strong>Almeno un punteggio è richiesto</strong> per proseguire, dato che la sezione è stata selezionata.</p>
+      <h3 style={sh}>{categoriaLabel} — {template.nome}</h3>
+      <p style={shSub}>
+        Inserisci i punteggi per ciascun campo. Fascia interpretativa calcolata automaticamente.{' '}
+        <strong>Almeno un punteggio è richiesto</strong> per proseguire.
+      </p>
 
-      <div className="meta-row" style={{ marginBottom: 10 }}>
-        <div className="form-group">
-          <label className="form-label">Età al momento della valutazione <span>(facoltativo)</span></label>
-          <input
-            className="form-input"
-            placeholder="es. 10 anni e 4 mesi"
-            value={data.eta_valutazione || ''}
-            onChange={e => dispatch({ type: 'SET', section: 'cognitivo', k: 'eta_valutazione', v: e.target.value })}
-          />
+      {/* Età e strumenti (se il template li richiede) */}
+      {(template.richiedeEtaValutazione || template.richiedeStrumentiUtilizzati) && (
+        <div className="meta-row" style={{ marginBottom: 10 }}>
+          {template.richiedeEtaValutazione && (
+            <div className="form-group">
+              <label className="form-label">Età al momento della valutazione <span>(facoltativo)</span></label>
+              <input
+                className="form-input"
+                placeholder="es. 10 anni e 4 mesi"
+                value={risultato.etaValutazione || ''}
+                onChange={e => setField('etaValutazione', e.target.value)}
+              />
+            </div>
+          )}
+          {template.richiedeStrumentiUtilizzati && (
+            <div className="form-group">
+              <label className="form-label">Strumenti utilizzati <span>(facoltativo)</span></label>
+              <input
+                className="form-input"
+                placeholder={`es. ${template.nome}`}
+                value={risultato.strumentiUtilizzati || ''}
+                onChange={e => setField('strumentiUtilizzati', e.target.value)}
+              />
+            </div>
+          )}
         </div>
-        <div className="form-group">
-          <label className="form-label">Strumenti utilizzati <span>(facoltativo)</span></label>
-          <input
-            className="form-input"
-            placeholder="es. WISC-IV"
-            value={data.strumenti_utilizzati || ''}
-            onChange={e => dispatch({ type: 'SET', section: 'cognitivo', k: 'strumenti_utilizzati', v: e.target.value })}
-          />
-        </div>
-      </div>
+      )}
 
+      {/* Campi principali (indici/scale principali) */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        {WISC_IV_CAMPI.map(campo => {
-          const val = data.punteggi[campo.key] || ''
-          const fascia = fasciaWISC(val)
-          // Interpretabilità: true (Sì) di default se non specificato —
-          // coerente col comportamento storico prima di questo campo.
-          const interpretabile = data.interpretabilita?.[campo.key] !== false
+        {template.campiPrincipali.map(campo => {
+          const scala = getScalaApplicabile(campo, template)
+          const val = risultato.punteggi[campo.key] || ''
+          const fascia = val ? (calcolaFascia(val, scala) || '—') : '—'
+          const interpretabile = risultato.interpretabilita?.[campo.key] !== false
           return (
             <div key={campo.key} style={{
-              display: 'grid', gridTemplateColumns: '1fr 90px 140px 30px', gap: 10, alignItems: 'center',
+              display: 'grid',
+              gridTemplateColumns: haInterpretabilita ? '1fr 90px 140px 30px' : '1fr 90px 140px',
+              gap: 10, alignItems: 'center',
               padding: '8px 10px', borderRadius: 'var(--radius)',
-              background: campo.tipo === 'totale' ? 'var(--accent-lt)' : 'transparent',
+              background: 'transparent',
             }}>
-              <span style={{ fontSize: 12.5, fontWeight: campo.tipo === 'totale' ? 600 : 400 }}>{campo.label}</span>
+              <span style={{ fontSize: 12.5 }}>{campo.label}</span>
               <input
-                className="form-input" type="number" min="40" max="160" placeholder="—"
+                className="form-input" type="number" placeholder="—"
                 value={val}
-                onChange={e => dispatch({ type: 'SET_NESTED', section: 'cognitivo', group: 'punteggi', k: campo.key, v: e.target.value })}
+                onChange={e => setPunteggio(campo.key, e.target.value)}
                 style={{ textAlign: 'center', padding: '6px 8px' }}
               />
-              <span style={{ fontSize: 11.5, color: fascia ? 'var(--accent-dk)' : 'var(--text-muted)', fontWeight: fascia ? 500 : 400 }}>
-                {fascia || '—'}
+              <span style={{ fontSize: 11.5, color: fascia !== '—' ? 'var(--accent-dk)' : 'var(--text-muted)', fontWeight: fascia !== '—' ? 500 : 400 }}>
+                {fascia}
               </span>
-              <label
-                title="Interpretabile (Sì/No) — deseleziona solo per segnalare un indice non interpretabile"
-                style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}
-              >
-                <input
-                  type="checkbox"
-                  checked={interpretabile}
-                  onChange={e => dispatch({ type: 'SET_NESTED', section: 'cognitivo', group: 'interpretabilita', k: campo.key, v: e.target.checked })}
-                  style={{ width: 16, height: 16, cursor: 'pointer' }}
-                />
-              </label>
+              {haInterpretabilita && (
+                <label title="Interpretabile (Sì/No)" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={interpretabile}
+                    onChange={e => setInterp(campo.key, e.target.checked)}
+                    style={{ width: 16, height: 16, cursor: 'pointer' }}
+                  />
+                </label>
+              )}
             </div>
           )
         })}
       </div>
-      <p style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 6 }}>
-        L'ultima colonna segnala se l'indice è interpretabile (Sì, spuntato) o meno. Se tutti gli indici sono interpretabili, la colonna "Interpretabilità" non comparirà nella tabella finale — verrà mostrata solo se almeno un indice è deselezionato.
-      </p>
-
-      <div className="form-group" style={{ marginTop: 14 }}>
-        <label className="form-label">Riferimenti ai subtest per indice <span>(facoltativo)</span></label>
-        <p style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: -4, marginBottom: 10 }}>
-          Punti ponderati (pp) dei singoli subtest, media 10 DS 3. Compila solo i subtest somministrati:
-          nella relazione finale verranno spiegati a parole, mai mostrati in tabella.
+      {haInterpretabilita && (
+        <p style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 6 }}>
+          L'ultima colonna segnala se l'indice è interpretabile. La colonna "Interpretabilità" apparirà nella tabella finale solo se almeno un indice è deselezionato.
         </p>
-        {Object.entries(WISC_IV_INDICE_LABEL).map(([indiceKey, indiceLabel]) => {
-          const subtestIndice = WISC_IV_SUBTEST_PER_INDICE[indiceKey]
-          const nCompilati = subtestIndice.filter(st => data.subtest_pp?.[st.key] !== undefined && data.subtest_pp?.[st.key] !== '').length
-          return (
-            <details key={indiceKey} style={{ marginBottom: 8, border: '1px solid var(--border, #ddd)', borderRadius: 8, padding: '2px 12px' }}>
-              <summary style={{ cursor: 'pointer', padding: '8px 0', fontSize: 13, fontWeight: 500, color: 'var(--accent-dk)', listStyle: 'none' }}>
-                {indiceLabel} {nCompilati > 0 && <span style={{ fontWeight: 400, color: 'var(--text-muted)', fontSize: 11.5 }}>· {nCompilati} subtest compilat{nCompilati === 1 ? 'o' : 'i'}</span>}
-              </summary>
-              <div style={{ paddingBottom: 10 }}>
-                {subtestIndice.map(st => {
-                  const val = data.subtest_pp?.[st.key] || ''
-                  const fascia = fasciaScalare(val)
-                  return (
-                    <div key={st.key} style={{ display: 'grid', gridTemplateColumns: '1fr 90px 140px', gap: 10, alignItems: 'center', marginBottom: 6 }}>
-                      <span style={{ fontSize: 12.5 }}>{st.label}</span>
-                      <input
-                        className="form-input" type="number" min="1" max="19" placeholder="pp"
-                        value={val}
-                        onChange={e => dispatch({ type: 'SET_NESTED', section: 'cognitivo', group: 'subtest_pp', k: st.key, v: e.target.value })}
-                        style={{ textAlign: 'center', padding: '6px 8px' }}
-                      />
-                      <span style={{ fontSize: 11.5, color: fascia ? 'var(--accent-dk)' : 'var(--text-muted)', fontWeight: fascia ? 500 : 400 }}>
-                        {fascia || '—'}
-                      </span>
-                    </div>
-                  )
-                })}
-              </div>
-            </details>
-          )
-        })}
-      </div>
+      )}
 
-      <div className="form-group" style={{ marginTop: 10 }}>
-        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5 }}>
-          <input
-            type="checkbox"
-            checked={Boolean(data.includi_nota_range)}
-            onChange={e => dispatch({ type: 'SET', section: 'cognitivo', k: 'includi_nota_range', v: e.target.checked })}
-          />
-          Includi nota standard sui range WISC-IV
-        </label>
-      </div>
+      {/* Gruppi secondari (subtest) — accordion */}
+      {template.gruppiSecondari && template.gruppiSecondari.length > 0 && (
+        <div className="form-group" style={{ marginTop: 14 }}>
+          <label className="form-label">Subtest per indice <span>(facoltativo)</span></label>
+          <p style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: -4, marginBottom: 10 }}>
+            Compila solo i subtest somministrati: nella relazione verranno spiegati a parole, mai in tabella.
+          </p>
+          {template.gruppiSecondari.map(gruppo => {
+            const nCompilati = gruppo.campi.filter(c =>
+              risultato.punteggiSecondari?.[c.key] !== undefined && risultato.punteggiSecondari[c.key] !== ''
+            ).length
+            return (
+              <details key={gruppo.key} style={{ marginBottom: 8, border: '1px solid var(--border, #ddd)', borderRadius: 8, padding: '2px 12px' }}>
+                <summary style={{ cursor: 'pointer', padding: '8px 0', fontSize: 13, fontWeight: 500, color: 'var(--accent-dk)', listStyle: 'none' }}>
+                  {gruppo.label} {nCompilati > 0 && <span style={{ fontWeight: 400, color: 'var(--text-muted)', fontSize: 11.5 }}>· {nCompilati} compilat{nCompilati === 1 ? 'o' : 'i'}</span>}
+                </summary>
+                <div style={{ paddingBottom: 10 }}>
+                  {gruppo.campi.map(campo => {
+                    const scalaGruppo = campo.scala || gruppo.scalaDefault || template.scalaDefault
+                    const val = risultato.punteggiSecondari?.[campo.key] || ''
+                    const fascia = val ? (calcolaFascia(val, scalaGruppo) || '—') : '—'
+                    return (
+                      <div key={campo.key} style={{ display: 'grid', gridTemplateColumns: '1fr 90px 140px', gap: 10, alignItems: 'center', marginBottom: 6 }}>
+                        <span style={{ fontSize: 12.5 }}>{campo.label}</span>
+                        <input
+                          className="form-input" type="number" placeholder="pp"
+                          value={val}
+                          onChange={e => setSubtest(campo.key, e.target.value)}
+                          style={{ textAlign: 'center', padding: '6px 8px' }}
+                        />
+                        <span style={{ fontSize: 11.5, color: fascia !== '—' ? 'var(--accent-dk)' : 'var(--text-muted)', fontWeight: fascia !== '—' ? 500 : 400 }}>
+                          {fascia}
+                        </span>
+                      </div>
+                    )
+                  })}
+                </div>
+              </details>
+            )
+          })}
+        </div>
+      )}
 
+      {/* Nota range */}
+      {template.notaRange && (
+        <div className="form-group" style={{ marginTop: 10 }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5 }}>
+            <input
+              type="checkbox"
+              checked={risultato.includiNotaRange !== false}
+              onChange={e => setField('includiNotaRange', e.target.checked)}
+            />
+            Includi nota standard sui range {template.nome}
+          </label>
+        </div>
+      )}
+
+      {/* Note cliniche */}
       <div className="form-group" style={{ marginTop: 18 }}>
         <label className="form-label">Note cliniche aggiuntive <span>(facoltativo)</span></label>
         <textarea className="form-textarea" rows={3} placeholder="Osservazioni durante la somministrazione…"
-          value={data.note_cliniche} onChange={e => dispatch({ type: 'SET', section: 'cognitivo', k: 'note_cliniche', v: e.target.value })} />
-      </div>
-    </div>
-  )
-}
-
-// ── Step NEPSY — input numerici guidati per dominio ─────────
-function StepNepsy({ data, dispatch }) {
-  return (
-    <div>
-      <h3 style={sh}>Approfondimento neuropsicologico — NEPSY-II</h3>
-      <p style={shSub}>Punteggi scalari per subtest (media 10, DS 3). Compila solo i subtest somministrati. <strong>Almeno un punteggio è richiesto</strong> per proseguire, dato che la sezione è stata selezionata.</p>
-
-      <div className="form-group" style={{ marginBottom: 12 }}>
-        <label className="form-label">Strumenti utilizzati <span>(facoltativo)</span></label>
-        <input
-          className="form-input"
-          placeholder="es. NEPSY-II, prove complementari"
-          value={data.strumenti_utilizzati || ''}
-          onChange={e => dispatch({ type: 'SET', section: 'nepsy', k: 'strumenti_utilizzati', v: e.target.value })}
+          value={risultato.noteCliniche || ''}
+          onChange={e => setField('noteCliniche', e.target.value)}
         />
-      </div>
-
-      {NEPSY_II_DOMINI.map(dom => (
-        <div key={dom.dominio} style={{ marginBottom: 18 }}>
-          <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--accent-dk)', textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 8 }}>
-            {dom.dominio}
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            {dom.subtest.map(st => {
-              const val = data.punteggi[st.key] || ''
-              const fascia = fasciaScalare(val)
-              return (
-                <div key={st.key} style={{ display: 'grid', gridTemplateColumns: '1fr 90px 140px', gap: 10, alignItems: 'center' }}>
-                  <span style={{ fontSize: 12.5 }}>{st.label}</span>
-                  <input
-                    className="form-input" type="number" min="1" max="19" placeholder="—"
-                    value={val}
-                    onChange={e => dispatch({ type: 'SET_NESTED', section: 'nepsy', group: 'punteggi', k: st.key, v: e.target.value })}
-                    style={{ textAlign: 'center', padding: '6px 8px' }}
-                  />
-                  <span style={{ fontSize: 11.5, color: fascia ? 'var(--accent-dk)' : 'var(--text-muted)', fontWeight: fascia ? 500 : 400 }}>
-                    {fascia || '—'}
-                  </span>
-                </div>
-              )
-            })}
-          </div>
-        </div>
-      ))}
-
-      <div className="form-group" style={{ marginTop: 8 }}>
-        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5 }}>
-          <input
-            type="checkbox"
-            checked={Boolean(data.includi_nota_range)}
-            onChange={e => dispatch({ type: 'SET', section: 'nepsy', k: 'includi_nota_range', v: e.target.checked })}
-          />
-          Includi nota standard sui punteggi scalari NEPSY-II
-        </label>
-      </div>
-
-      <div className="form-group">
-        <label className="form-label">Note cliniche aggiuntive <span>(facoltativo)</span></label>
-        <textarea className="form-textarea" rows={3}
-          value={data.note_cliniche} onChange={e => dispatch({ type: 'SET', section: 'nepsy', k: 'note_cliniche', v: e.target.value })} />
       </div>
     </div>
   )
@@ -644,9 +713,9 @@ function StepFinale({ data, set }) {
 }
 
 // ── Costruzione dinamica degli step ────────────────────────
-function buildSteps(sezioniAttive) {
+function buildSteps(sezioniAttive, templates: TestTemplate[] = []) {
   const steps = [
-    { id: 'sezioni',    label: 'Sezioni',     section: null,     render: (d, dp) => <StepSezioni data={d} dispatch={dp} /> },
+    { id: 'sezioni',    label: 'Sezioni',     section: null,     render: (d, dp) => <StepSezioni data={d} dispatch={dp} templates={templates} /> },
     { id: 'anagrafica', label: 'Anagrafica',  section: 'anagrafica', render: (d, dp, set) => <StepAnagrafica data={d} set={set} /> },
     { id: 'contesto',   label: 'Contesto',    section: null,     render: (d, dp, set) => <StepContesto data={d} set={set} /> },
   ]
@@ -657,11 +726,18 @@ function buildSteps(sezioniAttive) {
   if (sezioniAttive.includes('osservazione'))
     steps.push({ id: 'osservazione', label: 'Osservazione', section: 'osservazione', render: (d, dp) => <StepOsservazione data={d} dispatch={dp} /> })
 
-  if (sezioniAttive.includes('cognitivo'))
-    steps.push({ id: 'cognitivo', label: 'Cognitivo', section: 'cognitivo', render: (d, dp) => <StepCognitivo data={d} dispatch={dp} /> })
-
-  if (sezioniAttive.includes('nepsy'))
-    steps.push({ id: 'nepsy', label: 'NEPSY', section: 'nepsy', render: (d, dp) => <StepNepsy data={d} dispatch={dp} /> })
+  // Template attivi nell'ordine in cui compaiono in sezioniAttive
+  for (const templateId of sezioniAttive) {
+    const template = templates.find(t => t.id === templateId)
+    if (template) {
+      steps.push({
+        id: template.id,
+        label: template.nome,
+        section: null, // dati letti internamente da StepTestGenerico
+        render: (d, dp) => <StepTestGenerico template={template} data={d} dispatch={dp} />
+      })
+    }
+  }
 
   if (sezioniAttive.includes('apprendimenti'))
     steps.push({ id: 'apprendimenti', label: 'Apprendimenti', section: 'apprendimenti', render: (d, dp, set) => <StepApprendimenti data={d} set={set} /> })
@@ -691,12 +767,18 @@ export default function WizardNuovaRelazione() {
   const [saving, toggleSaving] = useReducer(s => !s, false)
   const saveTimer = useRef(null)
   const [validationError, setValidationError] = useState('')
+  const [templates, setTemplates] = useState<TestTemplate[]>([])
   // Step già visitati almeno una volta — serve per non marcare di rosso
   // step che l'utente non ha ancora raggiunto (sarebbe un falso allarme,
   // dato che partono vuoti per costruzione).
   const [visitedSteps, setVisitedSteps] = useState<Set<string>>(new Set(['sezioni']))
 
-  const STEPS = buildSteps(data.sezioni_attive)
+  // Carica i template attivi all'avvio
+  useEffect(() => {
+    getTestTemplatesAttivi().then(setTemplates).catch(console.error)
+  }, [])
+
+  const STEPS = buildSteps(data.sezioni_attive, templates)
   const safeStep = Math.min(step, STEPS.length - 1)
   const current = STEPS[safeStep]
 
@@ -812,7 +894,7 @@ export default function WizardNuovaRelazione() {
   function setField(k, v) { dispatch({ type: 'SET', section: current.section, k, v }) }
 
   // Errori dello step corrente — array vuoto = step completo
-  const currentStepErrors = validateStep(current.id, data)
+  const currentStepErrors = validateStep(current.id, data, templates)
 
   function canProceed() {
     return currentStepErrors.length === 0
@@ -822,7 +904,7 @@ export default function WizardNuovaRelazione() {
     // La generazione richiede che OGNI step visitabile sia valido,
     // non solo l'ultimo — copre il caso in cui l'utente sia arrivato
     // alla fine saltando avanti da uno step con errori irrisolti.
-    return STEPS.every(s => validateStep(s.id, data).length === 0)
+    return STEPS.every(s => validateStep(s.id, data, templates).length === 0)
   }
 
   // Messaggi di errore aggregati per la generazione finale, utile
@@ -830,7 +912,7 @@ export default function WizardNuovaRelazione() {
   // di abilitare "Genera relazione".
   function erroriGenerazione() {
     return STEPS
-      .map(s => ({ label: s.label, errori: validateStep(s.id, data) }))
+      .map(s => ({ label: s.label, errori: validateStep(s.id, data, templates) }))
       .filter(s => s.errori.length > 0)
   }
 
@@ -888,7 +970,7 @@ export default function WizardNuovaRelazione() {
             navigazione libera non è mai bloccata, solo segnalata. */}
         <div style={{ display: 'flex', gap: 4, marginBottom: 8 }}>
           {STEPS.map((s, i) => {
-            const errori = validateStep(s.id, data)
+            const errori = validateStep(s.id, data, templates)
             const isVisited = visitedSteps.has(s.id)
             const isIncomplete = isVisited && errori.length > 0 && i !== safeStep
             const color = isIncomplete
@@ -911,10 +993,10 @@ export default function WizardNuovaRelazione() {
         {/* Elenco testuale degli step incompleti — visibile solo se
             ce ne sono, per dare un quadro d'insieme senza dover
             passare il mouse su ogni singolo segmento colorato. */}
-        {visitedSteps.size > 1 && STEPS.some(s => s.id !== current.id && visitedSteps.has(s.id) && validateStep(s.id, data).length > 0) && (
+        {visitedSteps.size > 1 && STEPS.some(s => s.id !== current.id && visitedSteps.has(s.id) && validateStep(s.id, data, templates).length > 0) && (
           <div style={{ fontSize: 11.5, color: 'var(--danger)', marginBottom: 16, display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
             <span style={{ fontWeight: 600 }}>Da completare:</span>
-            {STEPS.filter(s => s.id !== current.id && visitedSteps.has(s.id) && validateStep(s.id, data).length > 0).map(s => (
+            {STEPS.filter(s => s.id !== current.id && visitedSteps.has(s.id) && validateStep(s.id, data, templates).length > 0).map(s => (
               <button
                 key={s.id}
                 type="button"
