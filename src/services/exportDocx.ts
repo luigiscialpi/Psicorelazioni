@@ -21,6 +21,9 @@ import {
 } from 'docx'
 import type { AnagraficaPaziente, ProfiloProfessionista } from '../core/types'
 import { fasciaWISC, fasciaScalare, WISC_IV_CAMPI, NEPSY_II_DOMINI } from '../components/constants/testDefinitions'
+import { MOCK_WISC_IV_TEMPLATE, MOCK_NEPSY_II_TEMPLATE } from '../data/mockTemplates'
+import type { TestTemplate, RisultatoTest, ScalaPunteggio } from '../core/testTemplate'
+import { calcolaFascia, getScalaApplicabile } from './testTemplateEngine'
 import { notaRangeWisc, notaRangeNepsy } from './wizardToText'
 
 // ── Tipi per input strutturato ──────────────────────────────
@@ -326,19 +329,14 @@ function anagraficaParagraph(anagrafica?: AnagraficaPaziente | null): Paragraph 
   })
 }
 
-// `interpretabilita` è un oggetto opzionale { [chiaveIndice]: boolean },
-// stessa convenzione di wiscToMarkdownTable in wizardToText.ts: default
-// true (Sì) se assente, colonna "Interpretabilità" mostrata in tabella
-// SOLO se almeno un indice compilato ha interpretabilità = false.
-// Le due funzioni (questa per il DOCX, l'altra per il Markdown a
-// video/anteprima) condividono la stessa logica ma restano separate
-// perché costruiscono oggetti diversi (Table di docx vs stringa
-// Markdown) — vedi nota in cima al file sul perché exportDocx.ts
-// ricostruisce le tabelle invece di limitarsi a leggerle dal testo.
-function makeWiscTable(punteggi: ScoreMap, interpretabilita: Record<string, boolean> = {}): Table {
-  const righeValide = WISC_IV_CAMPI.filter(c => punteggi[c.key])
-  const mostraColonna = righeValide.some(c => interpretabilita[c.key] === false)
+function makeTestTable(template: TestTemplate, risultato: RisultatoTest): Table {
+  const campiValidi = template.campiPrincipali.filter(c => risultato.punteggi[c.key])
+  
+  if (campiValidi.length === 0) {
+    return new Table({ width: { size: CONTENT_W, type: WidthType.DXA }, rows: [] })
+  }
 
+  const mostraColonna = campiValidi.some(c => risultato.interpretabilita?.[c.key] === false)
   const numColonne = mostraColonna ? 4 : 3
   const colW = Math.floor(CONTENT_W / numColonne)
   const colWidths = mostraColonna ? [colW * 2, colW, colW, colW] : [colW * 2, colW, colW]
@@ -346,15 +344,14 @@ function makeWiscTable(punteggi: ScoreMap, interpretabilita: Record<string, bool
   const borders = { top: border, bottom: border, left: border, right: border }
 
   const intestazioni = mostraColonna
-    ? ['Scala', 'Indici/QI', 'Categoria descrittiva', 'Interpretabilità']
-    : ['Scala', 'Indici/QI', 'Categoria descrittiva']
+    ? [`${template.nome} scale`, 'Punteggio', 'Categoria descrittiva', 'Interpretabilità']
+    : [`${template.nome} scale`, 'Punteggio', 'Categoria descrittiva']
 
   const rows = [
     new TableRow({
       children: intestazioni.map(text =>
         new TableCell({
-          borders,
-          width: { size: colW, type: WidthType.DXA },
+          borders, width: { size: colW, type: WidthType.DXA },
           margins: { top: 80, bottom: 80, left: 120, right: 120 },
           shading: { fill: TABLE_HEADER_FILL, type: ShadingType.CLEAR },
           children: [new Paragraph({
@@ -364,7 +361,11 @@ function makeWiscTable(punteggi: ScoreMap, interpretabilita: Record<string, bool
         })
       ),
     }),
-    ...righeValide.map(c => {
+    ...campiValidi.map(c => {
+      const p = risultato.punteggi[c.key]
+      const scala = getScalaApplicabile(c, template)
+      const fascia = calcolaFascia(p, scala) ?? '-'
+      
       const celle = [
         new TableCell({
           borders, width: { size: colWidths[0], type: WidthType.DXA },
@@ -376,7 +377,7 @@ function makeWiscTable(punteggi: ScoreMap, interpretabilita: Record<string, bool
           margins: { top: 80, bottom: 80, left: 120, right: 120 },
           children: [new Paragraph({
             alignment: AlignmentType.CENTER,
-            children: [new TextRun({ text: String(punteggi[c.key] || ''), font: FONT, size: SIZE_BODY })],
+            children: [new TextRun({ text: String(p), font: FONT, size: SIZE_BODY })],
           })],
         }),
         new TableCell({
@@ -384,12 +385,13 @@ function makeWiscTable(punteggi: ScoreMap, interpretabilita: Record<string, bool
           margins: { top: 80, bottom: 80, left: 120, right: 120 },
           children: [new Paragraph({
             alignment: AlignmentType.CENTER,
-            children: [new TextRun({ text: fasciaWISC(punteggi[c.key]), font: FONT, size: SIZE_BODY })],
+            children: [new TextRun({ text: fascia, font: FONT, size: SIZE_BODY })],
           })],
         }),
       ]
+      
       if (mostraColonna) {
-        const interpretabile = interpretabilita[c.key] !== false
+        const interpretabile = risultato.interpretabilita?.[c.key] !== false
         celle.push(new TableCell({
           borders, width: { size: colWidths[3], type: WidthType.DXA },
           margins: { top: 80, bottom: 80, left: 120, right: 120 },
@@ -403,81 +405,69 @@ function makeWiscTable(punteggi: ScoreMap, interpretabilita: Record<string, bool
     }),
   ]
 
-  return new Table({
-    width: { size: CONTENT_W, type: WidthType.DXA },
-    columnWidths: colWidths,
-    rows,
-  })
-}
-
-function makeNepsyTable(punteggi: ScoreMap): Table {
-  const domWithData = NEPSY_II_DOMINI
-    .map(d => ({ ...d, subtest: d.subtest.filter(s => punteggi[s.key]) }))
-    .filter(d => d.subtest.length > 0)
-
-  if (domWithData.length === 0) {
-    return new Table({
-      width: { size: CONTENT_W, type: WidthType.DXA },
-      rows: [],
-    })
+  // Aggiungi tabelle per gruppi secondari (es. subtest Nepsy o WISC)
+  if (template.gruppiSecondari && risultato.punteggiSecondari) {
+    for (const gruppo of template.gruppiSecondari) {
+      const secValidi = gruppo.campi.filter(c => risultato.punteggiSecondari![c.key])
+      if (secValidi.length > 0) {
+        rows.push(
+          new TableRow({
+            children: [
+              new TableCell({
+                borders, width: { size: CONTENT_W, type: WidthType.DXA },
+                columnSpan: numColonne,
+                margins: { top: 80, bottom: 80, left: 120, right: 120 },
+                shading: { fill: TABLE_HEADER_FILL, type: ShadingType.CLEAR },
+                children: [new Paragraph({
+                  alignment: AlignmentType.CENTER,
+                  children: [new TextRun({ text: gruppo.label, font: FONT, size: SIZE_BODY, bold: true })],
+                })],
+              })
+            ]
+          }),
+          ...secValidi.map(c => {
+            const p = risultato.punteggiSecondari![c.key]
+            const scala = getScalaApplicabile(c, gruppo as any) // Eredita dal gruppo
+            const fascia = calcolaFascia(p, scala) ?? '-'
+            
+            return new TableRow({
+              children: [
+                new TableCell({
+                  borders, width: { size: colWidths[0], type: WidthType.DXA },
+                  margins: { top: 80, bottom: 80, left: 120, right: 120 },
+                  children: [new Paragraph({ children: [new TextRun({ text: c.label, font: FONT, size: SIZE_BODY })] })],
+                }),
+                new TableCell({
+                  borders, width: { size: colWidths[1], type: WidthType.DXA },
+                  margins: { top: 80, bottom: 80, left: 120, right: 120 },
+                  children: [new Paragraph({
+                    alignment: AlignmentType.CENTER,
+                    children: [new TextRun({ text: String(p), font: FONT, size: SIZE_BODY })],
+                  })],
+                }),
+                new TableCell({
+                  borders, width: { size: colWidths[2], type: WidthType.DXA },
+                  margins: { top: 80, bottom: 80, left: 120, right: 120 },
+                  children: [new Paragraph({
+                    alignment: AlignmentType.CENTER,
+                    children: [new TextRun({ text: fascia, font: FONT, size: SIZE_BODY })],
+                  })],
+                }),
+                ...(mostraColonna ? [
+                  new TableCell({
+                    borders, width: { size: colWidths[3], type: WidthType.DXA },
+                    children: [new Paragraph("")]
+                  })
+                ] : [])
+              ]
+            })
+          })
+        )
+      }
+    }
   }
 
-  const colW = Math.floor(CONTENT_W / 3)
-  const colWidths = [colW * 2, colW, colW]
-  const border = { style: BorderStyle.SINGLE, size: 4, color: '000000' }
-  const borders = { top: border, bottom: border, left: border, right: border }
-
-  const rows = [
-    new TableRow({
-      children: ['Sottotest', 'Punteggio scalare', 'Fascia'].map(text =>
-        new TableCell({
-          borders,
-          width: { size: colW, type: WidthType.DXA },
-          margins: { top: 80, bottom: 80, left: 120, right: 120 },
-          shading: { fill: TABLE_HEADER_FILL, type: ShadingType.CLEAR },
-          children: [new Paragraph({
-            alignment: AlignmentType.CENTER,
-            children: [new TextRun({ text, font: FONT, size: SIZE_BODY, bold: true })],
-          })],
-        })
-      ),
-    }),
-    ...domWithData.flatMap(dom =>
-      dom.subtest.map(st =>
-        new TableRow({
-          children: [
-            new TableCell({
-              borders, width: { size: colWidths[0], type: WidthType.DXA },
-              margins: { top: 80, bottom: 80, left: 120, right: 120 },
-              children: [new Paragraph({ children: [new TextRun({ text: `${st.label} (${dom.dominio})`, font: FONT, size: SIZE_BODY })] })],
-            }),
-            new TableCell({
-              borders, width: { size: colWidths[1], type: WidthType.DXA },
-              margins: { top: 80, bottom: 80, left: 120, right: 120 },
-              children: [new Paragraph({
-                alignment: AlignmentType.CENTER,
-                children: [new TextRun({ text: String(punteggi[st.key] || ''), font: FONT, size: SIZE_BODY })],
-              })],
-            }),
-            new TableCell({
-              borders, width: { size: colWidths[2], type: WidthType.DXA },
-              margins: { top: 80, bottom: 80, left: 120, right: 120 },
-              children: [new Paragraph({
-                alignment: AlignmentType.CENTER,
-                children: [new TextRun({ text: fasciaScalare(punteggi[st.key]), font: FONT, size: SIZE_BODY })],
-              })],
-            }),
-          ],
-        })
-      )
-    ),
-  ]
-
-  return new Table({
-    width: { size: CONTENT_W, type: WidthType.DXA },
-    columnWidths: colWidths,
-    rows,
-  })
+  return new Table({ width: { size: CONTENT_W, type: WidthType.DXA }, columnWidths: colWidths, rows })
 }
 
 export async function esportaDocx({ testo, data, nomeStudio, anagrafica, professionista, cognitivo, nepsy }: ExportDocxInput): Promise<Blob> {
@@ -496,7 +486,11 @@ export async function esportaDocx({ testo, data, nomeStudio, anagrafica, profess
     if (inCognitivo) {
       const narrativa = cognitivoNarrativaLines.join('\n').trim()
       if (cognitivo?.punteggi && Object.keys(cognitivo.punteggi).length > 0) {
-        blocchi.push(makeWiscTable(cognitivo.punteggi, cognitivo.interpretabilita || {}))
+        blocchi.push(makeTestTable(MOCK_WISC_IV_TEMPLATE, { 
+          punteggi: cognitivo.punteggi as Record<string, string>, 
+          interpretabilita: cognitivo.interpretabilita,
+          punteggiSecondari: cognitivo.subtest_pp as Record<string, string>
+        }))
         if (cognitivo.includi_nota_range) {
           blocchi.push(new Paragraph({
             spacing: { after: 120 },
@@ -516,7 +510,9 @@ export async function esportaDocx({ testo, data, nomeStudio, anagrafica, profess
     if (inNepsy) {
       const narrativa = nepsyNarrativaLines.join('\n').trim()
       if (nepsy?.punteggi && Object.keys(nepsy.punteggi).length > 0) {
-        blocchi.push(makeNepsyTable(nepsy.punteggi))
+        blocchi.push(makeTestTable(MOCK_NEPSY_II_TEMPLATE, { 
+          punteggi: nepsy.punteggi as Record<string, string> 
+        }))
         if (nepsy.includi_nota_range) {
           blocchi.push(new Paragraph({
             spacing: { after: 120 },

@@ -7,9 +7,11 @@
 // ============================================================
 
 import {
-  wiscToMarkdownTable, wiscToNarrativa, wiscSubtestPpToNarrativa, nepsyToMarkdownTable, nepsyToNarrativa,
-  notaRangeWisc, notaRangeNepsy, assemblaDocumentoMarkdown,
+  wiscToMarkdownTable, nepsyToMarkdownTable, 
 } from './wizardToText'
+import { buildGeminiPayload, calcolaNarrativaGruppi } from './testTemplateEngine'
+import { MOCK_WISC_IV_TEMPLATE, MOCK_NEPSY_II_TEMPLATE } from '../data/mockTemplates'
+import type { RisultatoTest } from '../core/testTemplate'
 import { getPazienteById } from '../data/pazientiData'
 import { anonimizzaTesto } from './anonimizza'
 import {
@@ -440,15 +442,20 @@ export async function generaNarrativaSezioni(
       out['intestazione'] = `Il/la paziente {{NOME}} viene inviato/a da ${chiInvia} per ${wizard.motivo_invio || 'valutazione neuropsicologica'}.`
     }
     if (sez.includes('cognitivo') && wizard.cognitivo?.punteggi) {
+      const ris: RisultatoTest = {
+        somministrato: true, punteggi: wizard.cognitivo.punteggi,
+        punteggiSecondari: wizard.cognitivo.subtest_pp || {},
+      }
       const premessa = [
         wizard.cognitivo?.eta_valutazione ? `Età al momento della valutazione: ${wizard.cognitivo.eta_valutazione}.` : '',
         wizard.cognitivo?.strumenti_utilizzati ? `Strumenti utilizzati: ${wizard.cognitivo.strumenti_utilizzati}.` : '',
       ].filter(Boolean).join(' ')
-      out['cognitivo'] = [premessa, wiscToNarrativa(wizard.cognitivo.punteggi, wizard.cognitivo.subtest_pp || {})].filter(Boolean).join(' ')
+      // For mock output, we just generate something simple.
+      out['cognitivo'] = [premessa, 'I risultati del test cognitivo sono riportati nella tabella corrispondente.'].filter(Boolean).join(' ')
     }
     if (sez.includes('nepsy') && wizard.nepsy?.punteggi) {
       const premessa = wizard.nepsy?.strumenti_utilizzati ? `Strumenti utilizzati: ${wizard.nepsy.strumenti_utilizzati}.` : ''
-      out['nepsy'] = [premessa, nepsyToNarrativa(wizard.nepsy.punteggi)].filter(Boolean).join(' ')
+      out['nepsy'] = [premessa, 'I risultati dell\'approfondimento neuropsicologico sono riportati nella tabella corrispondente.'].filter(Boolean).join(' ')
     }
     if (sez.includes('apprendimenti') && wizard.apprendimenti) {
       const parti = [
@@ -596,24 +603,27 @@ Note aggiuntive: ${anon(osservazione.note) || 'Nessuna'}`)
   }
 
   if (sez.includes('cognitivo') && wizard.cognitivo?.punteggi) {
-    userData.push(`=== SEZIONE: cognitivo ===
-Età al momento della valutazione: ${anon(wizard.cognitivo?.eta_valutazione) || 'Non specificata'}
-Strumenti utilizzati: ${anon(wizard.cognitivo?.strumenti_utilizzati) || 'Non specificati'}
-Tabella WISC-IV (non modificare, verrà inserita automaticamente):
-${wiscTabella}
-
-Nota range: ${wizard.cognitivo?.includi_nota_range ? notaRangeWisc() : 'Nessuna'}
-Subtest per indice (punti ponderati, media 10 DS 3 — spiegare SEMPRE a parole nel testo, MAI in tabella): ${anon(wiscSubtestPpToNarrativa(wizard.cognitivo?.subtest_pp || {})) || 'Nessuno'}
-Note cliniche: ${anon(wizard.cognitivo?.note_cliniche) || 'Nessuna'}`)
+    const ris: RisultatoTest = {
+      somministrato: true,
+      punteggi: wizard.cognitivo?.punteggi || {},
+      punteggiSecondari: wizard.cognitivo?.subtest_pp || {},
+      interpretabilita: wizard.cognitivo?.interpretabilita || {},
+      includiNotaRange: wizard.cognitivo?.includi_nota_range !== false,
+      etaValutazione: wizard.cognitivo?.eta_valutazione,
+      strumentiUtilizzati: wizard.cognitivo?.strumenti_utilizzati,
+      noteCliniche: wizard.cognitivo?.note_cliniche
+    }
+    userData.push(buildGeminiPayload(MOCK_WISC_IV_TEMPLATE, ris))
   }
   if (sez.includes('nepsy') && wizard.nepsy?.punteggi) {
-    userData.push(`=== SEZIONE: nepsy ===
-Strumenti utilizzati: ${anon(wizard.nepsy?.strumenti_utilizzati) || 'Non specificati'}
-Tabella NEPSY-II (non modificare, verrà inserita automaticamente):
-${nepsyTabella}
-
-Nota range: ${wizard.nepsy?.includi_nota_range ? notaRangeNepsy() : 'Nessuna'}
-Note cliniche: ${anon(wizard.nepsy?.note_cliniche) || 'Nessuna'}`)
+    const ris: RisultatoTest = {
+      somministrato: true,
+      punteggi: wizard.nepsy?.punteggi || {},
+      includiNotaRange: wizard.nepsy?.includi_nota_range !== false,
+      strumentiUtilizzati: wizard.nepsy?.strumenti_utilizzati,
+      noteCliniche: wizard.nepsy?.note_cliniche
+    }
+    userData.push(buildGeminiPayload(MOCK_NEPSY_II_TEMPLATE, ris))
   }
   if (sez.includes('apprendimenti') && wizard.apprendimenti) {
     userData.push(`=== SEZIONE: apprendimenti ===

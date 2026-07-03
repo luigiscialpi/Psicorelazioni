@@ -10,6 +10,10 @@ import {
   ANAMNESI_REMOTA_VOCI, ANAMNESI_RECENTE_VOCI,
   OSSERVAZIONE_ADATTAMENTO_VOCI, OSSERVAZIONE_ATTEGGIAMENTO_VOCI,
 } from '../components/constants/anamnesiVoci'
+import { MOCK_WISC_IV_TEMPLATE, MOCK_NEPSY_II_TEMPLATE } from '../data/mockTemplates'
+import { generaSezioneTest, generaTabella, generaNarrativa } from './testTemplateEngine'
+import type { RisultatoTest } from '../core/testTemplate'
+
 import {
   WISC_IV_CAMPI, NEPSY_II_DOMINI, fasciaWISC, fasciaScalare,
   WISC_IV_SUBTEST_PER_INDICE, WISC_IV_INDICE_LABEL,
@@ -322,36 +326,47 @@ export function assemblaDocumentoMarkdown(wizard, narrativaPerSezione = {}) {
   }
 
   if (sez.includes('cognitivo')) {
-    out += '\n## Valutazione cognitiva\n\n'
-    const wiscTabella = wiscToMarkdownTable(wizard.cognitivo.punteggi || {}, wizard.cognitivo.interpretabilita || {})
-    if (wiscTabella) out += wiscTabella + '\n'
-    if (wizard.cognitivo?.includi_nota_range) out += notaRangeWisc() + '\n'
+    out += '\n'
+    const ris: RisultatoTest = {
+      somministrato: true,
+      punteggi: wizard.cognitivo?.punteggi || {},
+      punteggiSecondari: wizard.cognitivo?.subtest_pp || {},
+      interpretabilita: wizard.cognitivo?.interpretabilita || {},
+      includiNotaRange: wizard.cognitivo?.includi_nota_range !== false,
+      etaValutazione: wizard.cognitivo?.eta_valutazione,
+      strumentiUtilizzati: wizard.cognitivo?.strumenti_utilizzati,
+      noteCliniche: wizard.cognitivo?.note_cliniche
+    }
+    const engineText = generaSezioneTest(MOCK_WISC_IV_TEMPLATE, ris)
+    if (engineText) out += engineText + '\n'
+    
     const narrativaC = rimuoviTabelleMarkdown(narrativaPerSezione['cognitivo'] || '')
     if (narrativaC) {
-      // Età e strumenti sono già stati tessuti in prosa da Gemini
-      // dentro narrativaC (vedi geminiService.ts) — niente riga fissa qui.
-      out += narrativaC + '\n'
-    } else {
-      // Fallback (mock senza narrativa, o generazione fallita per questa
-      // sezione): non lasciare mai il dato silenziosamente perso.
+      out += '\n' + narrativaC + '\n'
+    } else if (!engineText) {
       if (wizard.cognitivo?.eta_valutazione) out += `Età al momento della valutazione: ${wizard.cognitivo.eta_valutazione}.\n`
       if (wizard.cognitivo?.strumenti_utilizzati) out += `Strumenti utilizzati: ${wizard.cognitivo.strumenti_utilizzati}\n`
     }
-    if (wizard.cognitivo?.note_cliniche) out += wizard.cognitivo.note_cliniche + '\n'
   }
 
   if (sez.includes('nepsy')) {
-    out += '\n## Approfondimento neuropsicologico\n\n'
-    const nepsyTabella = nepsyToMarkdownTable(wizard.nepsy.punteggi || {})
-    if (nepsyTabella) out += nepsyTabella + '\n'
-    if (wizard.nepsy?.includi_nota_range) out += notaRangeNepsy() + '\n'
+    out += '\n'
+    const ris: RisultatoTest = {
+      somministrato: true,
+      punteggi: wizard.nepsy?.punteggi || {},
+      includiNotaRange: wizard.nepsy?.includi_nota_range !== false,
+      strumentiUtilizzati: wizard.nepsy?.strumenti_utilizzati,
+      noteCliniche: wizard.nepsy?.note_cliniche
+    }
+    const engineText = generaSezioneTest(MOCK_NEPSY_II_TEMPLATE, ris)
+    if (engineText) out += engineText + '\n'
+    
     const narrativaN = rimuoviTabelleMarkdown(narrativaPerSezione['nepsy'] || '')
     if (narrativaN) {
-      out += narrativaN + '\n'
-    } else if (wizard.nepsy?.strumenti_utilizzati) {
+      out += '\n' + narrativaN + '\n'
+    } else if (!engineText && wizard.nepsy?.strumenti_utilizzati) {
       out += `Strumenti utilizzati: ${wizard.nepsy.strumenti_utilizzati}\n`
     }
-    if (wizard.nepsy?.note_cliniche) out += wizard.nepsy.note_cliniche + '\n'
   }
 
   if (sez.includes('apprendimenti')) {

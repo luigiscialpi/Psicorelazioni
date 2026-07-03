@@ -1,3 +1,5 @@
+import type { RisultatoTest } from './testTemplate'
+
 export type Id = string
 
 export type JsonPrimitive = string | number | boolean | null
@@ -115,6 +117,7 @@ export type WizardSezione =
 export type WizardData = UnknownRecord & {
   sezioni_attive?: string[]
   anagrafica?: AnagraficaPaziente
+  test_risultati?: Record<string, RisultatoTest>
   _relazioneId?: Id
   _pazienteId?: Id
 }
