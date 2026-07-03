@@ -42,6 +42,33 @@ export default function Archivio() {
     navigate(`/modifica?relazioneId=${encodeURIComponent(relazione.id)}`)
   }
 
+  function handleModificaTestoDiretto(relazione: Relazione) {
+    const snap = (relazione.wizard_snapshot || {}) as any
+    navigate('/risultato', {
+      state: {
+        wizardData: {
+          _relazioneId: relazione.id,
+          _pazienteId: relazione.paziente_id,
+          _isDirectEdit: true,
+          _sourceRoute: '/archivio',
+          anagrafica: {
+            nome: pazienteAperta?.nome || '',
+            cognome: pazienteAperta?.cognome || '',
+            dataNascita: pazienteAperta?.data_nascita || '',
+            genere: pazienteAperta?.genere || 'maschio',
+            scuola: pazienteAperta?.scuola || '',
+            classe: pazienteAperta?.classe || '',
+          },
+          cognitivo: snap.cognitivo || { somministrato: false, punteggi: {} },
+          nepsy: snap.nepsy || { somministrato: false, punteggi: {} },
+          sezioni_attive: snap.sezioni_attive || relazione.tag || [],
+          test_risultati: snap.test_risultati || {},
+        },
+        testoPreesistente: relazione.testo_markdown
+      }
+    })
+  }
+
   const filtrate = relazioni.filter((r: Relazione) => {
     const matchQuery = !query || (r.titolo || '').toLowerCase().includes(query.toLowerCase()) ||
       (r.testo_markdown || '').toLowerCase().includes(query.toLowerCase())
@@ -139,12 +166,15 @@ export default function Archivio() {
                 </ReactMarkdown>
               </div>
 
-              <div style={{ display: 'flex', gap: 8 }}>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                 {aperta.wizard_snapshot && (
                   <button className="btn btn-primary btn-sm" onClick={() => handleModifica(aperta)}>
-                    <Edit3 size={13} /> Apri e modifica
+                    <Edit3 size={13} /> Modifica con Wizard
                   </button>
                 )}
+                <button className="btn btn-primary btn-sm" style={aperta.wizard_snapshot ? { background: 'none', border: '1px solid var(--accent)', color: 'var(--accent)' } : undefined} onClick={() => handleModificaTestoDiretto(aperta)}>
+                  <Edit3 size={13} /> Modifica testo direttamente
+                </button>
                 <button className="btn btn-secondary btn-sm" onClick={() => dispatch({ type: 'CHIUDI' })}>
                   Chiudi
                 </button>
@@ -152,7 +182,7 @@ export default function Archivio() {
 
               {!aperta.wizard_snapshot && (
                 <p style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: 10 }}>
-                  Questa relazione non ha dati del wizard salvati (probabilmente importata da un DOCX esistente), quindi può essere solo consultata, non riaperta per la modifica guidata.
+                  Questa relazione non ha dati del wizard salvati (probabilmente importata da un DOCX esistente). Puoi comunque modificarne il testo direttamente ed esportare un nuovo DOCX.
                 </p>
               )}
             </div>

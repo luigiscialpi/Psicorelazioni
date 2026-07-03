@@ -557,7 +557,7 @@ function TemplateCard({ template, onDisattiva, onDelete, onEdit, onRiattiva }: {
             {open ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
             {open ? 'Chiudi' : 'Dettagli'}
           </button>
-          {!template.builtIn && onEdit && (
+          {onEdit && (
             <button type="button" onClick={onEdit} style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 6, padding: '4px 8px', cursor: 'pointer', fontSize: 12, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 4 }}>
               <Pencil size={13} /> Modifica
             </button>
@@ -567,7 +567,7 @@ function TemplateCard({ template, onDisattiva, onDelete, onEdit, onRiattiva }: {
               Riattiva
             </button>
           )}
-          {!template.builtIn && template.attivo && onDisattiva && (
+          {template.attivo && onDisattiva && (
             <button type="button" onClick={onDisattiva} style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 6, padding: '4px 8px', cursor: 'pointer', fontSize: 12, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 4 }}>
               Disattiva
             </button>
@@ -949,7 +949,7 @@ export default function GestioneTest() {
                 <TemplateCard
                   key={t.id}
                   template={t}
-                  onEdit={!t.builtIn ? () => {
+                  onEdit={() => {
                     const f: FormState = {
                       nome: t.nome,
                       categoria: t.categoria,
@@ -963,8 +963,8 @@ export default function GestioneTest() {
                     setEditingTemplateId(t.id)
                     setFormInitial(f)
                     setShowForm(true)
-                  } : undefined}
-                  onDisattiva={!t.builtIn ? () => setConfirmDisattiva(t.id) : undefined}
+                  }}
+                  onDisattiva={() => setConfirmDisattiva(t.id)}
                   onDelete={!t.builtIn ? () => setConfirmDelete(t.id) : undefined}
                 />
               ))}

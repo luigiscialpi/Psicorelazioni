@@ -32,11 +32,13 @@ export default function RisultatoGenerazione() {
   const navigate = useNavigate()
   const wizardData = location.state?.wizardData || null
   const sourceRoute = wizardData?._sourceRoute || '/nuova'
-  const breadcrumb = sourceRoute.includes('/modifica')
-    ? 'Archivio > Modifica relazione > Risultato'
-    : (sourceRoute.includes('/bozza/riprendi')
-      ? 'Bozze > Ripresa > Risultato'
-      : 'Nuova relazione > Risultato')
+  const breadcrumb = wizardData?._isDirectEdit
+    ? 'Archivio > Modifica testo'
+    : (sourceRoute.includes('/modifica')
+      ? 'Archivio > Modifica relazione > Risultato'
+      : (sourceRoute.includes('/bozza/riprendi')
+        ? 'Bozze > Ripresa > Risultato'
+        : 'Nuova relazione > Risultato'))
 
   const [state, dispatch] = useReducer(reducer, {
     status: 'generating', testo: '', error: null, exporting: false, saved: false, savingArchivio: false,
@@ -77,6 +79,12 @@ export default function RisultatoGenerazione() {
 
   useEffect(() => {
     if (!wizardData) return
+    if (wizardData._isDirectEdit) {
+      if (ultimaGenerazioneRef.current === 'direct-edit') return
+      ultimaGenerazioneRef.current = 'direct-edit'
+      dispatch({ type: 'DONE', testo: location.state?.testoPreesistente || '' })
+      return
+    }
     const chiaveGenerazione = JSON.stringify({
       sezioni: wizardData.sezioni_attive,
       cognitivo: wizardData.cognitivo,
@@ -87,7 +95,7 @@ export default function RisultatoGenerazione() {
     if (ultimaGenerazioneRef.current === chiaveGenerazione) return
     ultimaGenerazioneRef.current = chiaveGenerazione
     run()
-  }, [wizardData, run])
+  }, [wizardData, run, location.state])
 
   if (!wizardData) {
     return <Navigate to="/nuova" replace />
@@ -150,12 +158,20 @@ export default function RisultatoGenerazione() {
     <>
       <div className="topbar">
         <div>
-          <div className="topbar-title">{isModifica ? 'Relazione aggiornata' : 'Relazione generata'}</div>
-          <div className="topbar-sub">Revisiona e correggi prima di esportare</div>
+          <div className="topbar-title">
+            {wizardData?._isDirectEdit 
+              ? 'Modifica testo relazione' 
+              : (isModifica ? 'Relazione aggiornata' : 'Relazione generata')}
+          </div>
+          <div className="topbar-sub">
+            {wizardData?._isDirectEdit 
+              ? 'Modifica direttamente il testo salvato ed esporta il DOCX' 
+              : 'Revisiona e correggi prima di esportare'}
+          </div>
           <div style={{ marginTop: 4, fontSize: 11.5, color: 'var(--text-muted)' }}>{breadcrumb}</div>
         </div>
         <button className="btn btn-ghost" onClick={() => navigate(sourceRoute)}>
-          <RotateCcw size={14} /> Torna al wizard
+          <RotateCcw size={14} /> {wizardData?._isDirectEdit ? 'Torna all\'archivio' : 'Torna al wizard'}
         </button>
       </div>
 
@@ -228,7 +244,7 @@ export default function RisultatoGenerazione() {
 
             <p style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: 8 }}>
               Il testo sopra è in Markdown — i titoli (##), il <strong>grassetto</strong> e le tabelle (|) vengono convertiti automaticamente nel DOCX finale.
-              {isModifica && ' Puoi anche tornare al wizard per aggiungere sezioni (es. un test dimenticato) e rigenerare.'}
+              {!wizardData?._isDirectEdit && isModifica && ' Puoi anche tornare al wizard per aggiungere sezioni (es. un test dimenticato) e rigenerare.'}
             </p>
           </div>
         )}
