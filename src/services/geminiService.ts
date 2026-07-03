@@ -70,6 +70,7 @@ type WizardPayload = UnknownRecord & {
   sezioni_attive?: string[]
   tipo_invio?: string
   motivo_invio?: string
+  nome_inviante?: string
   anamnesi?: UnknownRecord
   osservazione?: UnknownRecord & { note?: string }
   cognitivo?: UnknownRecord & {
@@ -434,8 +435,9 @@ export async function generaNarrativaSezioni(
 
   if (isMock || USE_MOCK_AI) {
     await new Promise<void>(resolve => setTimeout(resolve, 1200))
-    if (wizard.tipo_invio || wizard.motivo_invio) {
-      out['intestazione'] = `Il/la paziente {{NOME}} viene inviato/a da ${wizard.tipo_invio || '[inviante]'} per ${wizard.motivo_invio || 'valutazione neuropsicologica'}.`
+    if (wizard.tipo_invio || wizard.motivo_invio || wizard.nome_inviante) {
+      const chiInvia = [wizard.nome_inviante, wizard.tipo_invio].filter(Boolean).join(', ') || '[inviante]'
+      out['intestazione'] = `Il/la paziente {{NOME}} viene inviato/a da ${chiInvia} per ${wizard.motivo_invio || 'valutazione neuropsicologica'}.`
     }
     if (sez.includes('cognitivo') && wizard.cognitivo?.punteggi) {
       const premessa = [
@@ -490,7 +492,7 @@ Non inventare mai punteggi o dati non presenti nell'input.
 Genera SOLO il testo narrativo per ogni sezione richiesta. NON generare tabelle, le tabelle sono già pronte.
 Usa le frasi-cornice standard del Profilo di Stile per le sezioni cognitivo e nepsy.
 Per le sezioni anamnesi e osservazione: ricevi un elenco di fatti grezzi selezionati dall'utente (non una lista da riportare tale quale). Componili in prosa fluida e naturale, con la struttura sintattica e il registro osservati nel Profilo di Stile — non un elenco puntato, non una sequenza di frasi telegrafiche separate da virgole.
-Per la sezione "intestazione": genera UNA sola frase iniziale che dichiara chi invia il/la paziente e per quale motivo, nello stile della frase-cornice osservata nel Profilo di Stile.
+Per la sezione "intestazione": genera UNA sola frase iniziale che dichiara chi invia il/la paziente e per quale motivo, nello stile della frase-cornice osservata nel Profilo di Stile. Se è indicato un nome di chi invia, citalo per esteso nella frase (es. "su segnalazione della Dott.ssa Maria Rossi, neuropsichiatra infantile...") — non ometterlo e non sostituirlo con una perifrasi generica.
 Per la sezione "cognitivo": prima di descrivere gli indici, se sono forniti età al momento della valutazione e/o strumenti utilizzati, aprine la narrazione con una breve frase che li riporta in modo discorsivo (es. "La valutazione è stata condotta all'età di 8 anni, mediante la somministrazione della scala WISC-IV.") — non elencarli come campo/valore separato.
 Per la sezione "nepsy": stessa logica per gli strumenti utilizzati, integrati in una frase discorsiva a inizio sezione, non come riga a sé.
 Per la sezione "apprendimenti": integra le note su lettura, scrittura e matematica fornite nella narrazione in prosa, non riportarle come frasi isolate o elenco.
@@ -521,13 +523,21 @@ ${esempiFewShot ? `=== ESEMPI DI RIFERIMENTO ===\n${esempiFewShot}` : ''}`
 
   const userData: string[] = []
 
-  if (wizard.tipo_invio || wizard.motivo_invio) {
+  if (wizard.tipo_invio || wizard.motivo_invio || wizard.nome_inviante) {
     // Non è una sezione opzionale del wizard (non compare in
     // sezioni_attive): è l'apertura fissa del documento, ma va comunque
     // generata da Gemini invece che con una frase hardcoded, per restare
     // aderente allo stile osservato nel Profilo di Stile.
+    // NOTA: nome_inviante NON passa dal filtro anon() — a differenza dei
+    // nomi di terzi citati incidentalmente in anamnesi/note (undicesima
+    // correzione), qui il nome del professionista che invia è il dato
+    // stesso che l'utente vuole veder comparire nel referto, come nei
+    // documenti reali ("su segnalazione della Dott.ssa..."). Anonimizzarlo
+    // produrrebbe un placeholder [PERSONA] visibile in chiaro nel testo
+    // finale, l'opposto di quanto richiesto.
     userData.push(`=== SEZIONE: intestazione ===
 Tipo di invio: ${anon(wizard.tipo_invio) || 'Non specificato'}
+Nome di chi invia (se presente, va citato per esteso nella frase, es. "su segnalazione della Dott.ssa Rossi..."): ${wizard.nome_inviante || 'Non specificato'}
 Motivo dell'invio: ${anon(wizard.motivo_invio) || 'valutazione neuropsicologica'}`)
   }
 

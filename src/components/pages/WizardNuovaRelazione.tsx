@@ -259,7 +259,7 @@ function StepContesto({ data, set }) {
   return (
     <div>
       <h3 style={sh}>Contesto dell'invio</h3>
-      <p style={shSub}>Questi dati possono essere elaborati dall'AI: non contengono informazioni identificative.</p>
+      <p style={shSub}>Motivo e tipo di invio vengono elaborati dall'AI e non sono identificativi del/la paziente. Il nome di chi invia (se lo indichi) viene invece riportato per esteso nella relazione, come nei referti reali.</p>
 
       <div className="form-group">
         <label className="form-label">Riferimento interno <span>(facoltativo, per ritrovare il caso in archivio)</span></label>

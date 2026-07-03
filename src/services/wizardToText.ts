@@ -287,7 +287,8 @@ export function assemblaDocumentoMarkdown(wizard, narrativaPerSezione = {}) {
   if (narrativaIntestazione) {
     out += narrativaIntestazione + '\n'
   } else {
-    out += `Il/la paziente viene inviato/a da ${wizard.tipo_invio || '[inviante]'} per ${wizard.motivo_invio || 'valutazione neuropsicologica'}.\n`
+    const chiInvia = [wizard.nome_inviante, wizard.tipo_invio].filter(Boolean).join(', ') || '[inviante]'
+    out += `Il/la paziente viene inviato/a da ${chiInvia} per ${wizard.motivo_invio || 'valutazione neuropsicologica'}.\n`
   }
 
   if (sez.includes('anamnesi')) {

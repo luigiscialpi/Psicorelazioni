@@ -297,6 +297,12 @@ Verificato con una relazione di test reale che 4 gruppi di campi finivano nel do
 - `assemblaDocumentoMarkdown` non duplica più questi dati: li usa come riga fissa **solo** se la narrativa di Gemini per quella sezione manca (mock senza narrativa, o generazione fallita) — altrimenti si fida che siano già stati incorporati nel testo.
 - Resta esplicitamente **esclusa** l'anagrafica (nome, cognome, data di nascita, scuola/classe): non viene mai inviata a Gemini, per lo stesso motivo di privacy già documentato nella terza correzione del modello dati.
 
+### Ventiduesima correzione (bug): il nome di chi invia il/la paziente non compariva mai nella relazione
+
+Segnalato dall'utente dopo un test reale: il campo "Nome inviante" del wizard (step Contesto dell'invio, es. "dott.ssa Maria Rosaria Martina") non compariva in nessun punto del DOCX esportato. La causa era più semplice di un bug di elaborazione: il campo `nome_inviante` veniva raccolto nello stato del wizard ma **non era mai letto** da nessuna funzione a valle — non entrava nel payload per Gemini (introdotto nella ventunesima correzione per `tipo_invio`/`motivo_invio`, ma senza `nome_inviante`), né nella frase fissa di fallback in `assemblaDocumentoMarkdown`. Un campo dell'interfaccia collegato a nulla.
+
+**Correzione**: `nome_inviante` è ora incluso sia nel payload della sezione "intestazione" inviato a Gemini, sia nella frase fallback fissa. A differenza dei nomi di terzi citati incidentalmente in note libere (undicesima correzione, dove il nome viene sostituito con `[PERSONA]` prima dell'invio), qui il nome **non passa dal filtro di anonimizzazione**: è esattamente il dato che l'utente vuole veder comparire per esteso nel referto ("su segnalazione della Dott.ssa Rossi..."), come nei documenti reali forniti da tua sorella. Anonimizzarlo avrebbe prodotto un placeholder `[PERSONA]` visibile in chiaro nel testo finale — l'opposto di quanto richiesto. Aggiornato di conseguenza anche il testo esplicativo dello step del wizard, che affermava erroneamente che tutti i dati di quello step "non contengono informazioni identificative".
+
 ---
 
 ## 1. Panoramica del progetto
