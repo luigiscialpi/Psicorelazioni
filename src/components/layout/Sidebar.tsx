@@ -8,6 +8,7 @@ const NAV = [
   { id: 'nuova', path: '/nuova', label: 'Nuova relazione', icon: FileText },
   { id: 'bozza', path: '/bozza', label: 'Bozze in corso', icon: Clock },
   { id: 'archivio', path: '/archivio', label: 'Archivio', icon: BookOpen },
+  { id: 'gestione-test', path: '/gestione-test', label: 'Gestione test', icon: Settings },
   { id: 'stile', path: '/stile', label: 'Profilo di stile', icon: Settings },
   { id: 'professionista', path: '/professionista', label: 'Scheda professionista', icon: UserRound },
 ]

@@ -12,6 +12,7 @@ const ProfiloProfessionista = lazy(() => import('./ProfiloProfessionista'))
 const WizardNuovaRelazione = lazy(() => import('./WizardNuovaRelazione'))
 const RisultatoGenerazione = lazy(() => import('./RisultatoGenerazione'))
 const Archivio = lazy(() => import('./Archivio'))
+const GestioneTest = lazy(() => import('./GestioneTest'))
 
 function reducer(state, action) {
   switch (action.type) {
@@ -82,6 +83,7 @@ export default function App() {
             <Route path="/nuova" element={<WizardNuovaRelazione />} />
             <Route path="/modifica" element={<WizardNuovaRelazione />} />
             <Route path="/risultato" element={<RisultatoGenerazione />} />
+            <Route path="/gestione-test" element={<GestioneTest />} />
             <Route path="/" element={<Navigate to="/dashboard" replace />} />
             <Route path="*" element={<Navigate to="/dashboard" replace />} />
           </Route>
