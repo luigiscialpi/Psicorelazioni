@@ -547,10 +547,8 @@ function TemplateCard({ template, onDisattiva }: { template: TestTemplate; onDis
               </span>
             )}
           </div>
-          <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-            {template.categoria} · {template.campiPrincipali.length} campo{template.campiPrincipali.length !== 1 ? 'i' : ''} principale{template.campiPrincipali.length !== 1 ? 'i' : ''}
-            {template.gruppiSecondari?.length ? ` · ${template.gruppiSecondari.length} gruppo${template.gruppiSecondari.length !== 1 ? 'i' : ''} secondari` : ''}
-          </div>
+            {template.categoria} · {template.campiPrincipali.length === 1 ? '1 campo principale' : `${template.campiPrincipali.length} campi principali`}
+            {template.gruppiSecondari?.length ? ` · ${template.gruppiSecondari.length} ${template.gruppiSecondari.length === 1 ? 'gruppo secondario' : 'gruppi secondari'}` : ''}
         </div>
         <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
           <button type="button" onClick={() => setOpen(v => !v)} style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 6, padding: '4px 8px', cursor: 'pointer', fontSize: 12, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 4 }}>

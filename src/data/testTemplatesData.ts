@@ -15,15 +15,15 @@ export async function getTestTemplates(): Promise<TestTemplate[]> {
     categoria: d.categoria,
     scalaDefault: d.scala_default,
     campiPrincipali: d.campi_principali,
-    gruppiSecondari: d.gruppi_secondari,
-    notaRange: d.nota_range,
+    gruppiSecondari: d.gruppi_secondari ?? undefined,
+    notaRange: d.nota_range ?? undefined,
     richiedeEtaValutazione: d.richiede_eta_valutazione,
     richiedeStrumentiUtilizzati: d.richiede_strumenti_utilizzati,
     builtIn: d.built_in,
     attivo: d.attivo,
     schemaVersion: d.schema_version,
-    createdAt: d.created_at,
-    updatedAt: d.updated_at
+    createdAt: d.created_at ?? undefined,
+    updatedAt: d.updated_at ?? undefined
   }))
 }
 
