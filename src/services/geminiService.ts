@@ -68,7 +68,7 @@ type AiResult = {
 type ScoreMap = Record<string, string | number | boolean | null | undefined>
 
 type WizardPayload = UnknownRecord & {
-  anagrafica?: unknown
+  anagrafica?: { genere?: string } & UnknownRecord
   sezioni_attive?: string[]
   tipo_invio?: string
   motivo_invio?: string
@@ -493,6 +493,13 @@ export async function generaNarrativaSezioni(
     dettagliata: 'Scrivi in modo DETTAGLIATO ED ESTESO: per ogni indice/subtest, oltre al punteggio e alla fascia, includi un\'interpretazione clinica articolata (implicazioni pratiche, confronto con altri indici quando pertinente, eventuali osservazioni qualitative). Le sezioni cognitivo e nepsy devono risultare sensibilmente più ricche rispetto a una versione standard — non limitarti a una frase per indice.',
   }[wizard.lunghezza as string] || ''
 
+  const generePaziente = (wizard.anagrafica as any)?.genere || ''
+  const istruzioneGenere = generePaziente === 'maschio'
+    ? 'Il/la paziente è un MASCHIO: usa sempre il maschile per i pronomi e le concordanze grammaticali relative alla persona valutata (es. "è stato valutato", "ha mostrato", "il bambino").'
+    : generePaziente === 'femmina'
+      ? 'Il/la paziente è una FEMMINA: usa sempre il femminile per i pronomi e le concordanze grammaticali relative alla persona valutata (es. "è stata valutata", "ha mostrato", "la bambina").'
+      : 'Il genere del/la paziente non è specificato: usa forme neutre o la barra (es. "il/la paziente") quando necessario.'
+
   const systemPrompt = `Sei un assistente specializzato nella redazione di relazioni di valutazione neuropsicologica e dell'apprendimento in età evolutiva.
 REGOLA ASSOLUTA: scrivi ESCLUSIVAMENTE seguendo il Profilo di Stile fornito.
 Non inventare mai punteggi o dati non presenti nell'input.
@@ -504,6 +511,7 @@ Per la sezione "cognitivo": prima di descrivere gli indici, se sono forniti età
 Per la sezione "nepsy": stessa logica per gli strumenti utilizzati, integrati in una frase discorsiva a inizio sezione, non come riga a sé.
 Per la sezione "apprendimenti": integra le note su lettura, scrittura e matematica fornite nella narrazione in prosa, non riportarle come frasi isolate o elenco.
 Non usare mai nomi reali o dati identificativi: ovunque scriveresti il nome del/la paziente, usa esattamente il segnaposto {{NOME}} (con le doppie graffe, senza spazi interni). Non usare "il/la paziente" o altre perifrasi impersonali al posto del segnaposto: scrivi le frasi come le scriveresti con un nome vero, sostituendo solo il nome con {{NOME}} (es. "{{NOME}} accetta e porta a termine le attività proposte" invece di "il/la paziente accetta..."). Questo segnaposto verrà sostituito automaticamente con il nome reale dopo la generazione.
+CONCORDANZA GRAMMATICALE: ${istruzioneGenere}
 ${istruzioneLunghezza ? `\nLIVELLO DI DETTAGLIO RICHIESTO: ${istruzioneLunghezza}\n` : ''}
 Rispondi SOLO con il testo narrativo per ogni sezione, separato da intestazioni "=== SEZIONE: nome ===".
 

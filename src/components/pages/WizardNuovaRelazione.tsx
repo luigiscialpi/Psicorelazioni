@@ -56,7 +56,8 @@ const INIT = {
   sezioni_attive: [...SEZIONI_NON_TEST.filter(s => s.default).map(s => s.id), 'wisc-iv'],
 
   // ⚠️ ANAGRAFICA REALE — non va mai a Gemini, solo nel DOCX finale
-  anagrafica: { nome: '', cognome: '', data_nascita: '', scuola_classe: '' },
+  // Eccetto 'genere', che serve a Gemini per la concordanza grammaticale
+  anagrafica: { nome: '', cognome: '', data_nascita: '', scuola_classe: '', genere: '' },
 
   // Contesto invio — questo invece può andare a Gemini (nessun dato identificativo)
   motivo_invio: '', tipo_invio: '', nome_inviante: '',
@@ -144,6 +145,7 @@ function validateStep(stepId, data, templates: TestTemplate[] = []) {
       if (!data.anagrafica?.nome?.trim()) mancanti.push('Nome')
       if (!data.anagrafica?.cognome?.trim()) mancanti.push('Cognome')
       if (!data.anagrafica?.data_nascita?.trim()) mancanti.push('Data di nascita')
+      if (!data.anagrafica?.genere?.trim()) mancanti.push('Genere')
       break
 
     case 'contesto':
@@ -266,14 +268,14 @@ function StepSezioni({ data, dispatch, templates }: { data: any, dispatch: any, 
   )
 }
 
-// ── Step 1 — Anagrafica REALE (mai mandata a Gemini) ───────
+// ── Step 1 — Anagrafica REALE (mai mandata a Gemini, tranne genere) ──
 function StepAnagrafica({ data, set }) {
   return (
     <div>
       <h3 style={sh}>Dati anagrafici</h3>
       <div className="alert alert-info" style={{ marginBottom: 18 }}>
         <ShieldAlert size={15} style={{ flexShrink: 0, marginTop: 1 }} />
-        <span>Questi dati restano sul tuo dispositivo e compaiono <strong>solo nel documento finale</strong>: non vengono mai inviati a Gemini per la generazione del testo.</span>
+        <span>Questi dati restano sul tuo dispositivo e compaiono <strong>solo nel documento finale</strong>: non vengono mai inviati a Gemini per la generazione del testo. Il <strong>genere</strong> è l'unica eccezione: viene indicato al modello per la concordanza grammaticale, senza altri dati identificativi.</span>
       </div>
 
       <div className="meta-row">
@@ -296,6 +298,31 @@ function StepAnagrafica({ data, set }) {
           <input className="form-input" placeholder="es. 1° Liceo Linguistico" value={data.scuola_classe} onChange={e => set('scuola_classe', e.target.value)} />
         </div>
       </div>
+
+      {/* Genere — accordion richiesto come obbligatorio */}
+      <details open={!data.genere} style={{ border: `1px solid ${!data.genere ? 'var(--danger, #dc2626)' : 'var(--border, #ddd)'}`, borderRadius: 10, padding: '2px 14px', marginTop: 10 }}>
+        <summary style={{ cursor: 'pointer', padding: '10px 0', fontSize: 13.5, fontWeight: 600, color: 'var(--accent-dk)', listStyle: 'none', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <span>
+            Genere del/la paziente *
+            {data.genere
+              ? <span style={{ fontWeight: 400, color: 'var(--text-muted)', marginLeft: 8 }}>· {data.genere === 'maschio' ? 'Maschio' : data.genere === 'femmina' ? 'Femmina' : 'Non binario / altro'}</span>
+              : <span style={{ fontWeight: 400, color: 'var(--danger, #dc2626)', marginLeft: 8 }}>· obbligatorio</span>
+            }
+          </span>
+          <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 400 }}>Usato da Gemini per la concordanza grammaticale</span>
+        </summary>
+        <div style={{ paddingBottom: 14, paddingTop: 6 }}>
+          <div style={{ display: 'flex', gap: 10 }}>
+            {[{ v: 'maschio', l: 'Maschio' }, { v: 'femmina', l: 'Femmina' }, { v: 'non_binario', l: 'Non binario / altro' }].map(opt => (
+              <label key={opt.v} style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '8px 14px', border: `2px solid ${data.genere === opt.v ? 'var(--accent)' : 'var(--border)'}`, borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: data.genere === opt.v ? 600 : 400, background: data.genere === opt.v ? 'var(--accent-lt)' : 'transparent', transition: 'all .15s' }}>
+                <input type="radio" name="genere-paziente" value={opt.v} checked={data.genere === opt.v} onChange={() => set('genere', opt.v)} style={{ display: 'none' }} />
+                {opt.l}
+              </label>
+            ))}
+          </div>
+          <p style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: 8, marginBottom: 0 }}>Non viene mai riportato nel documento come dato esplicito — serve solo a Gemini per usare i pronomi e le concordanze corrette.</p>
+        </div>
+      </details>
     </div>
   )
 }
@@ -836,6 +863,7 @@ export default function WizardNuovaRelazione() {
                 cognome: paziente.cognome || '',
                 data_nascita: paziente.data_nascita || '',
                 scuola_classe: paziente.scuola_classe || '',
+                genere: (relazione.wizard_snapshot as any)?.anagrafica?.genere || '',
               } : INIT.anagrafica,
               _relazioneId: relazione.id,
               _pazienteId: relazione.paziente_id,
