@@ -434,14 +434,26 @@ export async function generaNarrativaSezioni(
 
   if (isMock || USE_MOCK_AI) {
     await new Promise<void>(resolve => setTimeout(resolve, 1200))
+    if (wizard.tipo_invio || wizard.motivo_invio) {
+      out['intestazione'] = `Il/la paziente {{NOME}} viene inviato/a da ${wizard.tipo_invio || '[inviante]'} per ${wizard.motivo_invio || 'valutazione neuropsicologica'}.`
+    }
     if (sez.includes('cognitivo') && wizard.cognitivo?.punteggi) {
-      out['cognitivo'] = wiscToNarrativa(wizard.cognitivo.punteggi, wizard.cognitivo.subtest_pp || {})
+      const premessa = [
+        wizard.cognitivo?.eta_valutazione ? `Età al momento della valutazione: ${wizard.cognitivo.eta_valutazione}.` : '',
+        wizard.cognitivo?.strumenti_utilizzati ? `Strumenti utilizzati: ${wizard.cognitivo.strumenti_utilizzati}.` : '',
+      ].filter(Boolean).join(' ')
+      out['cognitivo'] = [premessa, wiscToNarrativa(wizard.cognitivo.punteggi, wizard.cognitivo.subtest_pp || {})].filter(Boolean).join(' ')
     }
     if (sez.includes('nepsy') && wizard.nepsy?.punteggi) {
-      out['nepsy'] = nepsyToNarrativa(wizard.nepsy.punteggi)
+      const premessa = wizard.nepsy?.strumenti_utilizzati ? `Strumenti utilizzati: ${wizard.nepsy.strumenti_utilizzati}.` : ''
+      out['nepsy'] = [premessa, nepsyToNarrativa(wizard.nepsy.punteggi)].filter(Boolean).join(' ')
     }
-    if (sez.includes('apprendimenti') && wizard.apprendimenti?.note_cliniche) {
-      out['apprendimenti'] = String(wizard.apprendimenti.note_cliniche)
+    if (sez.includes('apprendimenti') && wizard.apprendimenti) {
+      const parti = [
+        wizard.apprendimenti?.note_cliniche,
+        wizard.apprendimenti?.lettura, wizard.apprendimenti?.scrittura, wizard.apprendimenti?.matematica,
+      ].filter(Boolean)
+      if (parti.length) out['apprendimenti'] = parti.join(' ')
     }
     if (sez.includes('questionari') && wizard.questionari?.note_cliniche) {
       out['questionari'] = wizard.questionari.note_cliniche
@@ -478,6 +490,10 @@ Non inventare mai punteggi o dati non presenti nell'input.
 Genera SOLO il testo narrativo per ogni sezione richiesta. NON generare tabelle, le tabelle sono già pronte.
 Usa le frasi-cornice standard del Profilo di Stile per le sezioni cognitivo e nepsy.
 Per le sezioni anamnesi e osservazione: ricevi un elenco di fatti grezzi selezionati dall'utente (non una lista da riportare tale quale). Componili in prosa fluida e naturale, con la struttura sintattica e il registro osservati nel Profilo di Stile — non un elenco puntato, non una sequenza di frasi telegrafiche separate da virgole.
+Per la sezione "intestazione": genera UNA sola frase iniziale che dichiara chi invia il/la paziente e per quale motivo, nello stile della frase-cornice osservata nel Profilo di Stile.
+Per la sezione "cognitivo": prima di descrivere gli indici, se sono forniti età al momento della valutazione e/o strumenti utilizzati, aprine la narrazione con una breve frase che li riporta in modo discorsivo (es. "La valutazione è stata condotta all'età di 8 anni, mediante la somministrazione della scala WISC-IV.") — non elencarli come campo/valore separato.
+Per la sezione "nepsy": stessa logica per gli strumenti utilizzati, integrati in una frase discorsiva a inizio sezione, non come riga a sé.
+Per la sezione "apprendimenti": integra le note su lettura, scrittura e matematica fornite nella narrazione in prosa, non riportarle come frasi isolate o elenco.
 Non usare mai nomi reali o dati identificativi: ovunque scriveresti il nome del/la paziente, usa esattamente il segnaposto {{NOME}} (con le doppie graffe, senza spazi interni). Non usare "il/la paziente" o altre perifrasi impersonali al posto del segnaposto: scrivi le frasi come le scriveresti con un nome vero, sostituendo solo il nome con {{NOME}} (es. "{{NOME}} accetta e porta a termine le attività proposte" invece di "il/la paziente accetta..."). Questo segnaposto verrà sostituito automaticamente con il nome reale dopo la generazione.
 ${istruzioneLunghezza ? `\nLIVELLO DI DETTAGLIO RICHIESTO: ${istruzioneLunghezza}\n` : ''}
 Rispondi SOLO con il testo narrativo per ogni sezione, separato da intestazioni "=== SEZIONE: nome ===".
@@ -504,6 +520,16 @@ ${esempiFewShot ? `=== ESEMPI DI RIFERIMENTO ===\n${esempiFewShot}` : ''}`
   }
 
   const userData: string[] = []
+
+  if (wizard.tipo_invio || wizard.motivo_invio) {
+    // Non è una sezione opzionale del wizard (non compare in
+    // sezioni_attive): è l'apertura fissa del documento, ma va comunque
+    // generata da Gemini invece che con una frase hardcoded, per restare
+    // aderente allo stile osservato nel Profilo di Stile.
+    userData.push(`=== SEZIONE: intestazione ===
+Tipo di invio: ${anon(wizard.tipo_invio) || 'Non specificato'}
+Motivo dell'invio: ${anon(wizard.motivo_invio) || 'valutazione neuropsicologica'}`)
+  }
 
   if (sez.includes('anamnesi') && wizard.anamnesi) {
     // Le voci checkbox selezionate vengono passate come elenco di fatti
@@ -561,6 +587,8 @@ Note aggiuntive: ${anon(osservazione.note) || 'Nessuna'}`)
 
   if (sez.includes('cognitivo') && wizard.cognitivo?.punteggi) {
     userData.push(`=== SEZIONE: cognitivo ===
+Età al momento della valutazione: ${anon(wizard.cognitivo?.eta_valutazione) || 'Non specificata'}
+Strumenti utilizzati: ${anon(wizard.cognitivo?.strumenti_utilizzati) || 'Non specificati'}
 Tabella WISC-IV (non modificare, verrà inserita automaticamente):
 ${wiscTabella}
 
@@ -570,6 +598,7 @@ Note cliniche: ${anon(wizard.cognitivo?.note_cliniche) || 'Nessuna'}`)
   }
   if (sez.includes('nepsy') && wizard.nepsy?.punteggi) {
     userData.push(`=== SEZIONE: nepsy ===
+Strumenti utilizzati: ${anon(wizard.nepsy?.strumenti_utilizzati) || 'Non specificati'}
 Tabella NEPSY-II (non modificare, verrà inserita automaticamente):
 ${nepsyTabella}
 
@@ -580,6 +609,9 @@ Note cliniche: ${anon(wizard.nepsy?.note_cliniche) || 'Nessuna'}`)
     userData.push(`=== SEZIONE: apprendimenti ===
 Strumenti: ${anon(wizard.apprendimenti?.strumenti) || 'Nessuno'}
 Punteggi grezzi: ${wizard.apprendimenti?.punteggi_grezzi || 'Nessuno'}
+Note su lettura: ${anon(wizard.apprendimenti?.lettura) || 'Nessuna'}
+Note su scrittura: ${anon(wizard.apprendimenti?.scrittura) || 'Nessuna'}
+Note su matematica: ${anon(wizard.apprendimenti?.matematica) || 'Nessuna'}
 Note: ${anon(wizard.apprendimenti?.note_cliniche) || 'Nessuna'}`)
   }
   if (sez.includes('questionari') && wizard.questionari) {

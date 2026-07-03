@@ -283,7 +283,12 @@ export function assemblaDocumentoMarkdown(wizard, narrativaPerSezione = {}) {
   const sez = wizard.sezioni_attive || []
   let out = '# Relazione di Valutazione Neuropsicologica\n\n'
   out += '## Dati e motivo dell\'invio\n'
-  out += `Il/la paziente viene inviato/a da ${wizard.tipo_invio || '[inviante]'} per ${wizard.motivo_invio || 'valutazione neuropsicologica'}.\n`
+  const narrativaIntestazione = rimuoviTabelleMarkdown(narrativaPerSezione['intestazione'] || '')
+  if (narrativaIntestazione) {
+    out += narrativaIntestazione + '\n'
+  } else {
+    out += `Il/la paziente viene inviato/a da ${wizard.tipo_invio || '[inviante]'} per ${wizard.motivo_invio || 'valutazione neuropsicologica'}.\n`
+  }
 
   if (sez.includes('anamnesi')) {
     out += '\n## Anamnesi\n'
@@ -316,27 +321,35 @@ export function assemblaDocumentoMarkdown(wizard, narrativaPerSezione = {}) {
   }
 
   if (sez.includes('cognitivo')) {
-    out += '\n## Valutazione cognitiva\n'
-    if (wizard.cognitivo?.eta_valutazione) out += `Età al momento della valutazione: ${wizard.cognitivo.eta_valutazione}.\n`
-    if (wizard.cognitivo?.strumenti_utilizzati) out += `Strumenti utilizzati: ${wizard.cognitivo.strumenti_utilizzati}\n`
-    out += '\n'
+    out += '\n## Valutazione cognitiva\n\n'
     const wiscTabella = wiscToMarkdownTable(wizard.cognitivo.punteggi || {}, wizard.cognitivo.interpretabilita || {})
     if (wiscTabella) out += wiscTabella + '\n'
     if (wizard.cognitivo?.includi_nota_range) out += notaRangeWisc() + '\n'
     const narrativaC = rimuoviTabelleMarkdown(narrativaPerSezione['cognitivo'] || '')
-    if (narrativaC) out += narrativaC + '\n'
+    if (narrativaC) {
+      // Età e strumenti sono già stati tessuti in prosa da Gemini
+      // dentro narrativaC (vedi geminiService.ts) — niente riga fissa qui.
+      out += narrativaC + '\n'
+    } else {
+      // Fallback (mock senza narrativa, o generazione fallita per questa
+      // sezione): non lasciare mai il dato silenziosamente perso.
+      if (wizard.cognitivo?.eta_valutazione) out += `Età al momento della valutazione: ${wizard.cognitivo.eta_valutazione}.\n`
+      if (wizard.cognitivo?.strumenti_utilizzati) out += `Strumenti utilizzati: ${wizard.cognitivo.strumenti_utilizzati}\n`
+    }
     if (wizard.cognitivo?.note_cliniche) out += wizard.cognitivo.note_cliniche + '\n'
   }
 
   if (sez.includes('nepsy')) {
-    out += '\n## Approfondimento neuropsicologico\n'
-    if (wizard.nepsy?.strumenti_utilizzati) out += `Strumenti utilizzati: ${wizard.nepsy.strumenti_utilizzati}\n`
-    out += '\n'
+    out += '\n## Approfondimento neuropsicologico\n\n'
     const nepsyTabella = nepsyToMarkdownTable(wizard.nepsy.punteggi || {})
     if (nepsyTabella) out += nepsyTabella + '\n'
     if (wizard.nepsy?.includi_nota_range) out += notaRangeNepsy() + '\n'
     const narrativaN = rimuoviTabelleMarkdown(narrativaPerSezione['nepsy'] || '')
-    if (narrativaN) out += narrativaN + '\n'
+    if (narrativaN) {
+      out += narrativaN + '\n'
+    } else if (wizard.nepsy?.strumenti_utilizzati) {
+      out += `Strumenti utilizzati: ${wizard.nepsy.strumenti_utilizzati}\n`
+    }
     if (wizard.nepsy?.note_cliniche) out += wizard.nepsy.note_cliniche + '\n'
   }
 
@@ -344,12 +357,16 @@ export function assemblaDocumentoMarkdown(wizard, narrativaPerSezione = {}) {
     out += '\n## Valutazione apprendimenti\n'
     if (wizard.apprendimenti?.strumenti) out += `${wizard.apprendimenti.strumenti}\n\n`
     if (wizard.apprendimenti?.punteggi_grezzi) out += `${wizard.apprendimenti.punteggi_grezzi}\n\n`
-    // Testo narrativo di Gemini (se presente) integra, non sostituisce,
-    // i campi lettura/scrittura/matematica inseriti manualmente.
+    // Testo narrativo di Gemini (se presente) integra ora anche le note
+    // di lettura/scrittura/matematica, tessute in prosa — non vengono più
+    // riappese come frasi isolate in coda (vedi geminiService.ts).
     const narrativaApp = rimuoviTabelleMarkdown(narrativaPerSezione['apprendimenti'] || '')
-    if (narrativaApp) out += narrativaApp + '\n'
-    const parti = [wizard.apprendimenti?.lettura, wizard.apprendimenti?.scrittura, wizard.apprendimenti?.matematica].filter(Boolean)
-    if (parti.length) out += parti.join(' ') + '\n'
+    if (narrativaApp) {
+      out += narrativaApp + '\n'
+    } else {
+      const parti = [wizard.apprendimenti?.lettura, wizard.apprendimenti?.scrittura, wizard.apprendimenti?.matematica].filter(Boolean)
+      if (parti.length) out += parti.join(' ') + '\n'
+    }
   }
 
   if (sez.includes('questionari')) {

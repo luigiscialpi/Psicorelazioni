@@ -28,79 +28,6 @@
 
 > Sezione aggiornata in questa revisione: il blocco principale delle versioni precedenti (template reale mancante) è stato risolto.
 
-### Delta modifiche staged (allineamento documentazione)
-
-Questa sezione traccia le modifiche attualmente in stage, per mantenere il piano sincronizzato con il codice pronto al commit.
-
-**Rendering e leggibilità Archivio/Profilo**
-- Archivio: il dettaglio relazione ora renderizza Markdown strutturato (non più testo piatto) con supporto tabelle/liste/blockquote.
-- Profilo Stile: sostituito il renderer Markdown manuale con renderer completo, unificando la resa visiva con l'Archivio.
-- Stili condivisi: introdotto blocco CSS dedicato (`.markdown-profile`) per heading, tabelle, codice e spacing coerente.
-
-**Pipeline import DOCX/PDF migliorata**
-- DOCX: nuova catena di fallback a 3 livelli:
-    1. Pandoc WASM (primario, migliore tenuta su struttura/tabelle)
-    2. docx-preview + Turndown (compatibilità)
-    3. Mammoth con style-map e trasformazioni (ultima rete di sicurezza)
-- PDF: ricostruzione semantica migliorata (raggruppamento righe per coordinata Y, stima heading da font-size, paragrafazione da gap verticale, merge sillabazioni a fine riga).
-- Normalizzazione output: cleanup Markdown centralizzato per ridurre rumore tipografico e artefatti.
-
-**Integrazione Pandoc in ambiente browser (fix Vite)**
-- Aggiunto modulo wrapper browser (`src/pandocBrowser.js`) che inizializza Pandoc caricando il file WASM come asset URL.
-- Motivo: evitare errori in dev build relativi a `wasi_snapshot_preview1` con import diretto del WASM.
-- Configurazione Vite aggiornata con inclusione asset `.wasm`.
-
-**Gemini: affidabilità, fallback e controllo payload**
-- Modelli: introdotta lista candidati configurabile (`VITE_GEMINI_MODELS`) con fallback automatico tra modelli flash/lite.
-- Robustezza chiamate API: gestione errori quota/modello non disponibile, retry con backoff su 429/5xx, parsing dettagli errore.
-- Limiti corpus: introdotti limiti espliciti su payload totale e singola relazione, con troncamento controllato.
-- Pianificazione invio: nuova funzione di pianificazione corpus che decide quante relazioni inviare ora e quante restano in coda.
-- Output analisi stile: ora ritorna metadati (`relazioniUsate`, `relazioniTotali`, `charsCorpus`) oltre al testo.
-
-**Profilo Stile: logica incrementale resa deterministica**
-- Le relazioni vengono ordinate cronologicamente e processate in coda stabile.
-- L'incrementale non dipende più solo da timestamp ultimo aggiornamento, ma da conteggio già analizzato (`num_relazioni_analizzate`).
-- Anteprima invio arricchita con statistiche operative (inviate, in coda, caratteri corpus).
-
-**Allineamento bidirezionale Profilo <-> Wizard (prima versione operativa)**
-- Il wizard legge il `profilo_stile` salvato e ne estrae requisiti operativi (parser leggero di pattern nel Markdown).
-- Se il profilo richiede riferimenti ai subtest WISC per indice, lo step Cognitivo li richiede esplicitamente prima di consentire la generazione.
-- I riferimenti sono ora strutturati per indice (`ICV`, `RP/IRP`, `IML/ML`, `VE/IVE`) e confluiscono nella narrativa WISC passata a Gemini.
-- Compatibilità mantenuta con snapshot precedenti che avevano un singolo campo testuale `riferimenti_subtest`.
-  > *Aggiornamento successivo*: questi 4 campi testuali sono stati sostituiti da un accordion con punti ponderati numerici per subtest — vedi "Subtest WISC-IV per indice: da testo libero a punti ponderati con accordion" più sopra in questa stessa sezione.
-
-**Allineamento bidirezionale Profilo <-> Wizard (seconda iterazione)**
-- Se il profilo richiede età al momento della valutazione, strumenti e note range WISC, il wizard li espone come campi strutturati e li valida in checklist.
-- Nuovi campi WISC: `eta_valutazione`, `strumenti_utilizzati`, toggle `includi_nota_range`, più riferimenti subtest per indice.
-- Nuovi campi NEPSY: `strumenti_utilizzati`, toggle `includi_nota_range`.
-- Prima della generazione viene mostrata una checklist aderenza profilo; se incompleta, il pulsante "Genera relazione" resta disabilitato.
-- I nuovi campi vengono passati a Gemini in payload esplicito (`eta_valutazione`, `strumenti_utilizzati`, `nota_range_wisc`, `nota_range_nepsy`) per ridurre ambiguità e migliorare coerenza output.
-
-**Chiarezza flussi URL: Bozza vs Modifica (iterazione UX)**
-- Distinte due rotte con semantica diversa: `/bozza/riprendi?sessionId=...` (ripresa sessione) e `/modifica?relazioneId=...` (ingresso da Archivio).
-- Se una sessione bozza deriva da una relazione d'archivio, il wizard mantiene il contesto "modifica" anche in ripresa (topbar e breadcrumb coerenti: Archivio > Modifica relazione).
-- Dashboard Bozze: sostituita la dicitura generica "Wizard avviato il..." con etichette contestuali:
-    - "Modifica da archivio: <titolo relazione>" se la bozza deriva da una relazione esistente
-    - "Bozza nuova relazione (<tipo>)" negli altri casi
-- Obiettivo: ridurre ambiguità cognitiva tra "nuova relazione", "ripresa bozza" e "modifica da archivio".
-
-**Dipendenze aggiunte (staged)**
-- `react-markdown`, `remark-gfm`
-- `docx-preview`, `turndown`
-- `pandoc-wasm`
-
-**Nota di sicurezza/roadmap**
-- Inserita anche azione pianificata: migrazione chiamate Gemini lato server (Vercel/Supabase Edge Function) con chiave API non esposta nel client, rate limit e validazione payload.
-
-**Subtest WISC-IV per indice: da testo libero a punti ponderati con accordion**
-- Sostituiti i 4 campi di testo libero "Riferimenti ai subtest per indice" (`riferimenti_subtest`, dove tua sorella scriveva a mano i nomi dei subtest somministrati) con un **accordion per indice** (`<details>/<summary>`, coerente con lo stile già usato altrove nel wizard, nessuna nuova libreria).
-- Ogni indice (ICV, RP, IML, VE) mostra ora 3 subtest predefiniti con **campo numerico per il punto ponderato (pp)**, stessa scala dei punteggi scalari NEPSY-II (media 10, DS 3): fonte di verità in `testDefinitions.ts` → `WISC_IV_SUBTEST_PER_INDICE`. Nota: ICV e RP hanno 3 subtest "core" nel WISC-IV reale; per IML e VE il terzo campo è un subtest supplementare, etichettato esplicitamente come tale.
-- Ogni subtest resta **facoltativo**, in linea col resto della sezione cognitiva — si compilano solo i subtest effettivamente somministrati, e la fascia interpretativa ("Media", "Superiore"...) è calcolata automaticamente accanto al campo, in tempo reale.
-- Nuovo campo dati: `cognitivo.subtest_pp` (oggetto piatto, chiave = subtest, es. `{ vc: 9, so: 11 }`), al posto del vecchio `cognitivo.riferimenti_subtest` (stringa o oggetto per indice).
-- Nuova funzione `wiscSubtestPpToNarrativa()` in `wizardToText.ts`: genera **solo testo narrativo** ("Per l'indice Comprensione Verbale sono stati considerati i seguenti subtest: Vocabolario (pp 9, fascia media)...") — mai una tabella, come richiesto esplicitamente per questo dato, a differenza delle tabelle indici/QI e NEPSY-II che restano tabellari.
-- Il payload verso Gemini (`geminiService.ts`) ora include questa narrativa al posto del vecchio testo libero anonimizzato "as-is"; tipi e riferimenti aggiornati anche in `exportDocx.ts` e `profileAlignment.ts`.
-- Compatibilità: le bozze salvate prima di questa modifica avevano `riferimenti_subtest` come nomi di subtest (non punteggi) — non convertibile in pp numerici, quindi **non viene migrato automaticamente**; per quelle bozze `subtest_pp` riparte vuoto.
-
 ### 🟢 Sbloccato: struttura reale identificata da 3 relazioni vere
 
 Tua sorella ha fornito 3 relazioni reali (un `.docx`, un `.doc`, un `.pdf` — utili anche per verificare concretamente il Modulo 1 su tutti i formati supportati). Trattandosi di file **non anonimizzati** (nomi e dati identificativi di pazienti reali, inclusi recapiti professionali in calce), sono stati gestiti così:
@@ -139,13 +66,13 @@ Non tutte le relazioni includono tutte le sezioni (una rivalutazione può non av
 | Modulo | Stato | Note |
 |---|---|---|
 | Setup progetto | ✅ Completo | React + Vite, design system, font |
-| Modulo 1 — Auth + Import (DOCX/PDF/DOC) | ✅ Completo | Mammoth.js (DOCX) + pdf.js (PDF) funzionanti e testati; `.doc` guidato verso conversione manuale a `.docx` |
+| Modulo 1 — Auth + Import (DOCX/PDF/DOC) | ✅ Completo | Mammoth.js (DOCX) + pdf.js (PDF) funzionanti e testati; `.doc` guidato verso conversione manuale a `.docx`. Rafforzato con fallback Pandoc WASM → docx-preview/Turndown → Mammoth e ricostruzione PDF migliorata (quindicesima correzione) |
 | Livello dati astratto | ✅ Completo | `dataService.js`, `geminiService.js` |
-| Modulo 2 — Profilo di stile | ✅ Calibrato sulla struttura reale | Prompt di analisi aggiornato per riconoscere indici WISC, tabelle NEPSY, formule normative fisse |
-| Modulo 3 — Wizard | ✅ Calibrato sulla struttura reale | Selettore di sezioni dinamico + step dedicati per anamnesi, osservazione, cognitivo, NEPSY, apprendimenti, questionari, conclusioni. Campi "punteggi" come testo libero per le tabelle incollate |
-| Modulo 4 — Generazione + editor | 🟡 Parziale | Generazione e editor testuale aggiornati al nuovo formato; manca ancora "rigenera sezione" e l'anteprima formattata |
+| Modulo 2 — Profilo di stile | ✅ Calibrato sulla struttura reale | Prompt di analisi aggiornato per riconoscere indici WISC, tabelle NEPSY, formule normative fisse. Affidabilità Gemini (fallback modelli, retry, limiti payload) e logica incrementale deterministica aggiunte (sedicesima e diciassettesima correzione) |
+| Modulo 3 — Wizard | ✅ Calibrato sulla struttura reale | Selettore di sezioni dinamico + step dedicati per anamnesi, osservazione, cognitivo, NEPSY, apprendimenti, questionari, conclusioni. Campi "punteggi" come testo libero per le tabelle incollate. Allineamento bidirezionale col Profilo di Stile e accordion punti ponderati per subtest WISC-IV (diciottesima e ventesima correzione) |
+| Modulo 4 — Generazione + editor | 🟡 Parziale | Generazione e editor testuale aggiornati al nuovo formato; manca ancora "rigenera sezione" e l'anteprima formattata. Campi di contorno (intestazione, età/strumenti, note lettura/scrittura/matematica) ora tessuti nella narrativa di Gemini invece di restare testo grezzo (ventunesima correzione) |
 | Modulo 5 — Export DOCX | ✅ Implementato | Template fedele allo screenshot: Times New Roman, margini 2.5cm, intestazione professionale, titolo centrato sottolineato, numero pagina X/Y, tabelle WISC con intestazione grigia e bordi |
-| Modulo 5 — Archivio | ✅ Implementato | Ricerca full-text, filtro per tipo, apertura dettaglio, riapertura per modifica quando `wizard_snapshot` è presente |
+| Modulo 5 — Archivio | ✅ Implementato | Ricerca full-text, filtro per tipo, apertura dettaglio, riapertura per modifica quando `wizard_snapshot` è presente. Dettaglio ora con rendering Markdown reale (tabelle/liste/blockquote) invece di testo piatto (quattordicesima correzione) |
 
 ### Decisione tecnica: `useReducer` al posto di `useState`
 
@@ -286,6 +213,89 @@ Le sezioni Anamnesi e Osservazione comportamentale, basate su voci selezionabili
 ### Tredicesima correzione: colonna "Interpretabilità" opzionale nella tabella WISC-IV
 
 La colonna "Interpretabilità" nella tabella WISC-IV era finora sempre "Sì" per ogni indice, valore fisso non configurabile (hardcoded in due punti indipendenti: la generazione del Markdown e la costruzione della tabella Word, che — come emerso nella nona correzione — sono funzioni separate per costruzione). Su richiesta dell'utente, è stata aggiunta una checkbox per indice nel wizard (di default spuntata = interpretabile), e la logica di generazione di entrambe le tabelle ora omette la colonna quando tutti gli indici compilati sono interpretabili — il caso più comune — mostrandola solo quando almeno un indice è stato esplicitamente marcato come non interpretabile. Verificato sia sulla tabella Markdown sia, visivamente, sul DOCX renderizzato.
+
+### Quattordicesima correzione: rendering Markdown reale in Archivio e Profilo di Stile
+
+Sia il dettaglio relazione in Archivio sia la pagina Profilo di Stile mostravano il contenuto come testo piatto o con un renderer Markdown manuale parziale, perdendo tabelle, liste e blockquote (questi ultimi usati per le note range WISC/NEPSY). Corretto sostituendo entrambi i punti con un renderer Markdown completo e condiviso, con supporto esplicito a tabelle/liste/blockquote:
+- **Archivio**: il dettaglio relazione ora renderizza Markdown strutturato invece di testo piatto.
+- **Profilo di Stile**: sostituito il renderer manuale con lo stesso renderer completo, unificando la resa visiva con l'Archivio.
+- **Stili condivisi**: introdotto un blocco CSS dedicato (`.markdown-profile`) per heading, tabelle, codice e spacing coerente tra le due pagine.
+- Dipendenze aggiunte: `react-markdown`, `remark-gfm`.
+
+### Quindicesima correzione: pipeline di import DOCX/PDF rafforzata con Pandoc WASM
+
+La pipeline di importazione (Modulo 1) affidata solo a Mammoth.js perdeva struttura su documenti complessi (tabelle annidate, formattazioni particolari). Rafforzata con una catena di fallback a più livelli e con una ricostruzione più fedele lato PDF:
+- **DOCX — nuova catena di fallback a 3 livelli**:
+    1. Pandoc WASM (primario, migliore tenuta su struttura/tabelle)
+    2. docx-preview + Turndown (compatibilità)
+    3. Mammoth con style-map e trasformazioni (ultima rete di sicurezza, comportamento precedente)
+- **PDF**: ricostruzione semantica migliorata (raggruppamento righe per coordinata Y, stima heading da font-size, paragrafazione da gap verticale, merge sillabazioni a fine riga).
+- **Normalizzazione output**: cleanup Markdown centralizzato per ridurre rumore tipografico e artefatti, condiviso da entrambi i percorsi DOCX e PDF.
+- **Integrazione Pandoc in ambiente browser (fix build Vite)**: aggiunto un modulo wrapper browser dedicato (`src/pandocBrowser.js`) che inizializza Pandoc caricando il file WASM come asset URL, per evitare errori in dev build relativi a `wasi_snapshot_preview1` che si verificano con l'import diretto del WASM; configurazione Vite aggiornata con inclusione asset `.wasm`.
+- Dipendenze aggiunte: `docx-preview`, `turndown`, `pandoc-wasm`.
+
+### Sedicesima correzione: affidabilità, fallback e controllo payload delle chiamate Gemini
+
+Le chiamate a Gemini (sia per l'analisi dello stile sia per la generazione) non gestivano in modo robusto errori temporanei o corpus di relazioni troppo grandi. Corretto con diversi interventi collegati:
+- **Modelli**: introdotta una lista di modelli candidati configurabile (`VITE_GEMINI_MODELS`), con fallback automatico tra modelli flash/lite quando il modello preferito non è disponibile.
+- **Robustezza chiamate API**: gestione esplicita degli errori di quota/modello non disponibile, retry con backoff su risposte 429/5xx, parsing dei dettagli d'errore restituiti dall'API.
+- **Limiti corpus**: introdotti limiti espliciti sul payload totale e sulla singola relazione inviata per l'analisi di stile, con troncamento controllato invece di un errore secco.
+- **Pianificazione invio**: nuova funzione di pianificazione del corpus, che decide quante relazioni inviare subito e quante restano in coda per l'analisi incrementale successiva.
+- **Output analisi stile**: ora ritorna anche metadati operativi (`relazioniUsate`, `relazioniTotali`, `charsCorpus`) oltre al testo del profilo, usati per l'anteprima invio (vedi correzione successiva).
+- Questa correzione riduce il rischio di interruzioni durante l'uso reale, ma non elimina il punto di rischio residuo sull'uso dell'API gratuita — vedi Roadmap (§13) per la migrazione pianificata delle chiamate lato server.
+
+### Diciassettesima correzione: Profilo di Stile, logica incrementale resa deterministica
+
+L'aggiornamento incrementale del Profilo di Stile dipendeva solo dal timestamp dell'ultimo aggiornamento, un criterio fragile in caso di relazioni caricate fuori ordine o di rielaborazioni parziali. Corretto rendendo il processo deterministico:
+- Le relazioni vengono ora ordinate cronologicamente e processate in una coda stabile.
+- L'incrementale non dipende più solo dal timestamp, ma da un conteggio esplicito già analizzato (`num_relazioni_analizzate`).
+- L'anteprima di invio è stata arricchita con le statistiche operative introdotte nella correzione precedente (relazioni inviate, relazioni in coda, caratteri del corpus).
+
+### Diciottesima correzione: allineamento bidirezionale Profilo di Stile <-> Wizard (due iterazioni)
+
+Il wizard raccoglieva i campi della sezione cognitiva senza sapere se il Profilo di Stile della professionista richiedesse effettivamente quei dettagli (es. riferimenti ai subtest, età di valutazione). Corretto con un parser leggero che legge il `profilo_stile` salvato e ne estrae i requisiti operativi, in due iterazioni successive:
+
+**Prima iterazione**
+- Se il profilo richiede riferimenti ai subtest WISC per indice, lo step Cognitivo li richiede esplicitamente prima di consentire la generazione.
+- I riferimenti sono strutturati per indice (`ICV`, `RP/IRP`, `IML/ML`, `VE/IVE`) e confluiscono nella narrativa WISC passata a Gemini.
+- Compatibilità mantenuta con snapshot precedenti che avevano un singolo campo testuale `riferimenti_subtest`.
+
+**Seconda iterazione**
+- Se il profilo richiede età al momento della valutazione, strumenti e note range WISC, il wizard li espone come campi strutturati e li valida in checklist.
+- Nuovi campi WISC: `eta_valutazione`, `strumenti_utilizzati`, toggle `includi_nota_range`, più i riferimenti subtest per indice della prima iterazione.
+- Nuovi campi NEPSY: `strumenti_utilizzati`, toggle `includi_nota_range`.
+- Prima della generazione viene mostrata una checklist di aderenza al profilo; se incompleta, il pulsante "Genera relazione" resta disabilitato.
+- I nuovi campi vengono passati a Gemini in payload esplicito (`eta_valutazione`, `strumenti_utilizzati`, `nota_range_wisc`, `nota_range_nepsy`) per ridurre ambiguità e migliorare la coerenza dell'output.
+
+> *Superata da correzioni successive*: i 4 campi testuali `riferimenti_subtest` per indice descritti nella prima iterazione sono stati sostituiti da un accordion con punti ponderati numerici per subtest (vedi Ventesima correzione), e `eta_valutazione`/`strumenti_utilizzati` — qui passati a Gemini come campo/valore separato — sono stati successivamente integrati nella narrativa in prosa invece che restare righe isolate (vedi Ventunesima correzione).
+
+### Diciannovesima correzione: chiarezza dei flussi URL Bozza vs Modifica
+
+I due percorsi "riprendere una bozza salvata" e "modificare una relazione già archiviata" condividevano la stessa rotta e la stessa etichetta generica in dashboard, generando ambiguità su cosa si stesse davvero riaprendo. Corretto distinguendo esplicitamente i due flussi:
+- Due rotte con semantica diversa: `/bozza/riprendi?sessionId=...` (ripresa sessione) e `/modifica?relazioneId=...` (ingresso da Archivio).
+- Se una sessione bozza deriva da una relazione d'archivio, il wizard mantiene il contesto "modifica" anche in ripresa (topbar e breadcrumb coerenti: Archivio > Modifica relazione).
+- Dashboard Bozze: sostituita la dicitura generica "Wizard avviato il..." con etichette contestuali — "Modifica da archivio: <titolo relazione>" se la bozza deriva da una relazione esistente, "Bozza nuova relazione (<tipo>)" negli altri casi.
+- Obiettivo: ridurre l'ambiguità cognitiva tra "nuova relazione", "ripresa bozza" e "modifica da archivio".
+
+### Ventesima correzione: subtest WISC-IV per indice, da testo libero a punti ponderati con accordion
+
+I 4 campi di testo libero "Riferimenti ai subtest per indice" introdotti nella prima iterazione dell'allineamento Profilo↔Wizard (diciottesima correzione) restavano un dato descrittivo (nomi dei subtest somministrati), non un punteggio verificabile. Sostituiti con un dato numerico strutturato:
+- **Accordion per indice** (`<details>/<summary>`, coerente con lo stile già usato altrove nel wizard, nessuna nuova libreria) al posto dei 4 campi di testo.
+- Ogni indice (ICV, RP, IML, VE) mostra ora 3 subtest predefiniti con **campo numerico per il punto ponderato (pp)**, stessa scala dei punteggi scalari NEPSY-II (media 10, DS 3): fonte di verità in `testDefinitions.ts` → `WISC_IV_SUBTEST_PER_INDICE`. ICV e RP hanno 3 subtest "core" nel WISC-IV reale; per IML e VE il terzo campo è un subtest supplementare, etichettato esplicitamente come tale.
+- Ogni subtest resta **facoltativo**, in linea col resto della sezione cognitiva — si compilano solo i subtest effettivamente somministrati, e la fascia interpretativa ("Media", "Superiore"...) è calcolata automaticamente accanto al campo, in tempo reale.
+- Nuovo campo dati: `cognitivo.subtest_pp` (oggetto piatto, chiave = subtest, es. `{ vc: 9, so: 11 }`), al posto del vecchio `cognitivo.riferimenti_subtest` (stringa o oggetto per indice).
+- Nuova funzione `wiscSubtestPpToNarrativa()` in `wizardToText.ts`: genera **solo testo narrativo** ("Per l'indice Comprensione Verbale sono stati considerati i seguenti subtest: Vocabolario (pp 9, fascia media)...") — mai una tabella, come richiesto esplicitamente per questo dato, a differenza delle tabelle indici/QI e NEPSY-II che restano tabellari.
+- Il payload verso Gemini (`geminiService.ts`) ora include questa narrativa al posto del vecchio testo libero anonimizzato "as-is"; tipi e riferimenti aggiornati anche in `exportDocx.ts` e `profileAlignment.ts`.
+- Compatibilità: le bozze salvate prima di questa modifica avevano `riferimenti_subtest` come nomi di subtest (non punteggi) — non convertibile in pp numerici, quindi **non viene migrato automaticamente**; per quelle bozze `subtest_pp` riparte vuoto.
+
+### Ventunesima correzione: campi "di contorno" fatti passare da Gemini invece di restare testo grezzo
+
+Verificato con una relazione di test reale che 4 gruppi di campi finivano nel documento finale come righe fisse, mai visti da Gemini: `tipo_invio`/`motivo_invio` (frase di apertura, introdotti nella "terza correzione" ma mai inviati a Gemini), `cognitivo.eta_valutazione`/`cognitivo.strumenti_utilizzati` e `nepsy.strumenti_utilizzati` (introdotti nella seconda iterazione dell'allineamento Profilo↔Wizard, diciottesima correzione, ma passati a Gemini solo come nota range/tabella, non come questi campi specifici), `apprendimenti.lettura`/`.scrittura`/`.matematica`. Corretto così:
+- Aggiunta una nuova sezione "intestazione" (non è uno step del wizard, è sempre generata se `tipo_invio` o `motivo_invio` sono compilati) che Gemini scrive come singola frase iniziale coerente col Profilo di Stile, al posto della frase hardcoded in `assemblaDocumentoMarkdown`.
+- `eta_valutazione` e `strumenti_utilizzati` vengono ora passati nel payload delle sezioni `cognitivo`/`nepsy`, con istruzione esplicita a Gemini di aprirne la narrazione con una frase discorsiva ("La valutazione è stata condotta all'età di 8 anni, mediante la scala WISC-IV...") invece di riportarli come riga campo/valore.
+- Le tre note di apprendimenti (`lettura`, `scrittura`, `matematica`) vengono ora tessute nella narrativa della sezione invece che riappese in coda come frasi isolate.
+- `assemblaDocumentoMarkdown` non duplica più questi dati: li usa come riga fissa **solo** se la narrativa di Gemini per quella sezione manca (mock senza narrativa, o generazione fallita) — altrimenti si fida che siano già stati incorporati nel testo.
+- Resta esplicitamente **esclusa** l'anagrafica (nome, cognome, data di nascita, scuola/classe): non viene mai inviata a Gemini, per lo stesso motivo di privacy già documentato nella terza correzione del modello dati.
 
 ---
 
@@ -869,6 +879,14 @@ I dati inviati alla Gemini API gratuita (Google AI Studio) potrebbero essere usa
 - [x] Salvataggio automatico wizard (debounced)
 - [x] Selezione few-shot per similarità (tipo + tag)
 - [ ] Ampliare/rivedere insieme a tua sorella la lista di voci checkbox per anamnesi e osservazione
+- [x] Rendering Markdown reale (tabelle/liste/blockquote) in Archivio e Profilo di Stile, al posto di testo piatto o renderer parziale
+- [x] Import DOCX/PDF rafforzato con fallback a più livelli (Pandoc WASM → docx-preview/Turndown → Mammoth) e ricostruzione PDF migliorata
+- [x] Affidabilità chiamate Gemini: fallback multi-modello, retry con backoff, limiti espliciti su payload/corpus
+- [x] Profilo di Stile: logica di aggiornamento incrementale resa deterministica (coda stabile, conteggio esplicito)
+- [x] Allineamento bidirezionale Profilo di Stile ↔ Wizard, con checklist di aderenza prima della generazione
+- [x] Chiarezza dei flussi URL bozza/modifica, con etichette contestuali in Dashboard Bozze
+- [x] Subtest WISC-IV per indice come punti ponderati numerici in accordion (non più testo libero), spiegati sempre a parole nella relazione
+- [x] Campi di contorno (intestazione, età/strumenti valutazione, note lettura/scrittura/matematica) tessuti nella narrativa di Gemini invece di restare testo grezzo duplicato
 
 ### Versione 1.1 — Priorità 3
 - [ ] Anteprima formattata della relazione (HTML renderizzato, non solo textarea)
