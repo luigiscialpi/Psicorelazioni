@@ -752,4 +752,35 @@ Aggiorna il profilo integrando le osservazioni dalle nuove relazioni.`
   return { testo, relazioniUsate: usate, relazioniTotali: totali, charsCorpus }
 }
 
+export async function suggerisciTestDaArchivio(relazioni: Relazione[], templateEsistenti: string[]): Promise<string[]> {
+  const relazioniAnonimizzate = await anonimizzaRelazioniPerAnalisi(relazioni)
+  const { corpus } = costruisciCorpus(relazioniAnonimizzate, 'RELAZIONE')
+
+  if (USE_MOCK_AI) {
+    await new Promise<void>(resolve => setTimeout(resolve, 1400))
+    return ['BVSCO-2', 'MT-3'] // Mock
+  }
+
+  const testo = await callGemini(
+    `Sei un assistente clinico.
+Nel testo fornito, elenca i nomi di test, batterie o questionari citati che NON sono già presenti in questa lista: [${templateEsistenti.join(', ')}].
+Restituisci SOLO un JSON array di stringhe (es. ["TEMA-3", "BVN 5-11", "CPT-3"]), senza spiegazioni, introduzioni o testo libero attorno. 
+Se non trovi nulla di nuovo, restituisci [].`,
+    `=== RELAZIONI IN ARCHIVIO ===
+${corpus}
+
+Estrai la lista di test/batterie non già mappati.`
+  )
+  
+  try {
+    const raw = testo.replace(/```json/g, '').replace(/```/g, '').trim()
+    const parsed = JSON.parse(raw)
+    return Array.isArray(parsed) ? parsed : []
+  } catch (e) {
+    console.error('Errore nel parse dei suggerimenti test:', e)
+    return []
+  }
+}
+
 export { USE_MOCK_AI }
+

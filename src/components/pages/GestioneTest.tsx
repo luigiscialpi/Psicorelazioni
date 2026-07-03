@@ -1,9 +1,11 @@
 import { useState, useEffect, useReducer } from 'react'
-import { Plus, Trash2, ChevronDown, ChevronUp, Eye, Save, AlertTriangle, Lock, FlaskConical, X, GripVertical, Check } from 'lucide-react'
+import { Plus, Trash2, ChevronDown, ChevronUp, Eye, Save, AlertTriangle, Lock, FlaskConical, X, GripVertical, Check, Sparkles } from 'lucide-react'
 import {
   getTestTemplates, insertTestTemplate, updateTestTemplate, disattivaTestTemplate
 } from '../../data/testTemplatesData'
 import { validaSoglieCustom } from '../../services/testTemplateEngine'
+import { suggerisciTestDaArchivio } from '../../services/geminiService'
+import { getRelazioni } from '../../data/relazioniData'
 import type { TestTemplate, CampoTest, GruppoTest, SogliaCustom, ScalaPunteggio } from '../../core/testTemplate'
 import { USE_MOCK } from '../../core/config'
 
@@ -602,12 +604,47 @@ export default function GestioneTest() {
   const [templates, setTemplates] = useState<TestTemplate[]>([])
   const [loading, setLoading] = useState(true)
   const [showForm, setShowForm] = useState(false)
+  const [formInitial, setFormInitial] = useState<FormState | undefined>(undefined)
   const [confirmDisattiva, setConfirmDisattiva] = useState<string | null>(null)
   const [successo, setSuccesso] = useState('')
+  
+  // Stati per suggerimenti AI
+  const [suggerimenti, setSuggerimenti] = useState<string[]>([])
+  const [loadingSuggerimenti, setLoadingSuggerimenti] = useState(false)
 
   useEffect(() => {
     getTestTemplates().then(t => { setTemplates(t); setLoading(false) })
   }, [])
+
+  async function handleSuggerisci() {
+    setLoadingSuggerimenti(true)
+    try {
+      const relazioni = await getRelazioni()
+      if (relazioni.length === 0) {
+        setSuccesso('Nessuna relazione in archivio da analizzare.')
+        setTimeout(() => setSuccesso(''), 4000)
+        return
+      }
+      const nomiEsistenti = templates.map(t => t.nome)
+      const res = await suggerisciTestDaArchivio(relazioni, nomiEsistenti)
+      if (res.length === 0) {
+        setSuccesso('Nessun nuovo test rilevato dalle tue relazioni.')
+        setTimeout(() => setSuccesso(''), 4000)
+      } else {
+        setSuggerimenti(res)
+      }
+    } catch (e: any) {
+      console.error(e)
+    } finally {
+      setLoadingSuggerimenti(false)
+    }
+  }
+
+  function precompilaDaSuggerimento(nome: string) {
+    setFormInitial({ ...INIT_FORM, nome })
+    setShowForm(true)
+    setSuggerimenti(s => s.filter(x => x !== nome))
+  }
 
   async function handleSave(form: FormState) {
     const nuovoTemplate = await insertTestTemplate({
@@ -689,11 +726,35 @@ export default function GestioneTest() {
                 Template attivi ({attivi.length})
               </h3>
               {!showForm && (
-                <button className="btn btn-primary btn-sm" onClick={() => setShowForm(true)} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <Plus size={14} /> Nuovo template
-                </button>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button className="btn btn-secondary btn-sm" onClick={handleSuggerisci} disabled={loadingSuggerimenti} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    {loadingSuggerimenti ? <span className="spinner" style={{ width: 14, height: 14 }} /> : <Sparkles size={14} color="var(--accent)" />}
+                    {loadingSuggerimenti ? 'Analisi...' : 'Suggerisci dall\'archivio'}
+                  </button>
+                  <button className="btn btn-primary btn-sm" onClick={() => { setFormInitial(undefined); setShowForm(true); }} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <Plus size={14} /> Nuovo template
+                  </button>
+                </div>
               )}
             </div>
+
+            {suggerimenti.length > 0 && !showForm && (
+              <div style={{ marginBottom: 16, padding: '12px 14px', background: 'var(--accent-lt)', border: '1px solid var(--accent)', borderRadius: 'var(--radius)' }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--accent-dk)', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <Sparkles size={14} /> Test rilevati nelle tue relazioni (bozze)
+                </div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                  {suggerimenti.map(s => (
+                    <button key={s} type="button" onClick={() => precompilaDaSuggerimento(s)} style={{
+                      background: 'var(--bg-panel)', border: '1px solid var(--accent)', borderRadius: 14,
+                      padding: '4px 10px', fontSize: 12, color: 'var(--text)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4
+                    }}>
+                      <Plus size={12} color="var(--accent)" /> {s}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* Form creazione */}
             {showForm && (
@@ -702,6 +763,7 @@ export default function GestioneTest() {
                   Nuovo template di test
                 </div>
                 <FormTemplate
+                  initial={formInitial}
                   onSave={handleSave}
                   onCancel={() => setShowForm(false)}
                 />

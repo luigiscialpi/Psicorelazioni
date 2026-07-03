@@ -214,3 +214,40 @@ export function buildGeminiPayload(template: TestTemplate, risultato: RisultatoT
   
   return out
 }
+
+/**
+ * Valida la coerenza di un array di soglie custom (contiguità, no buchi/sovrapposizioni).
+ */
+export function validaSoglieCustom(soglie: SogliaCustom[]): { valida: boolean; errore?: string } {
+  if (soglie.length === 0) {
+    return { valida: false, errore: 'Almeno una soglia deve essere definita.' }
+  }
+
+  const ordinate = [...soglie].sort((a, b) => a.min - b.min)
+
+  for (let i = 0; i < ordinate.length; i++) {
+    const cur = ordinate[i]
+
+    if (i < ordinate.length - 1 && cur.max === null) {
+      return { valida: false, errore: `La soglia "${cur.etichetta}" non può avere limite superiore indefinito se non è l'ultima.` }
+    }
+    if (cur.max !== null && cur.min > cur.max) {
+      return { valida: false, errore: `La soglia "${cur.etichetta}" ha un minimo maggiore del massimo.` }
+    }
+
+    if (i < ordinate.length - 1) {
+      const next = ordinate[i + 1]
+      // Verifichiamo la contiguità. In teoria cur.max dovrebbe essere (next.min - 1) o next.min.
+      // Assumiamo che siano numeri interi e contigui come 0-69, 70-79, o soglie a decimale dove max == next.min.
+      if (cur.max !== null && cur.max < next.min - 1) {
+        return { valida: false, errore: `C'è un buco nei valori tra "${cur.etichetta}" e "${next.etichetta}".` }
+      }
+      if (cur.max !== null && cur.max > next.min) {
+        return { valida: false, errore: `C'è una sovrapposizione tra "${cur.etichetta}" e "${next.etichetta}".` }
+      }
+    }
+  }
+
+  return { valida: true }
+}
+
