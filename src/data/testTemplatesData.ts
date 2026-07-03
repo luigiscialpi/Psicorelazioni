@@ -60,15 +60,15 @@ export async function insertTestTemplate(t: Omit<TestTemplate,'id'|'createdAt'|'
     categoria: data.categoria,
     scalaDefault: data.scala_default,
     campiPrincipali: data.campi_principali,
-    gruppiSecondari: data.gruppi_secondari,
-    notaRange: data.nota_range,
+    gruppiSecondari: data.gruppi_secondari ?? undefined,
+    notaRange: data.nota_range ?? undefined,
     richiedeEtaValutazione: data.richiede_eta_valutazione,
     richiedeStrumentiUtilizzati: data.richiede_strumenti_utilizzati,
     builtIn: data.built_in,
     attivo: data.attivo,
     schemaVersion: data.schema_version,
-    createdAt: data.created_at,
-    updatedAt: data.updated_at
+    createdAt: data.created_at ?? undefined,
+    updatedAt: data.updated_at ?? undefined
   })
 }
 
@@ -93,3 +93,13 @@ export async function updateTestTemplate(id: string, patch: Partial<TestTemplate
 export async function disattivaTestTemplate(id: string): Promise<void> {
   return updateTestTemplate(id, { attivo: false })
 }
+
+export async function deleteTestTemplate(id: string): Promise<void> {
+  if (USE_MOCK) {
+    // If mock, we can just delete from the local array in-memory, but since it's just a local constant, we can throw or just return
+    return
+  }
+  const { error } = await supabase.from('test_templates').delete().eq('id', id)
+  if (error) throw error
+}
+

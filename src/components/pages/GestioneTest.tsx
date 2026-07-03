@@ -1,11 +1,13 @@
 import { useState, useEffect, useReducer } from 'react'
 import { Plus, Trash2, ChevronDown, ChevronUp, Eye, Save, AlertTriangle, Lock, FlaskConical, X, GripVertical, Check, Sparkles } from 'lucide-react'
 import {
-  getTestTemplates, insertTestTemplate, updateTestTemplate, disattivaTestTemplate
+  getTestTemplates, insertTestTemplate, updateTestTemplate, disattivaTestTemplate, deleteTestTemplate
 } from '../../data/testTemplatesData'
 import { validaSoglieCustom } from '../../services/testTemplateEngine'
 import { suggerisciTestDaArchivio } from '../../services/geminiService'
 import { getRelazioni } from '../../data/relazioniData'
+import { getProfiloProfessionista } from '../../data/profiloData'
+import type { ProfiloProfessionista } from '../../core/types'
 import type { TestTemplate, CampoTest, GruppoTest, SogliaCustom, ScalaPunteggio } from '../../core/testTemplate'
 import { USE_MOCK } from '../../core/config'
 
@@ -521,8 +523,8 @@ function FormTemplate({
   )
 }
 
-// ── Componente card template ──────────────────────────────────
-function TemplateCard({ template, onDisattiva }: { template: TestTemplate; onDisattiva?: () => void }) {
+// ── Card singolo template ─────────────────────────────────────
+function TemplateCard({ template, onDisattiva, onDelete }: { template: TestTemplate, onDisattiva?: () => void, onDelete?: () => void }) {
   const [open, setOpen] = useState(false)
 
   return (
@@ -556,8 +558,13 @@ function TemplateCard({ template, onDisattiva }: { template: TestTemplate; onDis
             {open ? 'Chiudi' : 'Dettagli'}
           </button>
           {!template.builtIn && template.attivo && onDisattiva && (
-            <button type="button" onClick={onDisattiva} style={{ background: 'none', border: '1px solid var(--danger)', borderRadius: 6, padding: '4px 8px', cursor: 'pointer', fontSize: 12, color: 'var(--danger)', display: 'flex', alignItems: 'center', gap: 4 }}>
-              <Trash2 size={13} /> Disattiva
+            <button type="button" onClick={onDisattiva} style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 6, padding: '4px 8px', cursor: 'pointer', fontSize: 12, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 4 }}>
+              Disattiva
+            </button>
+          )}
+          {!template.builtIn && onDelete && (
+            <button type="button" onClick={onDelete} style={{ background: 'none', border: '1px solid var(--danger)', borderRadius: 6, padding: '4px 8px', cursor: 'pointer', fontSize: 12, color: 'var(--danger)', display: 'flex', alignItems: 'center', gap: 4 }}>
+              <Trash2 size={13} /> Elimina
             </button>
           )}
         </div>
@@ -604,6 +611,8 @@ export default function GestioneTest() {
   const [showForm, setShowForm] = useState(false)
   const [formInitial, setFormInitial] = useState<FormState | undefined>(undefined)
   const [confirmDisattiva, setConfirmDisattiva] = useState<string | null>(null)
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
+  const [profilo, setProfilo] = useState<ProfiloProfessionista | null>(null)
   const [successo, setSuccesso] = useState('')
   
   // Stati per suggerimenti AI
@@ -611,7 +620,14 @@ export default function GestioneTest() {
   const [loadingSuggerimenti, setLoadingSuggerimenti] = useState(false)
 
   useEffect(() => {
-    getTestTemplates().then(t => { setTemplates(t); setLoading(false) })
+    Promise.all([
+      getTestTemplates(),
+      getProfiloProfessionista()
+    ]).then(([t, prof]) => {
+      setTemplates(t)
+      setProfilo(prof)
+      setLoading(false)
+    })
   }, [])
 
   async function handleSuggerisci() {
@@ -670,6 +686,15 @@ export default function GestioneTest() {
     setTemplates(updated)
     setConfirmDisattiva(null)
     setSuccesso('Template disattivato. Non comparirà più nel wizard.')
+    setTimeout(() => setSuccesso(''), 4000)
+  }
+
+  async function handleDelete(id: string) {
+    await deleteTestTemplate(id)
+    const updated = await getTestTemplates()
+    setTemplates(updated)
+    setConfirmDelete(null)
+    setSuccesso('Template eliminato definitivamente.')
     setTimeout(() => setSuccesso(''), 4000)
   }
 
@@ -774,6 +799,7 @@ export default function GestioneTest() {
                   key={t.id}
                   template={t}
                   onDisattiva={!t.builtIn ? () => setConfirmDisattiva(t.id) : undefined}
+                  onDelete={!t.builtIn ? () => setConfirmDelete(t.id) : undefined}
                 />
               ))}
               {attivi.length === 0 && (
@@ -792,7 +818,13 @@ export default function GestioneTest() {
               Template disattivati ({disattivati.length})
             </h3>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {disattivati.map(t => <TemplateCard key={t.id} template={t} />)}
+              {disattivati.map(t => (
+                <TemplateCard
+                  key={t.id}
+                  template={t}
+                  onDelete={!t.builtIn ? () => setConfirmDelete(t.id) : undefined}
+                />
+              ))}
             </div>
           </div>
         )}
@@ -807,7 +839,7 @@ export default function GestioneTest() {
               </div>
               <p style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.6, marginBottom: 20 }}>
                 Il template verrà disattivato e non apparirà più nel wizard per le nuove relazioni.
-                Le relazioni già generate non vengono modificate. Puoi sempre riattivarlo contattando il supporto.
+                Le relazioni già generate non vengono modificate.
               </p>
               <div style={{ display: 'flex', gap: 10 }}>
                 <button className="btn btn-primary" style={{ background: 'var(--danger)', borderColor: 'var(--danger)' }} onClick={() => handleDisattiva(confirmDisattiva)}>
@@ -818,6 +850,34 @@ export default function GestioneTest() {
             </div>
           </div>
         )}
+
+        {/* Confirm dialog eliminazione */}
+        {confirmDelete && (() => {
+          const genere = String(profilo?.genere || '').trim().toLowerCase();
+          const sicuroMsg = genere === 'uomo'
+            ? 'Sei sicuro di voler eliminare questo template?'
+            : (genere === 'donna' ? 'Sei sicura di voler eliminare questo template?' : 'Sei sicurə di voler eliminare questo template?');
+          
+          return (
+            <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+              <div style={{ background: 'var(--bg-panel)', borderRadius: 12, padding: '28px 32px', maxWidth: 400, width: '90%', boxShadow: '0 20px 60px rgba(0,0,0,0.3)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+                  <AlertTriangle size={20} color="var(--danger)" />
+                  <span style={{ fontSize: 15, fontWeight: 600 }}>Elimina template</span>
+                </div>
+                <p style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.6, marginBottom: 20 }}>
+                  {sicuroMsg} Questa azione è irreversibile e rimuoverà definitivamente il template dal database.
+                </p>
+                <div style={{ display: 'flex', gap: 10 }}>
+                  <button className="btn btn-primary" style={{ background: 'var(--danger)', borderColor: 'var(--danger)' }} onClick={() => handleDelete(confirmDelete)}>
+                    Elimina
+                  </button>
+                  <button className="btn btn-secondary" onClick={() => setConfirmDelete(null)}>Annulla</button>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
       </div>
     </>
   )
