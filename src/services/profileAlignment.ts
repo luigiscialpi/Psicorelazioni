@@ -16,14 +16,8 @@ export function estraiRequisitiDaProfilo(profiloMd) {
 
 export function haRiferimentiSubtestCompilati(cognitivo) {
   if (!cognitivo) return false
-  const refs = cognitivo.riferimenti_subtest
-  if (!refs) return false
+  const pp = cognitivo.subtest_pp
+  if (!pp || typeof pp !== 'object') return false
 
-  if (typeof refs === 'string') return refs.trim().length > 0
-
-  if (typeof refs === 'object') {
-    return Object.values(refs).some(v => String(v || '').trim().length > 0)
-  }
-
-  return false
+  return Object.values(pp).some(v => String(v ?? '').trim().length > 0)
 }

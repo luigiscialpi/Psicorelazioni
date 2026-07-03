@@ -10,7 +10,10 @@ import {
   ANAMNESI_REMOTA_VOCI, ANAMNESI_RECENTE_VOCI,
   OSSERVAZIONE_ADATTAMENTO_VOCI, OSSERVAZIONE_ATTEGGIAMENTO_VOCI,
 } from '../components/constants/anamnesiVoci'
-import { WISC_IV_CAMPI, NEPSY_II_DOMINI, fasciaWISC, fasciaScalare } from '../components/constants/testDefinitions'
+import {
+  WISC_IV_CAMPI, NEPSY_II_DOMINI, fasciaWISC, fasciaScalare,
+  WISC_IV_SUBTEST_PER_INDICE, WISC_IV_INDICE_LABEL,
+} from '../components/constants/testDefinitions'
 
 // Converte le voci selezionate (+ eventuali dettagli) in una frase discorsiva
 function vociToTesto(vociSelezionate, vociDisponibili, dettagli = {}) {
@@ -112,15 +115,32 @@ export function rimuoviTabelleMarkdown(testo: string): string {
 }
 
 // ── Tabella WISC-IV in Markdown, pronta per Gemini e per il parser di exportDocx.ts ──
-export function wiscToMarkdownTable(punteggi) {
+// `interpretabilita` è un oggetto opzionale { [chiaveIndice]: boolean },
+// dove true = "Sì" (default se assente, coerente col comportamento
+// storico della funzione), false = "No". La colonna "Interpretabilità"
+// viene mostrata in tabella SOLO se almeno un indice compilato ha
+// interpretabilità = false — quando tutti gli indici sono "Sì" (il caso
+// più comune) la colonna è ridondante e viene omessa per non appesantire
+// la tabella con un'informazione che non aggiunge nulla.
+export function wiscToMarkdownTable(punteggi, interpretabilita: Record<string, boolean> = {}) {
   const righeValide = WISC_IV_CAMPI.filter(c => punteggi[c.key])
   if (righeValide.length === 0) return ''
 
-  let md = '| WISC-IV scale | Indici/QI | Categoria descrittiva | Interpretabilità |\n'
-  md +=    '|---|---|---|---|\n'
+  // Default true (Sì) per qualunque indice non esplicitamente marcato —
+  // preserva il comportamento precedente quando il parametro non è passato.
+  const valori = righeValide.map(c => interpretabilita[c.key] !== false)
+  const mostraColonna = valori.some(v => v === false)
+
+  let md = mostraColonna
+    ? '| WISC-IV scale | Indici/QI | Categoria descrittiva | Interpretabilità |\n|---|---|---|---|\n'
+    : '| WISC-IV scale | Indici/QI | Categoria descrittiva |\n|---|---|---|\n'
+
   for (const c of righeValide) {
     const val = punteggi[c.key]
-    md += `| ${c.label} | ${val} | ${fasciaWISC(val)} | Sì |\n`
+    const interpretabile = interpretabilita[c.key] !== false
+    md += mostraColonna
+      ? `| ${c.label} | ${val} | ${fasciaWISC(val)} | ${interpretabile ? 'Sì' : 'No'} |\n`
+      : `| ${c.label} | ${val} | ${fasciaWISC(val)} |\n`
   }
   return md
 }
@@ -130,35 +150,41 @@ export function notaRangeWisc() {
 }
 
 // Testo narrativo per gli indici WISC compilati — frase-cornice fissa + fascia calcolata
-export function wiscToNarrativa(punteggi, riferimentiSubtest = '') {
+export function wiscToNarrativa(punteggi, subtestPp: Record<string, string | number> = {}) {
   const base = WISC_IV_CAMPI
     .filter(c => punteggi[c.key] && c.tipo !== 'totale')
     .map(c => `${c.descr} Il punteggio ottenuto (${punteggi[c.key]}) si colloca nella fascia "${fasciaWISC(punteggi[c.key])}".`)
     .join(' ')
 
-  let rif = ''
-
-  if (typeof riferimentiSubtest === 'string') {
-    rif = riferimentiSubtest.trim()
-  } else if (riferimentiSubtest && typeof riferimentiSubtest === 'object') {
-    const mapping = [
-      ['icv', 'ICV'],
-      ['rp', 'RP/IRP'],
-      ['iml', 'IML/ML'],
-      ['ve', 'VE/IVE'],
-    ]
-    rif = mapping
-      .map(([key, label]) => {
-        const value = String(riferimentiSubtest[key] || '').trim()
-        return value ? `${label}: ${value}` : ''
-      })
-      .filter(Boolean)
-      .join('; ')
-  }
+  const rif = wiscSubtestPpToNarrativa(subtestPp)
 
   if (!rif) return base
 
-  return [base, `Riferimenti ai subtest: ${rif}.`].filter(Boolean).join(' ')
+  return [base, rif].filter(Boolean).join(' ')
+}
+
+// Testo narrativo (mai tabellare) per i punti ponderati dei subtest per
+// indice. Compila solo gli indici con almeno un subtest valorizzato —
+// restano tutti facoltativi. Il risultato è pensato per essere
+// incollato dopo la frase-cornice dell'indice corrispondente.
+export function wiscSubtestPpToNarrativa(subtestPp: Record<string, string | number> = {}) {
+  if (!subtestPp || typeof subtestPp !== 'object') return ''
+
+  const frasiPerIndice: string[] = []
+
+  for (const [indiceKey, indiceLabel] of Object.entries(WISC_IV_INDICE_LABEL)) {
+    const subtestIndice = WISC_IV_SUBTEST_PER_INDICE[indiceKey] || []
+    const compilati = subtestIndice.filter(st => subtestPp[st.key] !== undefined && subtestPp[st.key] !== '')
+    if (compilati.length === 0) continue
+
+    const dettagli = compilati
+      .map(st => `${st.label} (pp ${subtestPp[st.key]}, fascia ${fasciaScalare(subtestPp[st.key]).toLowerCase()})`)
+      .join(', ')
+
+    frasiPerIndice.push(`Per l'indice ${indiceLabel} sono stati considerati i seguenti subtest: ${dettagli}.`)
+  }
+
+  return frasiPerIndice.join(' ')
 }
 
 // ── Tabella NEPSY-II in Markdown ──────────────────────────
@@ -261,7 +287,15 @@ export function assemblaDocumentoMarkdown(wizard, narrativaPerSezione = {}) {
 
   if (sez.includes('anamnesi')) {
     out += '\n## Anamnesi\n'
-    if (wizard.anamnesi) {
+    // Preferisce il testo riscritto da Gemini in stile narrativo coerente
+    // col Profilo di Stile; se assente (es. modalità mock, o generazione
+    // fallita per questa sezione), ricade sulla composizione deterministica
+    // da vociToTesto — meno elegante ma sempre disponibile, non lascia mai
+    // la sezione vuota.
+    const narrativaAnamnesi = rimuoviTabelleMarkdown(narrativaPerSezione['anamnesi'] || '')
+    if (narrativaAnamnesi) {
+      out += narrativaAnamnesi + '\n'
+    } else if (wizard.anamnesi) {
       const remota = anamnesiRemotaToTesto(wizard.anamnesi)
       const recente = anamnesiRecenteToTesto(wizard.anamnesi)
       if (remota) out += `Anamnesi remota: ${remota} `
@@ -272,8 +306,13 @@ export function assemblaDocumentoMarkdown(wizard, narrativaPerSezione = {}) {
 
   if (sez.includes('osservazione')) {
     out += '\n## Osservazione comportamentale\n'
-    const oss = osservazioneToTesto(wizard.osservazione)
-    out += (oss || '') + '\n'
+    const narrativaOss = rimuoviTabelleMarkdown(narrativaPerSezione['osservazione'] || '')
+    if (narrativaOss) {
+      out += narrativaOss + '\n'
+    } else {
+      const oss = osservazioneToTesto(wizard.osservazione)
+      out += (oss || '') + '\n'
+    }
   }
 
   if (sez.includes('cognitivo')) {
@@ -281,7 +320,7 @@ export function assemblaDocumentoMarkdown(wizard, narrativaPerSezione = {}) {
     if (wizard.cognitivo?.eta_valutazione) out += `Età al momento della valutazione: ${wizard.cognitivo.eta_valutazione}.\n`
     if (wizard.cognitivo?.strumenti_utilizzati) out += `Strumenti utilizzati: ${wizard.cognitivo.strumenti_utilizzati}\n`
     out += '\n'
-    const wiscTabella = wiscToMarkdownTable(wizard.cognitivo.punteggi || {})
+    const wiscTabella = wiscToMarkdownTable(wizard.cognitivo.punteggi || {}, wizard.cognitivo.interpretabilita || {})
     if (wiscTabella) out += wiscTabella + '\n'
     if (wizard.cognitivo?.includi_nota_range) out += notaRangeWisc() + '\n'
     const narrativaC = rimuoviTabelleMarkdown(narrativaPerSezione['cognitivo'] || '')
@@ -344,4 +383,28 @@ export function assemblaDocumentoMarkdown(wizard, narrativaPerSezione = {}) {
   }
 
   return rimuoviTabelleDuplicateDalDocumento(out.trim())
+}
+
+// ── Sostituzione del segnaposto {{NOME}} con il nome reale ──
+// Gemini non vede mai il nome del paziente (vedi generaRelazione in
+// geminiService.ts, che scarta esplicitamente wizard.anagrafica prima
+// di costruire qualunque prompt). Scrive invece il segnaposto letterale
+// "{{NOME}}" ovunque userebbe il nome, con la stessa naturalezza
+// stilistica del template originale osservato (dove il nome compare
+// più volte nel corpo — anamnesi, osservazione, conclusioni — non
+// solo nell'apertura). Questa funzione va chiamata SOLO lato client,
+// DOPO aver ricevuto il testo generato, in un punto che ha accesso
+// all'anagrafica reale (RisultatoGenerazione.tsx) — mai dentro
+// geminiService.ts, che non deve mai maneggiare il nome.
+//
+// Sostituzione a token esatto (non regex su frasi grammaticali come
+// "il/la paziente"): più robusta perché non richiede indovinare la
+// forma grammaticale corretta in ogni contesto — è Gemini stesso a
+// scegliere l'articolo/costruzione della frase attorno al segnaposto,
+// esattamente come farebbe con un nome vero.
+export function sostituisciNomePlaceholder(testo: string, anagrafica?: { nome?: string; cognome?: string } | null): string {
+  if (!testo) return testo
+  const nome = anagrafica?.nome?.trim()
+  if (!nome) return testo // nessuna anagrafica disponibile: lascia il segnaposto visibile piuttosto che inventare un nome
+  return testo.replaceAll('{{NOME}}', nome)
 }

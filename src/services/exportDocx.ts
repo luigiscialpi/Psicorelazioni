@@ -28,8 +28,9 @@ type ScoreMap = Record<string, string | number | boolean | null | undefined>
 
 type CognitivoBlock = {
   punteggi?: ScoreMap
+  interpretabilita?: Record<string, boolean>
   includi_nota_range?: boolean
-  riferimenti_subtest?: string
+  subtest_pp?: ScoreMap
   eta_valutazione?: string
   strumenti_utilizzati?: string
   note_cliniche?: string
@@ -325,16 +326,32 @@ function anagraficaParagraph(anagrafica?: AnagraficaPaziente | null): Paragraph 
   })
 }
 
-function makeWiscTable(punteggi: ScoreMap): Table {
+// `interpretabilita` è un oggetto opzionale { [chiaveIndice]: boolean },
+// stessa convenzione di wiscToMarkdownTable in wizardToText.ts: default
+// true (Sì) se assente, colonna "Interpretabilità" mostrata in tabella
+// SOLO se almeno un indice compilato ha interpretabilità = false.
+// Le due funzioni (questa per il DOCX, l'altra per il Markdown a
+// video/anteprima) condividono la stessa logica ma restano separate
+// perché costruiscono oggetti diversi (Table di docx vs stringa
+// Markdown) — vedi nota in cima al file sul perché exportDocx.ts
+// ricostruisce le tabelle invece di limitarsi a leggerle dal testo.
+function makeWiscTable(punteggi: ScoreMap, interpretabilita: Record<string, boolean> = {}): Table {
   const righeValide = WISC_IV_CAMPI.filter(c => punteggi[c.key])
-  const colW = Math.floor(CONTENT_W / 4)
-  const colWidths = [colW * 2, colW, colW, colW]
+  const mostraColonna = righeValide.some(c => interpretabilita[c.key] === false)
+
+  const numColonne = mostraColonna ? 4 : 3
+  const colW = Math.floor(CONTENT_W / numColonne)
+  const colWidths = mostraColonna ? [colW * 2, colW, colW, colW] : [colW * 2, colW, colW]
   const border = { style: BorderStyle.SINGLE, size: 4, color: '000000' }
   const borders = { top: border, bottom: border, left: border, right: border }
 
+  const intestazioni = mostraColonna
+    ? ['Scala', 'Indici/QI', 'Categoria descrittiva', 'Interpretabilità']
+    : ['Scala', 'Indici/QI', 'Categoria descrittiva']
+
   const rows = [
     new TableRow({
-      children: ['Scala', 'Indici/QI', 'Categoria descrittiva', 'Interpretabilità'].map(text =>
+      children: intestazioni.map(text =>
         new TableCell({
           borders,
           width: { size: colW, type: WidthType.DXA },
@@ -347,41 +364,43 @@ function makeWiscTable(punteggi: ScoreMap): Table {
         })
       ),
     }),
-    ...righeValide.map(c =>
-      new TableRow({
-        children: [
-          new TableCell({
-            borders, width: { size: colWidths[0], type: WidthType.DXA },
-            margins: { top: 80, bottom: 80, left: 120, right: 120 },
-            children: [new Paragraph({ children: [new TextRun({ text: c.label, font: FONT, size: SIZE_BODY })] })],
-          }),
-          new TableCell({
-            borders, width: { size: colWidths[1], type: WidthType.DXA },
-            margins: { top: 80, bottom: 80, left: 120, right: 120 },
-            children: [new Paragraph({
-              alignment: AlignmentType.CENTER,
-              children: [new TextRun({ text: String(punteggi[c.key] || ''), font: FONT, size: SIZE_BODY })],
-            })],
-          }),
-          new TableCell({
-            borders, width: { size: colWidths[2], type: WidthType.DXA },
-            margins: { top: 80, bottom: 80, left: 120, right: 120 },
-            children: [new Paragraph({
-              alignment: AlignmentType.CENTER,
-              children: [new TextRun({ text: fasciaWISC(punteggi[c.key]), font: FONT, size: SIZE_BODY })],
-            })],
-          }),
-          new TableCell({
-            borders, width: { size: colWidths[3], type: WidthType.DXA },
-            margins: { top: 80, bottom: 80, left: 120, right: 120 },
-            children: [new Paragraph({
-              alignment: AlignmentType.CENTER,
-              children: [new TextRun({ text: 'Si', font: FONT, size: SIZE_BODY })],
-            })],
-          }),
-        ],
-      })
-    ),
+    ...righeValide.map(c => {
+      const celle = [
+        new TableCell({
+          borders, width: { size: colWidths[0], type: WidthType.DXA },
+          margins: { top: 80, bottom: 80, left: 120, right: 120 },
+          children: [new Paragraph({ children: [new TextRun({ text: c.label, font: FONT, size: SIZE_BODY })] })],
+        }),
+        new TableCell({
+          borders, width: { size: colWidths[1], type: WidthType.DXA },
+          margins: { top: 80, bottom: 80, left: 120, right: 120 },
+          children: [new Paragraph({
+            alignment: AlignmentType.CENTER,
+            children: [new TextRun({ text: String(punteggi[c.key] || ''), font: FONT, size: SIZE_BODY })],
+          })],
+        }),
+        new TableCell({
+          borders, width: { size: colWidths[2], type: WidthType.DXA },
+          margins: { top: 80, bottom: 80, left: 120, right: 120 },
+          children: [new Paragraph({
+            alignment: AlignmentType.CENTER,
+            children: [new TextRun({ text: fasciaWISC(punteggi[c.key]), font: FONT, size: SIZE_BODY })],
+          })],
+        }),
+      ]
+      if (mostraColonna) {
+        const interpretabile = interpretabilita[c.key] !== false
+        celle.push(new TableCell({
+          borders, width: { size: colWidths[3], type: WidthType.DXA },
+          margins: { top: 80, bottom: 80, left: 120, right: 120 },
+          children: [new Paragraph({
+            alignment: AlignmentType.CENTER,
+            children: [new TextRun({ text: interpretabile ? 'Sì' : 'No', font: FONT, size: SIZE_BODY })],
+          })],
+        }))
+      }
+      return new TableRow({ children: celle })
+    }),
   ]
 
   return new Table({
@@ -473,11 +492,11 @@ export async function esportaDocx({ testo, data, nomeStudio, anagrafica, profess
   let cognitivoNarrativaLines: string[] = []
   let nepsyNarrativaLines: string[] = []
 
-const flushCognitivo = () => {
+  const flushCognitivo = () => {
     if (inCognitivo) {
       const narrativa = cognitivoNarrativaLines.join('\n').trim()
       if (cognitivo?.punteggi && Object.keys(cognitivo.punteggi).length > 0) {
-        blocchi.push(makeWiscTable(cognitivo.punteggi))
+        blocchi.push(makeWiscTable(cognitivo.punteggi, cognitivo.interpretabilita || {}))
         if (cognitivo.includi_nota_range) {
           blocchi.push(new Paragraph({
             spacing: { after: 120 },
@@ -493,7 +512,7 @@ const flushCognitivo = () => {
     }
   }
 
-const flushNepsy = () => {
+  const flushNepsy = () => {
     if (inNepsy) {
       const narrativa = nepsyNarrativaLines.join('\n').trim()
       if (nepsy?.punteggi && Object.keys(nepsy.punteggi).length > 0) {

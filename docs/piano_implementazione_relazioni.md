@@ -1,6 +1,6 @@
 # Piano di Implementazione — PsicoRelazioni
 ### App per la generazione assistita di relazioni di valutazione neuropsicologica
-*Versione 1.9 — Documento di pianificazione aggiornato*
+*Versione 2.0 — Documento di pianificazione aggiornato*
 
 ---
 
@@ -67,6 +67,7 @@ Questa sezione traccia le modifiche attualmente in stage, per mantenere il piano
 - Se il profilo richiede riferimenti ai subtest WISC per indice, lo step Cognitivo li richiede esplicitamente prima di consentire la generazione.
 - I riferimenti sono ora strutturati per indice (`ICV`, `RP/IRP`, `IML/ML`, `VE/IVE`) e confluiscono nella narrativa WISC passata a Gemini.
 - Compatibilità mantenuta con snapshot precedenti che avevano un singolo campo testuale `riferimenti_subtest`.
+  > *Aggiornamento successivo*: questi 4 campi testuali sono stati sostituiti da un accordion con punti ponderati numerici per subtest — vedi "Subtest WISC-IV per indice: da testo libero a punti ponderati con accordion" più sopra in questa stessa sezione.
 
 **Allineamento bidirezionale Profilo <-> Wizard (seconda iterazione)**
 - Se il profilo richiede età al momento della valutazione, strumenti e note range WISC, il wizard li espone come campi strutturati e li valida in checklist.
@@ -90,6 +91,15 @@ Questa sezione traccia le modifiche attualmente in stage, per mantenere il piano
 
 **Nota di sicurezza/roadmap**
 - Inserita anche azione pianificata: migrazione chiamate Gemini lato server (Vercel/Supabase Edge Function) con chiave API non esposta nel client, rate limit e validazione payload.
+
+**Subtest WISC-IV per indice: da testo libero a punti ponderati con accordion**
+- Sostituiti i 4 campi di testo libero "Riferimenti ai subtest per indice" (`riferimenti_subtest`, dove tua sorella scriveva a mano i nomi dei subtest somministrati) con un **accordion per indice** (`<details>/<summary>`, coerente con lo stile già usato altrove nel wizard, nessuna nuova libreria).
+- Ogni indice (ICV, RP, IML, VE) mostra ora 3 subtest predefiniti con **campo numerico per il punto ponderato (pp)**, stessa scala dei punteggi scalari NEPSY-II (media 10, DS 3): fonte di verità in `testDefinitions.ts` → `WISC_IV_SUBTEST_PER_INDICE`. Nota: ICV e RP hanno 3 subtest "core" nel WISC-IV reale; per IML e VE il terzo campo è un subtest supplementare, etichettato esplicitamente come tale.
+- Ogni subtest resta **facoltativo**, in linea col resto della sezione cognitiva — si compilano solo i subtest effettivamente somministrati, e la fascia interpretativa ("Media", "Superiore"...) è calcolata automaticamente accanto al campo, in tempo reale.
+- Nuovo campo dati: `cognitivo.subtest_pp` (oggetto piatto, chiave = subtest, es. `{ vc: 9, so: 11 }`), al posto del vecchio `cognitivo.riferimenti_subtest` (stringa o oggetto per indice).
+- Nuova funzione `wiscSubtestPpToNarrativa()` in `wizardToText.ts`: genera **solo testo narrativo** ("Per l'indice Comprensione Verbale sono stati considerati i seguenti subtest: Vocabolario (pp 9, fascia media)...") — mai una tabella, come richiesto esplicitamente per questo dato, a differenza delle tabelle indici/QI e NEPSY-II che restano tabellari.
+- Il payload verso Gemini (`geminiService.ts`) ora include questa narrativa al posto del vecchio testo libero anonimizzato "as-is"; tipi e riferimenti aggiornati anche in `exportDocx.ts` e `profileAlignment.ts`.
+- Compatibilità: le bozze salvate prima di questa modifica avevano `riferimenti_subtest` come nomi di subtest (non punteggi) — non convertibile in pp numerici, quindi **non viene migrato automaticamente**; per quelle bozze `subtest_pp` riparte vuoto.
 
 ### 🟢 Sbloccato: struttura reale identificata da 3 relazioni vere
 
@@ -239,17 +249,43 @@ Tua sorella ha fornito un file DOCX reale anonimizzato (una relazione con nomi e
 
 Tutti questi valori sono stati aggiornati in `exportDocx.ts`. La differenza pratica rispetto alla revisione precedente è nel metodo: leggere l'XML grezzo di un file reale dà valori esatti, mentre uno screenshot per quanto dettagliato lascia margine di stima su font e colori esatti — vale la pena, quando disponibile, preferire sempre un file reale (anche anonimizzato) a un'immagine per calibrare l'export.
 
-### Nona correzione: tabelle duplicate nel DOCX finale (bug)
+### Nona correzione: tabelle duplicate nel DOCX finale (bug, risolto in tre round)
 
-Segnalato dall'utente dopo un test reale: nel documento esportato, le tabelle WISC-IV/NEPSY-II comparivano due volte consecutive — la prima correttamente formattata come tabella Word, la seconda come testo Markdown grezzo (`| ... | ... |`) non convertito.
+Segnalato dall'utente dopo un test reale: nel documento esportato, le tabelle WISC-IV/NEPSY-II comparivano due volte consecutive — la prima correttamente formattata come tabella Word, la seconda come testo Markdown grezzo (`| ... | ... |`) non convertito. Il bug si è rivelato più insidioso del previsto e ha richiesto tre round di indagine prima di trovare la causa reale.
 
-**Causa**: l'architettura di generazione (corretta nel principio) prevede che Gemini scriva *solo* il testo narrativo per le sezioni cognitivo/NEPSY, mentre le tabelle vengono inserite deterministicamente da `assemblaDocumentoMarkdown()` in `wizardToText.ts`, a partire dai punteggi numerici del wizard — non generate dal modello linguistico. Il prompt istruisce esplicitamente Gemini a non includere tabelle ("NON generare tabelle, le tabelle sono già pronte"), ma questa era l'**unica** difesa: un'istruzione testuale, non un vincolo strutturale. I modelli linguistici tendono a "confermare visivamente" i dati numerici che hanno appena elaborato, ripetendoli in forma tabellare nel testo di risposta nonostante l'istruzione contraria — cosa che accadeva più spesso di quanto l'istruzione da sola riuscisse a prevenire.
+**Primo tentativo (insufficiente)**: ipotesi che Gemini, nonostante l'istruzione esplicita di non generare tabelle, le ripetesse comunque nel testo narrativo restituito per le sezioni cognitivo/nepsy — comportamento noto dei modelli linguistici, che tendono a "confermare visivamente" dati numerici appena elaborati. Aggiunta una funzione `rimuoviTabelleMarkdown()` che ripulisce il testo narrativo da blocchi `| ... |` prima della concatenazione. Il bug è persistito nei test successivi.
 
-**Correzione**: aggiunta una funzione `rimuoviTabelleMarkdown()` in `wizardToText.ts` che ripulisce strutturalmente il testo narrativo restituito da Gemini da qualunque blocco che assomigli a una tabella Markdown (righe consecutive con `|`), *prima* che venga concatenato con la tabella vera. Non è un'ulteriore istruzione al modello (che aveva già dimostrato di non essere sufficiente), ma un filtro deterministico lato codice — verificato con test mirati, incluso il caso esatto segnalato (testo narrativo con tabella duplicata in mezzo), confermando che il testo circostante resta intatto e solo il blocco tabellare viene rimosso.
+**Secondo tentativo**: analizzando un caso reale con la nota esplicativa in corsivo duplicata insieme alla tabella (es. `*WISC-IV: QI >129 molto superiore...*`), si è scoperto che quella frase — priva di caratteri `|` — sfuggiva al filtro. Corretto riconoscendo anche il pattern della nota range. Ancora insufficiente: un terzo test con documento reale ha mostrato la stessa duplicazione.
 
-### Nota aperta: piccolo residuo nell'anonimizzazione, da monitorare
+**Diagnosi corretta, ottenuta esaminando la risposta grezza di Gemini via log**: la risposta di Gemini era in realtà **pulita fin dall'inizio** — zero tabelle, zero note duplicate. Il problema non era mai stato nella generazione né nel parsing, ma in `exportDocx.ts`: la funzione che converte il Markdown assemblato (già corretto, con la tabella inserita una sola volta) in DOCX **ricostruiva la tabella da zero** a partire dai punteggi numerici (corretto, serve per avere una vera tabella Word navigabile), ma nello stesso tempo **non riconosceva le righe della tabella Markdown già presente nel testo** durante la scansione per estrarre la narrativa — le trattava come paragrafi normali, catturandole e ristampandole come testo grezzo.
 
-Nel Profilo di Stile generato e fornito come esempio, è stato notato un nome proprio ("Giovanni") rimasto in una delle formule riportate come esempio di registro linguistico. Il meccanismo di anonimizzazione (sesta correzione) sanitizza il testo delle relazioni **in ingresso** verso Gemini, ma qui il nome risulta nel testo **generato in uscita** da Gemini — probabile eredità da un profilo precedente non ancora passato dal filtro attuale, o da un pattern che l'anonimizzazione automatica non ha intercettato in quel punto specifico. Non è stato modificato codice per questo in questa revisione (richiede di capire meglio il percorso esatto in cui è stato introdotto), ma va tenuto presente: conferma che l'anteprima di verifica manuale obbligatoria, introdotta nella sesta correzione, resta necessaria e non va mai bypassata, anche quando l'anonimizzazione automatica sembra generalmente affidabile.
+**Correzione reale**: il loop di scansione in `exportDocx.ts` ora salta esplicitamente le righe tabella (`|...|`) e la nota range, sia subito dopo l'intestazione di sezione sia in qualunque punto successivo del testo. Verificato questa volta con un test end-to-end completo — dal Markdown assemblato fino al PDF renderizzato del DOCX finale, non solo con funzioni isolate — usando il pattern esatto osservato nei documenti reali forniti dall'utente.
+
+**Lezione operativa**: i primi due tentativi erano ragionevoli ma basati su un'assunzione mai verificata (che il problema fosse a monte, nella generazione). Solo l'ispezione diretta della risposta grezza di Gemini ha permesso di escludere quell'ipotesi e guardare nel punto giusto. Le funzioni di pulizia del primo e secondo tentativo sono state mantenute (non fanno danno e restano una difesa aggiuntiva legittima se Gemini dovesse in futuro includere tabelle nonostante l'istruzione), ma la causa effettiva era altrove.
+
+### Decima correzione: nome del paziente sempre impersonale nel testo generato
+
+L'istruzione originale a Gemini ("usa solo 'il/la paziente', mai il nome") aveva un effetto collaterale stilistico non previsto: il template reale usa il nome proprio del paziente ripetutamente in tutto il documento (osservate 11 occorrenze in una singola relazione, tra anamnesi, osservazione, valutazione cognitiva e conclusioni) — è lo stile naturale e personale della scrittura clinica originale, non un dettaglio incidentale. Con l'istruzione precedente, il nome compariva una sola volta (nel paragrafo di apertura con anagrafica, composto lato client) e mai nel corpo del testo, con un salto di registro percepibile.
+
+**Soluzione**, ispirata alle pratiche di pseudonimizzazione con token consistente usate nei sistemi di de-identificazione testuale: invece di istruire Gemini a scrivere una perifrasi grammaticale ("il/la paziente" — intrinsecamente non sostituibile in modo affidabile, per via di articoli e concordanze diverse a seconda del contesto), gli si chiede di scrivere un segnaposto letterale `{{NOME}}` esattamente dove scriverebbe il nome. Dopo la generazione, in `RisultatoGenerazione.tsx` — l'unico punto che ha sia il testo generato sia l'anagrafica reale — una funzione dedicata (`sostituisciNomePlaceholder` in `wizardToText.ts`) sostituisce ogni occorrenza del token col nome vero tramite `replaceAll`, sostituzione esatta senza ambiguità grammaticale. Gemini continua a non vedere mai il nome reale; il nome entra nel documento solo lato client, in un punto isolato e controllato.
+
+### Undicesima correzione: anonimizzazione estesa a tutti i campi di testo libero del wizard, non solo alle relazioni importate
+
+L'utente ha fatto notare, guardando di nuovo il template reale, che oltre al nome del paziente vengono anonimizzati anche nomi di professionisti terzi (es. "DOTTORESSA", "DOTTORESSA2" per uno specialista citato in anamnesi e uno diverso per la diagnosi pregressa) e nomi di istituti scolastici ("SCUOLA"). Verificando il codice è emerso che il modulo di anonimizzazione euristica (`anonimizza.ts`, con regole per riconoscere titoli professionali e nomi di scuole) esisteva già ma veniva usato **solo** per anonimizzare gli esempi few-shot nell'analisi del Profilo di Stile — non per i campi di testo libero che l'utente scrive direttamente nel wizard (note cliniche, riferimenti subtest, consigli, diagnosi...), che finivano nel prompt di generazione senza alcun filtro.
+
+**Correzione**: applicata `anonimizzaTesto()` a ciascun campo di testo libero prima di inserirlo nel payload per Gemini, in `generaNarrativaSezioni()`. A differenza del nome del paziente (dove si preferisce il nome vero nel documento finale, tramite `{{NOME}}`), qui i placeholder generati (`[PERSONA]`, `[SCUOLA]`) restano visibili nel testo finale senza ulteriore sostituzione: sono dati di **terzi**, non del paziente, e non devono comparire in chiaro in nessun punto del processo.
+
+**Due bug scoperti testando il modulo con frasi tratte dal template reale**, entrambi con la stessa causa tecnica: il flag `i` (case-insensitive) applicato all'intera regex anziché solo alla porzione che doveva davvero ignorare maiuscole/minuscole (il titolo "dott./prof."), che rendeva insensibile al caso anche la parte del pattern che richiedeva rigorosamente l'iniziale maiuscola di un nome proprio. Effetto pratico: una parola minuscola comune (es. "presso") poteva essere catturata per errore insieme al nome del professionista, "mangiando" testo legittimo dalla frase; e il pattern che riconosce "Nome Cognome, nato il..." non copriva la forma "nato/a" (con la barra), che è quella usata sistematicamente nei documenti generati dall'app — il nome del paziente scritto per esteso in un campo libero sarebbe passato in chiaro. Entrambi corretti separando esplicitamente le porzioni case-insensitive da quelle case-sensitive del pattern, e verificati con le frasi esatte del template originale.
+
+### Dodicesima correzione: Anamnesi e Osservazione ora riscritte da Gemini, non più composte meccanicamente
+
+Le sezioni Anamnesi e Osservazione comportamentale, basate su voci selezionabili a checkbox (vedi Modulo 3), venivano composte con una funzione puramente deterministica (`vociToTesto`): concatenazione delle etichette fisse delle voci selezionate, separate da virgole — zero riscrittura stilistica, zero applicazione del Profilo di Stile. Il risultato era un salto di registro netto rispetto alle altre sezioni (Cognitivo, NEPSY, Conclusioni), che passando da Gemini risultavano discorsive e naturali mentre Anamnesi/Osservazione restavano telegrafiche.
+
+**Correzione**: queste due sezioni ora passano da Gemini come le altre. Il codice non compone più la frase finale — passa a Gemini l'elenco dei fatti grezzi selezionati (le etichette delle voci, non ancora impastate in prosa), con l'istruzione esplicita di comporli in prosa fluida secondo il Profilo di Stile, non di riportarli come lista. I campi di testo libero associati alle voci (dettagli opzionali, note extra) passano dallo stesso filtro di anonimizzazione dell'undicesima correzione. **Non è stato rimosso il fallback deterministico**: se per qualunque motivo la narrativa di Gemini per queste sezioni risultasse assente (modalità mock, errore, risposta incompleta), il codice ricade sulla vecchia composizione da `vociToTesto` — verificato esplicitamente con un test dedicato, la sezione non resta mai vuota.
+
+### Tredicesima correzione: colonna "Interpretabilità" opzionale nella tabella WISC-IV
+
+La colonna "Interpretabilità" nella tabella WISC-IV era finora sempre "Sì" per ogni indice, valore fisso non configurabile (hardcoded in due punti indipendenti: la generazione del Markdown e la costruzione della tabella Word, che — come emerso nella nona correzione — sono funzioni separate per costruzione). Su richiesta dell'utente, è stata aggiunta una checkbox per indice nel wizard (di default spuntata = interpretabile), e la logica di generazione di entrambe le tabelle ora omette la colonna quando tutti gli indici compilati sono interpretabili — il caso più comune — mostrandola solo quando almeno un indice è stato esplicitamente marcato come non interpretabile. Verificato sia sulla tabella Markdown sia, visivamente, sul DOCX renderizzato.
 
 ---
 
@@ -565,7 +601,7 @@ Invece di un campo di testo libero, propone una lista di voci ricorrenti da spun
 Stessa logica: voci per adattamento al setting e per atteggiamento/collaborazione durante il colloquio, più un campo libero per osservazioni non standard.
 
 **Step Valutazione cognitiva — WISC-IV (se selezionata) — input numerici guidati**
-Non più un campo di testo dove "incollare" una tabella: un **input numerico per ciascun indice** (ICV, RP, IML, VE, QIT, e opzionalmente IAG/ICC). Accanto a ogni valore inserito, la fascia interpretativa ("Media", "Superiore", "Inferiore alla Media"...) viene **calcolata automaticamente** in base alle soglie standard — le stesse soglie sono state verificate contro i valori reali osservati nello screenshot del template. Da questi numeri il sistema genera sia la tabella Word sia una base di testo narrativo con le frasi-cornice standard per ciascun indice, che tua sorella può arricchire con note cliniche libere.
+Non più un campo di testo dove "incollare" una tabella: un **input numerico per ciascun indice** (ICV, RP, IML, VE, QIT, e opzionalmente IAG/ICC). Accanto a ogni valore inserito, la fascia interpretativa ("Media", "Superiore", "Inferiore alla Media"...) viene **calcolata automaticamente** in base alle soglie standard — le stesse soglie sono state verificate contro i valori reali osservati nello screenshot del template. Da questi numeri il sistema genera sia la tabella Word sia una base di testo narrativo con le frasi-cornice standard per ciascun indice, che tua sorella può arricchire con note cliniche libere. Sotto la tabella degli indici, un **accordion per indice** (facoltativo) permette di inserire il punto ponderato (pp) di fino a 3 subtest per indice (es. Vocabolario, Somiglianze per ICV) — anche questi dati restano facoltativi e vengono sempre spiegati a parole nella relazione finale, mai mostrati come tabella.
 
 **Step NEPSY / Approfondimento neuropsicologico (se selezionato) — input numerici per dominio**
 Stessa logica del cognitivo: i subtest sono organizzati per dominio (Attenzione e Funzioni Esecutive, Memoria e Apprendimento, Linguaggio, Percezione Sociale, Visuospaziale), ciascuno con un campo numerico per il punteggio scalare e fascia calcolata automaticamente. Si compilano solo i subtest effettivamente somministrati.
@@ -588,7 +624,7 @@ Destinatario della copia (famiglia / scuola / entrambi), lunghezza indicativa, n
 
 **Separazione anagrafica/contenuto clinico**: è la caratteristica più importante di questa revisione. Il reducer del wizard tiene `anagrafica` come sezione a parte; la funzione di generazione (`generaRelazione` in `geminiService.js`) fa esplicitamente `const { anagrafica, ...wizard } = wizardCompleto` prima di costruire qualunque prompt, così è strutturalmente impossibile che quei dati finiscano per errore nella chiamata a Gemini.
 
-**Punteggi test → dato pulito, non testo grezzo**: un modulo dedicato (`testDefinitions.js`) è la fonte di verità unica per i campi WISC-IV e NEPSY-II (indici/subtest, soglie interpretative). Un secondo modulo (`wizardToText.js`) trasforma i punteggi numerici in tabelle Markdown e narrativa di base, condiviso sia dalla chiamata a Gemini sia dall'export DOCX — evitando di duplicare questa logica in due posti.
+**Punteggi test → dato pulito, non testo grezzo**: un modulo dedicato (`testDefinitions.js`) è la fonte di verità unica per i campi WISC-IV e NEPSY-II (indici/subtest, soglie interpretative), inclusi ora i 3 subtest predefiniti per ciascun indice WISC-IV (`WISC_IV_SUBTEST_PER_INDICE`) usati nell'accordion dei punti ponderati. Un secondo modulo (`wizardToText.js`) trasforma i punteggi numerici in tabelle Markdown e narrativa di base, condiviso sia dalla chiamata a Gemini sia dall'export DOCX — evitando di duplicare questa logica in due posti.
 
 **Salvataggio automatico debounced**: ogni risposta viene salvata automaticamente in `sessioni_wizard` dopo 1.5 secondi di inattività. Se tua sorella chiude il browser a metà, riprende da dove ha lasciato.
 
@@ -819,8 +855,15 @@ I dati inviati alla Gemini API gratuita (Google AI Studio) potrebbero essere usa
 - [x] Anonimizzazione locale + anteprima obbligatoria prima dell'invio a Gemini per l'analisi dello stile (fix di privacy critico)
 - [x] Validazione per step nel wizard (non più accumulata solo alla fine), con indicatore visivo di step incompleti nella barra di progresso
 - [x] Export DOCX calibrato su file reale (Calibri, margini asimmetrici, colori tabella esatti) invece che stimato da screenshot
-- [x] Fix bug tabelle duplicate nel DOCX esportato (filtro strutturale sul testo generato da Gemini, non solo istruzione nel prompt)
-- [ ] Verificare e correggere l'origine del residuo di anonimizzazione osservato nel Profilo di Stile (nome proprio non filtrato in un testo generato in output, non in input)
+- [x] Fix bug tabelle duplicate nel DOCX esportato — causa reale identificata in `exportDocx.ts` (non nel testo generato da Gemini, come inizialmente ipotizzato), verificato end-to-end su Markdown assemblato + PDF renderizzato
+- [x] Segnaposto `{{NOME}}` sostituito col nome reale dopo la generazione — il nome del paziente ora compare più volte nel testo, coerente con lo stile del template originale, senza che Gemini veda mai il dato reale
+- [x] Anonimizzazione estesa a tutti i campi di testo libero del wizard (non solo alle relazioni importate per il Profilo di Stile), con due bug di regex corretti (case-insensitive applicato erroneamente a porzioni case-sensitive del pattern)
+- [x] Anamnesi e Osservazione comportamentale riscritte da Gemini in prosa fluida, non più composte meccanicamente da concatenazione di etichette checkbox — con fallback deterministico se la narrativa non è disponibile
+- [x] Colonna "Interpretabilità" nella tabella WISC-IV resa opzionale (checkbox per indice nel wizard), omessa quando tutti gli indici sono interpretabili
+- [ ] Rigenera sezione nell'editor
+- [x] Archivio con ricerca full-text e filtri
+- [x] Anonimizzazione locale + anteprima obbligatoria prima dell'invio a Gemini per l'analisi dello stile (fix di privacy critico)
+- [x] Validazione per step nel wizard (non più accumulata solo alla fine), con indicatore visivo di step incompleti nella barra di progresso
 - [x] Riapertura e modifica di relazioni esistenti (wizard pre-popolato da `wizard_snapshot`)
 - [x] Anagrafica reale persistita separatamente dal contenuto clinico (tabella `pazienti` collegata via `paziente_id`)
 - [x] Salvataggio automatico wizard (debounced)

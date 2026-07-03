@@ -55,6 +55,42 @@ export const WISC_IV_CAMPI = [
     descr: "L'Indice di Efficienza Cognitiva (ICC) offre una misura dell'efficienza con cui il soggetto elabora le informazioni, integrando memoria di lavoro e velocità di elaborazione." },
 ]
 
+// Subtest per indice WISC-IV — 3 campi per indice (punti ponderati,
+// media 10 DS 3, stessa scala dei punteggi scalari NEPSY-II).
+// ICV e RP hanno 3 subtest "core"; IML e VE hanno 2 subtest core +
+// 1 supplementare (segnalato in etichetta), per arrivare comunque a 3
+// campi per indice come richiesto dal wizard.
+export const WISC_IV_SUBTEST_PER_INDICE = {
+  icv: [
+    { key: 'so',  label: 'Somiglianze (SO)' },
+    { key: 'vc',  label: 'Vocabolario (VC)' },
+    { key: 'co',  label: 'Comprensione (CO)' },
+  ],
+  rp: [
+    { key: 'dc',  label: 'Disegno con i Cubi (DC)' },
+    { key: 'ci',  label: 'Concetti Illustrati (CI)' },
+    { key: 'rm',  label: 'Ragionamento con le Matrici (RM)' },
+  ],
+  iml: [
+    { key: 'mc',  label: 'Memoria di Cifre (MC)' },
+    { key: 'rln', label: 'Riordinamento di Lettere e Numeri (RLN)' },
+    { key: 'ar',  label: 'Aritmetica (AR) — supplementare' },
+  ],
+  ve: [
+    { key: 'cf',  label: 'Cifrario (CF)' },
+    { key: 'rs',  label: 'Ricerca di Simboli (RS)' },
+    { key: 'ca',  label: 'Cancellazione (CA) — supplementare' },
+  ],
+}
+
+// Etichette leggibili per indice, usate nell'accordion e nella narrativa
+export const WISC_IV_INDICE_LABEL = {
+  icv: 'Comprensione Verbale (ICV)',
+  rp:  'Ragionamento Visuo-Percettivo (RP)',
+  iml: 'Memoria di Lavoro (IML)',
+  ve:  'Velocità di Elaborazione (VE)',
+}
+
 // ── NEPSY-II ────────────────────────────────────────────────
 // Organizzato per dominio, ogni subtest ha punteggio scalare (media 10, DS 3)
 export const NEPSY_II_DOMINI = [

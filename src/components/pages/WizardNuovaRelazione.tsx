@@ -6,7 +6,10 @@ import { getPazienteById } from '../../data/pazientiData'
 import { getSessioneById, upsertSessione } from '../../data/sessioniData'
 import { USE_MOCK } from '../../core/config'
 import type { UnknownRecord } from '../../core/types'
-import { WISC_IV_CAMPI, NEPSY_II_DOMINI, fasciaWISC, fasciaScalare } from '../constants/testDefinitions'
+import {
+  WISC_IV_CAMPI, NEPSY_II_DOMINI, fasciaWISC, fasciaScalare,
+  WISC_IV_SUBTEST_PER_INDICE, WISC_IV_INDICE_LABEL,
+} from '../constants/testDefinitions'
 import {
   ANAMNESI_REMOTA_VOCI, ANAMNESI_RECENTE_VOCI,
   OSSERVAZIONE_ADATTAMENTO_VOCI, OSSERVAZIONE_ATTEGGIAMENTO_VOCI,
@@ -56,7 +59,8 @@ const INIT = {
   cognitivo:     {
     somministrato: true,
     punteggi: {},
-    riferimenti_subtest: { icv: '', rp: '', iml: '', ve: '' },
+    interpretabilita: {},
+    subtest_pp: {}, // punti ponderati per subtest, chiave = st.key (es. 'vc', 'so'...), tutti facoltativi
     eta_valutazione: '',
     strumenti_utilizzati: '',
     includi_nota_range: true,
@@ -385,9 +389,12 @@ function StepCognitivo({ data, dispatch }) {
         {WISC_IV_CAMPI.map(campo => {
           const val = data.punteggi[campo.key] || ''
           const fascia = fasciaWISC(val)
+          // Interpretabilità: true (Sì) di default se non specificato —
+          // coerente col comportamento storico prima di questo campo.
+          const interpretabile = data.interpretabilita?.[campo.key] !== false
           return (
             <div key={campo.key} style={{
-              display: 'grid', gridTemplateColumns: '1fr 90px 140px', gap: 10, alignItems: 'center',
+              display: 'grid', gridTemplateColumns: '1fr 90px 140px 30px', gap: 10, alignItems: 'center',
               padding: '8px 10px', borderRadius: 'var(--radius)',
               background: campo.tipo === 'totale' ? 'var(--accent-lt)' : 'transparent',
             }}>
@@ -401,39 +408,62 @@ function StepCognitivo({ data, dispatch }) {
               <span style={{ fontSize: 11.5, color: fascia ? 'var(--accent-dk)' : 'var(--text-muted)', fontWeight: fascia ? 500 : 400 }}>
                 {fascia || '—'}
               </span>
+              <label
+                title="Interpretabile (Sì/No) — deseleziona solo per segnalare un indice non interpretabile"
+                style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}
+              >
+                <input
+                  type="checkbox"
+                  checked={interpretabile}
+                  onChange={e => dispatch({ type: 'SET_NESTED', section: 'cognitivo', group: 'interpretabilita', k: campo.key, v: e.target.checked })}
+                  style={{ width: 16, height: 16, cursor: 'pointer' }}
+                />
+              </label>
             </div>
           )
         })}
       </div>
+      <p style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 6 }}>
+        L'ultima colonna segnala se l'indice è interpretabile (Sì, spuntato) o meno. Se tutti gli indici sono interpretabili, la colonna "Interpretabilità" non comparirà nella tabella finale — verrà mostrata solo se almeno un indice è deselezionato.
+      </p>
 
       <div className="form-group" style={{ marginTop: 14 }}>
-        <label className="form-label">Riferimenti ai subtest per indice <span>(consigliato dal profilo di stile)</span></label>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-          <input
-            className="form-input"
-            placeholder="ICV: es. Similarità, Vocabolario"
-            value={data.riferimenti_subtest?.icv || ''}
-            onChange={e => dispatch({ type: 'SET_NESTED', section: 'cognitivo', group: 'riferimenti_subtest', k: 'icv', v: e.target.value })}
-          />
-          <input
-            className="form-input"
-            placeholder="RP/IRP: es. Disegno con cubi, Concetti figurati"
-            value={data.riferimenti_subtest?.rp || ''}
-            onChange={e => dispatch({ type: 'SET_NESTED', section: 'cognitivo', group: 'riferimenti_subtest', k: 'rp', v: e.target.value })}
-          />
-          <input
-            className="form-input"
-            placeholder="IML/ML: es. Memoria di cifre, Riordinamento lettere-numeri"
-            value={data.riferimenti_subtest?.iml || ''}
-            onChange={e => dispatch({ type: 'SET_NESTED', section: 'cognitivo', group: 'riferimenti_subtest', k: 'iml', v: e.target.value })}
-          />
-          <input
-            className="form-input"
-            placeholder="VE/IVE: es. Cifrario, Ricerca di simboli"
-            value={data.riferimenti_subtest?.ve || ''}
-            onChange={e => dispatch({ type: 'SET_NESTED', section: 'cognitivo', group: 'riferimenti_subtest', k: 've', v: e.target.value })}
-          />
-        </div>
+        <label className="form-label">Riferimenti ai subtest per indice <span>(facoltativo)</span></label>
+        <p style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: -4, marginBottom: 10 }}>
+          Punti ponderati (pp) dei singoli subtest, media 10 DS 3. Compila solo i subtest somministrati:
+          nella relazione finale verranno spiegati a parole, mai mostrati in tabella.
+        </p>
+        {Object.entries(WISC_IV_INDICE_LABEL).map(([indiceKey, indiceLabel]) => {
+          const subtestIndice = WISC_IV_SUBTEST_PER_INDICE[indiceKey]
+          const nCompilati = subtestIndice.filter(st => data.subtest_pp?.[st.key] !== undefined && data.subtest_pp?.[st.key] !== '').length
+          return (
+            <details key={indiceKey} style={{ marginBottom: 8, border: '1px solid var(--border, #ddd)', borderRadius: 8, padding: '2px 12px' }}>
+              <summary style={{ cursor: 'pointer', padding: '8px 0', fontSize: 13, fontWeight: 500, color: 'var(--accent-dk)', listStyle: 'none' }}>
+                {indiceLabel} {nCompilati > 0 && <span style={{ fontWeight: 400, color: 'var(--text-muted)', fontSize: 11.5 }}>· {nCompilati} subtest compilat{nCompilati === 1 ? 'o' : 'i'}</span>}
+              </summary>
+              <div style={{ paddingBottom: 10 }}>
+                {subtestIndice.map(st => {
+                  const val = data.subtest_pp?.[st.key] || ''
+                  const fascia = fasciaScalare(val)
+                  return (
+                    <div key={st.key} style={{ display: 'grid', gridTemplateColumns: '1fr 90px 140px', gap: 10, alignItems: 'center', marginBottom: 6 }}>
+                      <span style={{ fontSize: 12.5 }}>{st.label}</span>
+                      <input
+                        className="form-input" type="number" min="1" max="19" placeholder="pp"
+                        value={val}
+                        onChange={e => dispatch({ type: 'SET_NESTED', section: 'cognitivo', group: 'subtest_pp', k: st.key, v: e.target.value })}
+                        style={{ textAlign: 'center', padding: '6px 8px' }}
+                      />
+                      <span style={{ fontSize: 11.5, color: fascia ? 'var(--accent-dk)' : 'var(--text-muted)', fontWeight: fascia ? 500 : 400 }}>
+                        {fascia || '—'}
+                      </span>
+                    </div>
+                  )
+                })}
+              </div>
+            </details>
+          )
+        })}
       </div>
 
       <div className="form-group" style={{ marginTop: 10 }}>
@@ -696,16 +726,11 @@ export default function WizardNuovaRelazione() {
       cognitivo: {
         ...INIT.cognitivo,
         ...(raw.cognitivo || {}),
-        riferimenti_subtest:
-          typeof raw.cognitivo?.riferimenti_subtest === 'string'
-            ? {
-                ...INIT.cognitivo.riferimenti_subtest,
-                icv: raw.cognitivo.riferimenti_subtest,
-              }
-            : {
-                ...INIT.cognitivo.riferimenti_subtest,
-                ...(raw.cognitivo?.riferimenti_subtest || {}),
-              },
+        // Nota: bozze salvate prima dell'introduzione dei punti ponderati
+        // avevano "riferimenti_subtest" come testo libero (nomi dei subtest,
+        // non punteggi) — non è convertibile in pp numerici, quindi viene
+        // scartato e subtest_pp riparte vuoto per quelle bozze.
+        subtest_pp: { ...INIT.cognitivo.subtest_pp, ...(raw.cognitivo?.subtest_pp || {}) },
       },
       nepsy: {
         ...INIT.nepsy,

@@ -48,8 +48,16 @@ export function anonimizzaTesto(testoMarkdown: unknown, metadatiRelazione: unkno
   testo = sostituisciParolaIsolata(testo, cognome)
 
   // 1b) Nome paziente nel testo libero: "Nome Cognome, nato/a il ..."
+  // NOTA: corretto per riconoscere anche "nato/a" (con la barra, forma
+  // usata sistematicamente nei documenti reali generati dall'app — vedi
+  // exportDocx.ts → anagraficaParagraph), non solo "nato"/"nata" separati.
+  // Il flag /m resta utile per l'ancoraggio a inizio riga; qui il flag /i
+  // non causa lo stesso problema della regola 2b (il gruppo è ancorato
+  // dopo un separatore di frase esplicito, quindi non cattura parole
+  // minuscole isolate a caso), ma viene comunque rimosso per coerenza e
+  // sicurezza, gestendo l'insensibilità di "nat[oa](\/a)?" esplicitamente.
   testo = testo.replace(
-     /(^|[\n\r]\s*|[.!?]\s+)([A-ZÀ-ÖØ-Ý][A-Za-zÀ-ÖØ-öø-ÿ'’.-]+(?:[ \t]+(?:[A-ZÀ-ÖØ-Ý][A-Za-zÀ-ÖØ-öø-ÿ'’.-]+|de|di|del|della|dello|da|de[ \t]+[A-ZÀ-ÖØ-Ý][A-Za-zÀ-ÖØ-öø-ÿ'’.-]+)){1,3})(\s*,?\s*nat[oa]\s+(?:il\s+)?(?:\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4}|\[DATA\]))/gim,
+     /(^|[\n\r]\s*|[.!?]\s+)([A-ZÀ-ÖØ-Ý][A-Za-zÀ-ÖØ-öø-ÿ'’.-]+(?:[ \t]+(?:[A-ZÀ-ÖØ-Ý][A-Za-zÀ-ÖØ-öø-ÿ'’.-]+|de|di|del|della|dello|da|de[ \t]+[A-ZÀ-ÖØ-Ý][A-Za-zÀ-ÖØ-öø-ÿ'’.-]+)){1,3})(\s*,?\s*[Nn]at[oa](?:\/[ao])?\s+(?:il\s+)?(?:\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4}|\[DATA\]))/gm,
     '$1[PAZIENTE]$3'
   )
 
@@ -59,9 +67,19 @@ export function anonimizzaTesto(testoMarkdown: unknown, metadatiRelazione: unkno
     '$1[DATA]'
   )
 
-  // 2b) Nominativi di specialisti/professionisti con titolo
+  // 2b) Nominativi di specialisti/professionisti con titolo.
+  // NOTA: il titolo è case-insensitive (dott./Dott./DOTT. tutti validi),
+  // ma il nome proprio che segue deve rimanere case-SENSITIVE (richiede
+  // iniziale maiuscola vera). Usare il flag /i sull'intera regex renderebbe
+  // insensibile al caso anche la parte [A-Z] del nome, permettendo a parole
+  // minuscole comuni (es. "presso", "il") di essere catturate per errore
+  // nel gruppo ripetuto — bug osservato con "dott.ssa Concetta De
+  // Giambattista presso il Cepsia" che catturava anche "presso" fino al
+  // costo di "mangiare" del testo legittimo dalla frase. Soluzione: titolo
+  // case-insensitive tramite classe di caratteri esplicita invece del
+  // flag /i globale, nome proprio resta rigorosamente case-sensitive.
   testo = testo.replace(
-    /(\b(?:dott\.ssa|dott\.|dr\.ssa|dr\.|prof\.ssa|prof\.)\s+)([A-ZÀ-ÖØ-Ý][A-Za-zÀ-ÖØ-öø-ÿ'’.-]+(?:[ \t]+[A-ZÀ-ÖØ-Ý][A-Za-zÀ-ÖØ-öø-ÿ'’.-]+){0,3})/gi,
+    /(\b(?:[Dd]ott\.ssa|[Dd]ott\.|[Dd]r\.ssa|[Dd]r\.|[Pp]rof\.ssa|[Pp]rof\.)\s+)([A-ZÀ-ÖØ-Ý][A-Za-zÀ-ÖØ-öø-ÿ'’.-]+(?:[ \t]+[A-ZÀ-ÖØ-Ý][A-Za-zÀ-ÖØ-öø-ÿ'’.-]+){0,3})/g,
     '$1[PERSONA]'
   )
 

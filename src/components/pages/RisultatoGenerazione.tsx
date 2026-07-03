@@ -6,6 +6,7 @@ import { getRelazioniSimilari, insertRelazione, updateRelazione } from '../../da
 import { upsertPazienteAnagrafica } from '../../data/pazientiData'
 import { USE_MOCK } from '../../core/config'
 import { generaRelazione, USE_MOCK_AI } from '../../services/geminiService'
+import { sostituisciNomePlaceholder } from '../../services/wizardToText'
 import { esportaDocx, scaricaDocx } from '../../services/exportDocx'
 
 function reducer(state, action) {
@@ -64,7 +65,10 @@ export default function RisultatoGenerazione() {
     try {
       const profilo = await getProfiloStile()
       const esempi  = await getRelazioniSimilari(wizardData.tipo, [])
-      const testo   = await generaRelazione(profilo || '', wizardData, esempi)
+      const testoGrezzo = await generaRelazione(profilo || '', wizardData, esempi)
+      // Sostituisce {{NOME}} col nome reale — Gemini non lo ha mai visto,
+      // il nome entra nel testo solo qui, lato client (vedi wizardToText.ts).
+      const testo = sostituisciNomePlaceholder(testoGrezzo, wizardData.anagrafica)
       dispatch({ type: 'DONE', testo })
     } catch (e) {
       dispatch({ type: 'ERROR', error: e.message })

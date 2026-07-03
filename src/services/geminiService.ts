@@ -7,11 +7,15 @@
 // ============================================================
 
 import {
-  wiscToMarkdownTable, wiscToNarrativa, nepsyToMarkdownTable, nepsyToNarrativa,
+  wiscToMarkdownTable, wiscToNarrativa, wiscSubtestPpToNarrativa, nepsyToMarkdownTable, nepsyToNarrativa,
   notaRangeWisc, notaRangeNepsy, assemblaDocumentoMarkdown,
 } from './wizardToText'
 import { getPazienteById } from '../data/pazientiData'
 import { anonimizzaTesto } from './anonimizza'
+import {
+  ANAMNESI_REMOTA_VOCI, ANAMNESI_RECENTE_VOCI,
+  OSSERVAZIONE_ADATTAMENTO_VOCI, OSSERVAZIONE_ATTEGGIAMENTO_VOCI,
+} from '../components/constants/anamnesiVoci'
 import type { Paziente, Relazione, UnknownRecord } from '../core/types'
 
 type GeminiCallOptions = {
@@ -71,7 +75,7 @@ type WizardPayload = UnknownRecord & {
   cognitivo?: UnknownRecord & {
     punteggi?: ScoreMap
     includi_nota_range?: boolean
-    riferimenti_subtest?: string
+    subtest_pp?: ScoreMap
     eta_valutazione?: string
     strumenti_utilizzati?: string
     note_cliniche?: string
@@ -431,7 +435,7 @@ export async function generaNarrativaSezioni(
   if (isMock || USE_MOCK_AI) {
     await new Promise<void>(resolve => setTimeout(resolve, 1200))
     if (sez.includes('cognitivo') && wizard.cognitivo?.punteggi) {
-      out['cognitivo'] = wiscToNarrativa(wizard.cognitivo.punteggi, wizard.cognitivo.riferimenti_subtest || '')
+      out['cognitivo'] = wiscToNarrativa(wizard.cognitivo.punteggi, wizard.cognitivo.subtest_pp || {})
     }
     if (sez.includes('nepsy') && wizard.nepsy?.punteggi) {
       out['nepsy'] = nepsyToNarrativa(wizard.nepsy.punteggi)
@@ -455,7 +459,7 @@ export async function generaNarrativaSezioni(
     return out
   }
 
-  const wiscTabella = wizard.cognitivo?.punteggi ? wiscToMarkdownTable(wizard.cognitivo.punteggi) : ''
+  const wiscTabella = wizard.cognitivo?.punteggi ? wiscToMarkdownTable(wizard.cognitivo.punteggi, (wizard.cognitivo.interpretabilita as Record<string, boolean>) || {}) : ''
   const nepsyTabella = wizard.nepsy?.punteggi ? nepsyToMarkdownTable(wizard.nepsy.punteggi) : ''
 
   const esempiFewShot = esempi.length > 0
@@ -473,7 +477,8 @@ REGOLA ASSOLUTA: scrivi ESCLUSIVAMENTE seguendo il Profilo di Stile fornito.
 Non inventare mai punteggi o dati non presenti nell'input.
 Genera SOLO il testo narrativo per ogni sezione richiesta. NON generare tabelle, le tabelle sono già pronte.
 Usa le frasi-cornice standard del Profilo di Stile per le sezioni cognitivo e nepsy.
-Non usare mai nomi reali o dati identificativi: usa solo "il/la paziente".
+Per le sezioni anamnesi e osservazione: ricevi un elenco di fatti grezzi selezionati dall'utente (non una lista da riportare tale quale). Componili in prosa fluida e naturale, con la struttura sintattica e il registro osservati nel Profilo di Stile — non un elenco puntato, non una sequenza di frasi telegrafiche separate da virgole.
+Non usare mai nomi reali o dati identificativi: ovunque scriveresti il nome del/la paziente, usa esattamente il segnaposto {{NOME}} (con le doppie graffe, senza spazi interni). Non usare "il/la paziente" o altre perifrasi impersonali al posto del segnaposto: scrivi le frasi come le scriveresti con un nome vero, sostituendo solo il nome con {{NOME}} (es. "{{NOME}} accetta e porta a termine le attività proposte" invece di "il/la paziente accetta..."). Questo segnaposto verrà sostituito automaticamente con il nome reale dopo la generazione.
 ${istruzioneLunghezza ? `\nLIVELLO DI DETTAGLIO RICHIESTO: ${istruzioneLunghezza}\n` : ''}
 Rispondi SOLO con il testo narrativo per ogni sezione, separato da intestazioni "=== SEZIONE: nome ===".
 
@@ -482,15 +487,86 @@ ${profiloStile}
 
 ${esempiFewShot ? `=== ESEMPI DI RIFERIMENTO ===\n${esempiFewShot}` : ''}`
 
+  // I campi di testo libero del wizard (note_cliniche,
+  // consigli...) sono scritti direttamente da tua sorella e possono
+  // contenere nomi di terzi non anticipabili — es. "su indicazione della
+  // dott.ssa Martina" o "già seguito dalla Scuola X". A differenza del nome
+  // del PAZIENTE (gestito col segnaposto {{NOME}}, mai inviato a Gemini),
+  // qui non c'è modo di sapere a priori cosa scriverà l'utente: si applica
+  // la stessa anonimizzazione euristica già usata per le relazioni
+  // importate (anonimizza.ts — riconosce titoli professionali "dott./dott.
+  // ssa/prof." seguiti da nome, e nomi di istituti scolastici), qui senza
+  // passare l'anagrafica del paziente (non serve: quella parte la gestisce
+  // già {{NOME}} a monte).
+  const anon = (testo: unknown): string => {
+    const s = typeof testo === 'string' ? testo : ''
+    return s ? anonimizzaTesto(s, {}) : ''
+  }
+
   const userData: string[] = []
+
+  if (sez.includes('anamnesi') && wizard.anamnesi) {
+    // Le voci checkbox selezionate vengono passate come elenco di fatti
+    // grezzi (non più pre-composte in una frase telegrafica con vociToTesto,
+    // che restava fuori dal Profilo di Stile — vedi wizardToText.ts).
+    // Gemini le trasforma in prosa coerente col resto del documento.
+    // I campi "dettagli" e "extra" sono testo libero scritto da tua sorella:
+    // passano dallo stesso filtro di anonimizzazione degli altri campi.
+    const anamnesi = wizard.anamnesi as UnknownRecord
+    const remotaVoci = (anamnesi.remota_voci as string[] | undefined) || []
+    const remotaDettagli = (anamnesi.remota_dettagli as Record<string, string> | undefined) || {}
+    const recenteVoci = (anamnesi.recente_voci as string[] | undefined) || []
+    const recenteDettagli = (anamnesi.recente_dettagli as Record<string, string> | undefined) || {}
+
+    const vociRemota = remotaVoci
+      .map((id: string) => {
+        const voce = ANAMNESI_REMOTA_VOCI.find(v => v.id === id)
+        if (!voce) return null
+        const dett = remotaDettagli[id]
+        return dett ? `${voce.testo} (${anon(dett)})` : voce.testo
+      })
+      .filter(Boolean)
+    const vociRecente = recenteVoci
+      .map((id: string) => {
+        const voce = ANAMNESI_RECENTE_VOCI.find(v => v.id === id)
+        if (!voce) return null
+        const dett = recenteDettagli[id]
+        return dett ? `${voce.testo} (${anon(dett)})` : voce.testo
+      })
+      .filter(Boolean)
+
+    userData.push(`=== SEZIONE: anamnesi ===
+Fatti anamnesi remota (da esporre in prosa fluida, non come elenco): ${vociRemota.length ? vociRemota.join('; ') : 'Nessuno'}
+Dettagli aggiuntivi remota: ${anon(anamnesi.remota_extra) || 'Nessuno'}
+Fatti situazione attuale/recente (da esporre in prosa fluida): ${vociRecente.length ? vociRecente.join('; ') : 'Nessuno'}
+Dettagli aggiuntivi recente: ${anon(anamnesi.recente_extra) || 'Nessuno'}`)
+  }
+
+  if (sez.includes('osservazione') && wizard.osservazione) {
+    const osservazione = wizard.osservazione as UnknownRecord
+    const adattamentoVoci = (osservazione.adattamento_voci as string[] | undefined) || []
+    const atteggiamentoVoci = (osservazione.atteggiamento_voci as string[] | undefined) || []
+
+    const vociAdatt = adattamentoVoci
+      .map((id: string) => OSSERVAZIONE_ADATTAMENTO_VOCI.find(v => v.id === id)?.testo)
+      .filter(Boolean)
+    const vociAtteg = atteggiamentoVoci
+      .map((id: string) => OSSERVAZIONE_ATTEGGIAMENTO_VOCI.find(v => v.id === id)?.testo)
+      .filter(Boolean)
+
+    userData.push(`=== SEZIONE: osservazione ===
+Fatti osservati (da esporre in prosa fluida, non come elenco): ${[...vociAdatt, ...vociAtteg].length ? [...vociAdatt, ...vociAtteg].join('; ') : 'Nessuno'}
+Note aggiuntive: ${anon(osservazione.note) || 'Nessuna'}`)
+  }
+
   if (sez.includes('cognitivo') && wizard.cognitivo?.punteggi) {
     userData.push(`=== SEZIONE: cognitivo ===
 Tabella WISC-IV (non modificare, verrà inserita automaticamente):
 ${wiscTabella}
 
 Nota range: ${wizard.cognitivo?.includi_nota_range ? notaRangeWisc() : 'Nessuna'}
-Riferimenti subtest: ${wizard.cognitivo?.riferimenti_subtest || 'Nessuno'}
-Note cliniche: ${wizard.cognitivo?.note_cliniche || 'Nessuna'}`)
+Subtest per indice (punti ponderati, media 10 DS 3 — spiegare SEMPRE a parole nel testo, MAI in tabella): ${anon(wiscSubtestPpToNarrativa(wizard.cognitivo?.subtest_pp || {})) || 'Nessuno'}
+Note cliniche: ${anon(wizard.cognitivo?.note_cliniche) || 'Nessuna'}`)
   }
   if (sez.includes('nepsy') && wizard.nepsy?.punteggi) {
     userData.push(`=== SEZIONE: nepsy ===
@@ -498,28 +574,28 @@ Tabella NEPSY-II (non modificare, verrà inserita automaticamente):
 ${nepsyTabella}
 
 Nota range: ${wizard.nepsy?.includi_nota_range ? notaRangeNepsy() : 'Nessuna'}
-Note cliniche: ${wizard.nepsy?.note_cliniche || 'Nessuna'}`)
+Note cliniche: ${anon(wizard.nepsy?.note_cliniche) || 'Nessuna'}`)
   }
   if (sez.includes('apprendimenti') && wizard.apprendimenti) {
     userData.push(`=== SEZIONE: apprendimenti ===
-Strumenti: ${wizard.apprendimenti?.strumenti || 'Nessuno'}
+Strumenti: ${anon(wizard.apprendimenti?.strumenti) || 'Nessuno'}
 Punteggi grezzi: ${wizard.apprendimenti?.punteggi_grezzi || 'Nessuno'}
-Note: ${wizard.apprendimenti?.note_cliniche || 'Nessuna'}`)
+Note: ${anon(wizard.apprendimenti?.note_cliniche) || 'Nessuna'}`)
   }
   if (sez.includes('questionari') && wizard.questionari) {
     userData.push(`=== SEZIONE: questionari ===
-Tipo: ${wizard.questionari?.tipo || 'Nessuno'}
+Tipo: ${anon(wizard.questionari?.tipo) || 'Nessuno'}
 Punteggi grezzi: ${wizard.questionari?.punteggi_grezzi || 'Nessuno'}
-Note: ${wizard.questionari?.note_cliniche || 'Nessuna'}`)
+Note: ${anon(wizard.questionari?.note_cliniche) || 'Nessuna'}`)
   }
   if (sez.includes('conclusioni') && wizard.conclusioni) {
     const c = wizard.conclusioni
     userData.push(`=== SEZIONE: conclusioni ===
-Diagnosi: ${c.diagnosi || 'Nessuna'}${c.codice_icd ? ` (${c.codice_icd})` : ''}
-Consigli paziente: ${c.consigli_paziente || 'Nessuno'}
-Consigli scuola: ${c.consigli_scuola || 'Nessuno'}
-Strumenti compensativi: ${c.strumenti_compensativi || 'Nessuno'}
-Misure dispensative: ${c.misure_dispensative || 'Nessuna'}`)
+Diagnosi: ${anon(c.diagnosi) || 'Nessuna'}${c.codice_icd ? ` (${c.codice_icd})` : ''}
+Consigli paziente: ${anon(c.consigli_paziente) || 'Nessuno'}
+Consigli scuola: ${anon(c.consigli_scuola) || 'Nessuno'}
+Strumenti compensativi: ${anon(c.strumenti_compensativi) || 'Nessuno'}
+Misure dispensative: ${anon(c.misure_dispensative) || 'Nessuna'}`)
   }
 
   const userPrompt = `Genera SOLO il testo narrativo per ogni sezione indicata. Le tabelle sono già pronte e verranno inserite automaticamente.
