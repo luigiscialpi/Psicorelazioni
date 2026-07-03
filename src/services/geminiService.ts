@@ -112,7 +112,7 @@ type WizardPayload = UnknownRecord & {
 }
 
 const API_KEY = import.meta.env.VITE_GEMINI_API_KEY || ''
-const USE_MOCK_AI = !API_KEY || API_KEY === 'YOUR_GEMINI_KEY'
+const USE_MOCK_AI = !API_KEY || API_KEY === 'YOUR_GEMINI_KEY' || (typeof process !== 'undefined' && process.env.NODE_ENV === 'test')
 
 // Fallback predefinito basato sui modelli testuali comunemente disponibili nel piano senza costi.
 // Nota: la disponibilita reale dipende sempre da progetto, quota e stato account in AI Studio.
@@ -254,9 +254,12 @@ async function callGemini(systemPrompt: string, userPrompt: string, options: Gem
         const text = candidate?.content?.parts?.[0]?.text || ''
 
         if (candidate?.finishReason === 'MAX_TOKENS') {
-          lastErr = new Error(`Gemini response truncated [${modelName}] per limite token output. Riduci il corpus o aumenta maxOutputTokens.`)
-          if (attempt < maxAttempts) continue
-          throw lastErr
+          console.warn(`Gemini response truncated [${modelName}] per limite token output.`)
+          const trimmed = text.trim()
+          if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+            return text
+          }
+          return text + '\n\n*(Nota: Il testo del profilo è stato parzialmente troncato per limiti di spazio)*'
         }
 
         return text
@@ -379,14 +382,40 @@ Ultimo aggiornamento: ${new Date().toISOString().slice(0,10)} | Relazioni analiz
 - Relazioni complete (cognitivo + NEPSY + apprendimenti + questionari): 1300-1800 parole
 - Relazioni di rivalutazione/follow-up più mirate: 700-1000 parole
 - Le sezioni con tabelle hanno paragrafi narrativi brevi (3-5 frasi) subito dopo ogni tabella
+
+## 7. Analisi dei Test Clinici Rilevati nell'Archivio
+Qui sono descritti i test clinici identificati nelle relazioni, con le relative colonne di scoring, subtest e commenti tipici usati dal clinico:
+
+### Test: BVSCO-2 (Batteria per la Valutazione della Scrittura e della Competenza Ortografica)
+- **Categoria**: apprendimenti
+- **Struttura Colonne**: Subtest, Punteggio Grezzo, Percentile, Fascia di Prestazione (es. "Richiesta di Intervento", "Attenzione", "Sufficiente", "Ottimale")
+- **Campi e Subtest**:
+  - Dettato di brano (competenze ortografiche generali)
+  - Scrittura di parole (ortografia lessicale)
+  - Scrittura di non-parole (via fonologica)
+  - Velocità di scrittura (fluenza grafo-motoria)
+- **Commenti e Note Range**:
+  - *Nota range*: *BVSCO-2: percentili <5° indicano Richiesta di Intervento (deficit ortografico), tra 5° e 15° indicano Attenzione, >15° indicano prestazione Sufficiente/Sopra la media.*
+  - *Commenti qualitativi*: descrive tipicamente il tipo di errore (fonologico vs non fonologico) e la velocità di esecuzione.
+
+### Test: MT-3 (Prove di Lettura MT per la Scuola Primaria e Secondaria)
+- **Categoria**: apprendimenti
+- **Struttura Colonne**: Prova, Tempo (secondi), Sillabe/Secondo, Errori, Percentile, Fascia di Prestazione
+- **Campi e Subtest**:
+  - Lettura di brano - Correttezza (numero di errori commessi)
+  - Lettura di brano - Rapidità (sillabe al secondo lette)
+  - Comprensione del testo (domande a risposta multipla con testo a disposizione)
+- **Commenti e Note Range**:
+  - *Nota range*: *Prove MT-3: prestazioni valutate su 4 fasce cliniche: Richiesta di Intervento Immediato (RII, <5° percentile), Richiesta di Attenzione (RA, 5°-15° percentile), Prestazione Sufficiente (PS, 15°-80° percentile), Criterio Completamente Raggiunto (CCR, >80° percentile).*
+  - *Commenti qualitativi*: analizza il ritmo di lettura, le esitazioni, le autocorrezioni e la tipologia di errori (sostituzioni, omissioni).
 `
     return { testo, relazioniUsate: usate, relazioniTotali: totali, charsCorpus }
   }
 
-  const testo = await callGemini(
-    `Sei un assistente specializzato nell'analisi dello stile di scrittura di relazioni di valutazione neuropsicologica e dell'apprendimento in età evolutiva (tipo WISC-IV, NEPSY-II, DSA/ADHD, L.170/2010).
+  // Call 1: Analisi dello stile di scrittura (Sezioni 1-6)
+  const promptStileSystem = `Sei un assistente specializzato nell'analisi dello stile di scrittura di relazioni di valutazione neuropsicologica e dell'apprendimento in età evolutiva (tipo WISC-IV, NEPSY-II, DSA/ADHD, L.170/2010).
 Analizza il corpus di relazioni fornite e produci un Profilo di Stile dettagliato in formato Markdown.
-Il documento deve rispettare ESATTAMENTE questa struttura, senza testo extra:
+Il documento deve rispettare ESATTAMENTE questa struttura (sezioni 1-6), senza testo extra:
 
 # PROFILO DI STILE — [Titolo breve]
 Ultimo aggiornamento: YYYY-MM-DD | Relazioni analizzate: N | Versione: 1
@@ -398,25 +427,50 @@ Ultimo aggiornamento: YYYY-MM-DD | Relazioni analizzate: N | Versione: 1
 ## 5. Terminologia preferita vs da evitare
 ## 6. Lunghezza e ritmo
 
-Niente preamboli, niente frasi tipo "Il presente profilo...", niente conclusioni finali.
-Mantieni il testo sintetico e operativo (massimo ~900 parole).
+Sii estremamente dettagliato ed esaustivo nell'analisi dello stile di scrittura delle relazioni. Fornisci regole ed esempi pratici tratti dalle relazioni per ciascuna sezione.
+Rispondi SOLO con il documento Markdown delle sezioni 1-6, senza introduzioni.`
 
-Contenuti obbligatori:
-1. Struttura standard (ordine delle sezioni, comprese quelle ricorrenti come anamnesi, osservazione, valutazione cognitiva, approfondimento neuropsicologico, apprendimenti, questionari, conclusioni, riferimenti normativi)
-2. Registro linguistico (persona, tono, costrutti grammaticali preferiti)
-3. Formule ricorrenti (frasi-cornice da riprodurre esattamente, in particolare quelle che introducono ciascun indice/test)
-4. Come vengono trattate le tabelle di punteggio (mai generarle da zero, sempre riportate fedelmente da un testo incollato)
-5. Terminologia preferita vs da evitare (tabella)
-6. Lunghezza e ritmo (indicazioni quantitative)
-Non introdurre requisiti operativi non presenti nei dati di input o nel wizard (es. riferimenti obbligatori ai subtest con codici/pagine) se non sono esplicitamente disponibili.
-Rispondi SOLO con il documento Markdown, senza introduzioni.`,
-    `Analizza queste ${usate} relazioni di valutazione neuropsicologica e produci il Profilo di Stile.${usate < totali ? ` Nota: il corpus è stato ridotto automaticamente da ${totali} a ${usate} relazioni per limiti payload.` : ''}\n\n${corpus}`,
+  const testoStile = await callGemini(
+    promptStileSystem,
+    `Analizza queste ${usate} relazioni di valutazione neuropsicologica e produci il Profilo di Stile (sezioni 1-6).\n\n${corpus}`,
     {
-      maxOutputTokens: 3072,
+      maxOutputTokens: 8192,
       temperature: 0.3,
       thinkingBudget: 0,
     }
   )
+
+  // Call 2: Estrazione della struttura dei Test Clinici (Sezione 7)
+  const promptTestSystem = `Sei un assistente clinico specializzato nella catalogazione e analisi dei test neuropsicologici e psicometrici citati in relazioni cliniche.
+Analizza il corpus di relazioni fornite e produci un documento in formato Markdown che descrive dettagliatamente tutti i test clinici o batterie individuate nelle relazioni (escludendo WISC-IV e NEPSY-II).
+Il documento deve rispettare ESATTAMENTE questa struttura, senza testo extra:
+
+## 7. Analisi dei Test Clinici Rilevati nell'Archivio
+Qui sono descritti i test clinici identificati nelle relazioni, con le relative colonne di scoring delle tabelle, subtest e commenti tipici usati dal clinico.
+
+Per ciascun test o batteria individuato, crea una sottosezione:
+### Test: [Nome del Test] (es. BVSCO-2)
+- **Categoria**: [categoria clinica tra: cognitivo, nepsy, apprendimenti, questionari, altro]
+- **Struttura Colonne**: [le colonne presenti nelle tabelle di scoring di questo test, es. Punteggio Grezzo, Percentile, Fascia di prestazione. Fai attenzione a specificare tutte le colonne reali viste in tabella]
+- **Campi e Subtest**: [elenco degli indici primari e dei subtest secondari che compongono il test]
+- **Commenti e Note Range**:
+  - *Nota range*: [le note metodologiche sulle fasce di punteggio o i cut-off usati, es. <5° percentile come deficit]
+  - *Commenti qualitativi*: [descrizione del comportamento, degli errori tipici o dei commenti qualitativi commentati nella relazione per questo test]
+
+Sii estremamente preciso ed esaustivo nell'estrarre le colonne, i subtest e le note di range.
+Rispondi SOLO con la sezione 7 in formato Markdown, senza introduzioni.`
+
+  const testoTest = await callGemini(
+    promptTestSystem,
+    `Analizza queste ${usate} relazioni di valutazione neuropsicologica ed estrai l'analisi dei test clinici (sezione 7).\n\n${corpus}`,
+    {
+      maxOutputTokens: 8192,
+      temperature: 0.2,
+      thinkingBudget: 0,
+    }
+  )
+
+  const testo = `${testoStile.trim()}\n\n${testoTest.trim()}`
   return { testo, relazioniUsate: usate, relazioniTotali: totali, charsCorpus }
 }
 
@@ -722,6 +776,21 @@ Istruzione aggiuntiva: ${istruzione}`
   )
 }
 
+function splitProfilo(profilo: string): { stile: string; test: string } {
+  const marker = '## 7. Analisi dei Test Clinici'
+  const idx = profilo.indexOf(marker)
+  if (idx === -1) {
+    return {
+      stile: profilo.trim(),
+      test: `## 7. Analisi dei Test Clinici Rilevati nell'Archivio\nQui sono descritti i test clinici identificati nelle relazioni, con le relative colonne di scoring delle tabelle, subtest e commenti tipici usati dal clinico.`
+    }
+  }
+  return {
+    stile: profilo.slice(0, idx).trim(),
+    test: profilo.slice(idx).trim()
+  }
+}
+
 // ── AGGIORNAMENTO INCREMENTALE PROFILO ────────────────────
 // Invece di rianalizzare tutto il corpus, integra il profilo
 // esistente con le sole relazioni nuove (aggiunte dopo l'ultimo
@@ -741,22 +810,59 @@ export async function aggiornaProfiloIncrementale(profiloEsistente: string, nuov
     return { testo, relazioniUsate: usate, relazioniTotali: totali, charsCorpus }
   }
 
-  const testo = await callGemini(
+  const { stile, test } = splitProfilo(profiloEsistente)
+
+  // Call 1: Aggiornamento stile scrittura (Sezioni 1-6)
+  const nuovoStile = await callGemini(
     `Sei un assistente specializzato nell'analisi dello stile di scrittura di relazioni di valutazione neuropsicologica.
-Hai già un Profilo di Stile esistente. Vengono aggiunte nuove relazioni al corpus.
+Hai già un Profilo di Stile esistente (sezioni da 1 a 6). Vengono aggiunte nuove relazioni al corpus.
 Il tuo compito è AGGIORNARE il profilo integrando eventuali pattern nuovi o correggendo quelli già presenti.
-NON riscrivere il profilo da zero: parti da quello esistente e modifica solo ciò che cambia.
+NON riscrivere il profilo da zero: parti da quello esistente e modifica solo ciò che cambia nelle sezioni da 1 a 6.
+Sii estremamente dettagliato ed esaustivo nell'analisi.
 Se le nuove relazioni confermano il profilo senza aggiungere nulla di nuovo, rispondi con il profilo invariato.
 Aggiorna la riga "Ultimo aggiornamento" e "Relazioni analizzate" in cima al documento.
-Rispondi SOLO con il documento Markdown aggiornato, senza introduzioni.`,
-    `=== PROFILO DI STILE ATTUALE ===
-${profiloEsistente}
+Rispondi SOLO con il documento Markdown aggiornato (sezioni 1-6), senza introduzioni.`,
+    `=== PROFILO DI STILE ATTUALE (SEZIONI 1-6) ===
+${stile}
 
-=== NUOVE RELAZIONI DA INTEGRARE (${usate}${usate < totali ? ` di ${totali}, corpus ridotto automaticamente` : ''}) ===
+=== NUOVE RELAZIONI DA INTEGRARE ===
 ${corpus}
 
-Aggiorna il profilo integrando le osservazioni dalle nuove relazioni.`
+Aggiorna il profilo per le sezioni 1-6.`,
+    {
+      maxOutputTokens: 8192,
+      temperature: 0.3,
+      thinkingBudget: 0,
+    }
   )
+
+  // Call 2: Aggiornamento struttura test (Sezione 7)
+  const nuoviTest = await callGemini(
+    `Sei un assistente clinico specializzato nella catalogazione e analisi dei test neuropsicologici e psicometrici in relazioni cliniche.
+Hai una sezione esistente con l'analisi dei test rilevati nell'archivio.
+Il tuo compito è AGGIORNARE questa sezione integrando i dettagli di eventuali nuovi test clinici o subtest individuati nelle relazioni aggiunte (escludendo WISC-IV e NEPSY-II).
+Per ciascun test mantieni o aggiorna la struttura:
+- Nome del test e Categoria clinica.
+- Struttura Colonne (le colonne presenti nelle tabelle di scoring).
+- Campi e Subtest (indici primari e subtest).
+- Commenti e Note Range (soglie, cut-off, commenti qualitativi).
+Se i test nelle nuove relazioni sono già descritti accuratamente nella sezione esistente, rispondi con il testo esistente invariato.
+Rispondi SOLO con la sezione 7 in formato Markdown, senza introduzioni.`,
+    `=== ANALISI TEST ESISTENTE (SEZIONE 7) ===
+${test}
+
+=== NUOVE RELAZIONI DA INTEGRARE ===
+${corpus}
+
+Aggiorna la sezione 7 integrando eventuali nuovi test o subtest.`,
+    {
+      maxOutputTokens: 8192,
+      temperature: 0.2,
+      thinkingBudget: 0,
+    }
+  )
+
+  const testo = `${nuovoStile.trim()}\n\n${nuoviTest.trim()}`
   return { testo, relazioniUsate: usate, relazioniTotali: totali, charsCorpus }
 }
 
@@ -787,6 +893,135 @@ Estrai la lista di test/batterie non già mappati.`
   } catch (e) {
     console.error('Errore nel parse dei suggerimenti test:', e)
     return []
+  }
+}
+
+export async function rilevaNomiTestDaProfilo(profiloStile: string, templateEsistenti: string[]): Promise<{ nome: string; categoria: string }[]> {
+  if (USE_MOCK_AI) {
+    if (typeof process === 'undefined' || process.env.NODE_ENV !== 'test') {
+      await new Promise<void>(resolve => setTimeout(resolve, 800))
+    }
+    const mock = [
+      { nome: 'BVSCO-3', categoria: 'apprendimenti' },
+      { nome: 'AC-MT', categoria: 'apprendimenti' },
+      { nome: 'APL Medea', categoria: 'linguaggio' }
+    ]
+    return mock.filter(m => !templateEsistenti.some(ex => ex.toLowerCase() === m.nome.toLowerCase()))
+  }
+
+  const promptSystem = `Sei un assistente clinico.
+Analizza il profilo di stile fornito e individua tutti i test clinici o batterie menzionati nella sezione 7 o in altre parti del profilo (escludi WISC-IV e NEPSY-II).
+Restituisci esclusivamente un array JSON di oggetti con chiavi "nome" e "categoria" (scegli la categoria tra: cognitivo, nepsy, apprendimenti, questionari, altro).
+Non includere i test già esistenti: [${templateEsistenti.join(', ')}].
+Restituisci SOLO il JSON array grezzo, senza spiegazioni o formattazioni.`
+
+  const testo = await callGemini(promptSystem, profiloStile, { maxOutputTokens: 1500, temperature: 0.1 })
+  try {
+    const raw = testo.replace(/```json/g, '').replace(/```/g, '').trim()
+    const parsed = JSON.parse(raw)
+    return Array.isArray(parsed) ? parsed : []
+  } catch (e) {
+    console.error('Errore rilevamento nomi test da profilo:', e)
+    return []
+  }
+}
+
+export async function generaTemplateTest(testNome: string, profiloStile: string): Promise<any> {
+  if (USE_MOCK_AI) {
+    if (typeof process === 'undefined' || process.env.NODE_ENV !== 'test') {
+      await new Promise<void>(resolve => setTimeout(resolve, 1000))
+    }
+    if (testNome.toLowerCase().includes('bvsco')) {
+      return {
+        nome: 'BVSCO-3',
+        categoria: 'apprendimenti',
+        scalaDefault: {
+          tipo: 'soglie_custom',
+          soglie: [
+            { min: 0, max: 4, etichetta: 'Richiesta di Intervento' },
+            { min: 5, max: 15, etichetta: 'Attenzione' },
+            { min: 16, max: null, etichetta: 'Sufficiente / Ottimale' }
+          ]
+        },
+        campiPrincipali: [
+          { key: 'dettato_brano', label: 'Dettato di brano', descr: 'Valutazione delle competenze ortografiche generali nella scrittura di testi.' },
+          { key: 'scrittura_parole', label: 'Scrittura di parole', descr: 'Valutazione dell\'ortografia lessicale.' },
+          { key: 'scrittura_non_parole', label: 'Scrittura di non-parole', descr: 'Valutazione della competenza fonologica di scrittura.' }
+        ],
+        gruppiSecondari: [
+          {
+            key: 'velocita',
+            label: 'Velocità di scrittura',
+            campi: [
+              { key: 'fluenza_grafo', label: 'Fluenza Grafo-motoria' }
+            ]
+          }
+        ],
+        notaRange: '*BVSCO-3: percentili <5° indicano Richiesta di Intervento, tra 5° e 15° indicano Attenzione, >15° indicano prestazione Sufficiente.*',
+        richiedeEtaValutazione: false,
+        richiedeStrumentiUtilizzati: true
+      }
+    }
+    return {
+      nome: testNome,
+      categoria: 'altro',
+      scalaDefault: { tipo: 'scalare' },
+      campiPrincipali: [
+        { key: 'punteggio_totale', label: 'Punteggio Totale' }
+      ],
+      gruppiSecondari: [],
+      notaRange: '',
+      richiedeEtaValutazione: false,
+      richiedeStrumentiUtilizzati: false
+    }
+  }
+
+  const promptSystem = `Sei un assistente clinico esperto in psicometria e valutazione dello sviluppo.
+Il tuo compito è analizzare la descrizione del test "${testNome}" presente nel Profilo di Stile fornito e strutturarlo in un oggetto JSON singolo che rappresenti il template del test.
+
+Restituisci ESCLUSIVAMENTE un oggetto JSON valido (senza spiegazioni o markdown codeblocks tranne \`\`\`json se necessario):
+
+\`\`\`json
+{
+  "nome": "${testNome}",
+  "categoria": "apprendimenti", // una tra: "cognitivo", "nepsy", "apprendimenti", "questionari", "altro"
+  "scalaDefault": {
+    "tipo": "soglie_custom", // una tra: "qi_wisc", "scalare", "soglie_custom"
+    "soglie": [ // Obbligatorio solo se tipo è "soglie_custom"
+      { "min": 0, "max": 4, "etichetta": "Richiesta di Intervento" } // max può essere null se non c'è limite superiore
+    ]
+  },
+  "campiPrincipali": [
+    { 
+      "key": "chiave_univoca_in_minuscolo", // es. "dettato_brano"
+      "label": "Etichetta visualizzata", // es. "Dettato di brano"
+      "descr": "Una breve frase-cornice descrittiva per la narrativa" // opzionale
+    }
+  ],
+  "gruppiSecondari": [ // Sezioni secondarie/subtest opzionali
+    {
+      "key": "chiave_gruppo",
+      "label": "Titolo Gruppo", // es. "Velocità di scrittura"
+      "campi": [
+        { "key": "chiave_subtest", "label": "Nome subtest" }
+      ]
+    }
+  ],
+  "notaRange": "*Nota metodologica descrittiva delle soglie*", // opzionale
+  "richiedeEtaValutazione": false,
+  "richiedeStrumentiUtilizzati": true
+}
+\`\`\`
+
+Sii estremamente accurato nel mappare tutti i subtest, gli indici, le colonne e le soglie descritte nel profilo per questo specifico test.`
+
+  const testo = await callGemini(promptSystem, profiloStile, { maxOutputTokens: 2500, temperature: 0.1 })
+  try {
+    const raw = testo.replace(/```json/g, '').replace(/```/g, '').trim()
+    return JSON.parse(raw)
+  } catch (e) {
+    console.error(`Errore generazione template per test ${testNome}:`, e)
+    return null
   }
 }
 

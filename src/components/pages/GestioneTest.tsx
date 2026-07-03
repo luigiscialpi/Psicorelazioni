@@ -4,9 +4,9 @@ import {
   getTestTemplates, insertTestTemplate, updateTestTemplate, disattivaTestTemplate, deleteTestTemplate
 } from '../../data/testTemplatesData'
 import { validaSoglieCustom } from '../../services/testTemplateEngine'
-import { suggerisciTestDaArchivio } from '../../services/geminiService'
+import { suggerisciTestDaArchivio, rilevaNomiTestDaProfilo, generaTemplateTest } from '../../services/geminiService'
 import { getRelazioni } from '../../data/relazioniData'
-import { getProfiloProfessionista } from '../../data/profiloData'
+import { getProfiloProfessionista, getProfiloStile } from '../../data/profiloData'
 import type { ProfiloProfessionista } from '../../core/types'
 import type { TestTemplate, CampoTest, GruppoTest, SogliaCustom, ScalaPunteggio } from '../../core/testTemplate'
 import { USE_MOCK } from '../../core/config'
@@ -630,6 +630,12 @@ export default function GestioneTest() {
   const [suggerimenti, setSuggerimenti] = useState<string[]>([])
   const [loadingSuggerimenti, setLoadingSuggerimenti] = useState(false)
 
+  // Stati per suggerimenti da Profilo di Stile
+  const [suggerimentiProfilo, setSuggerimentiProfilo] = useState<any[]>([])
+  const [loadingProfilo, setLoadingProfilo] = useState(false)
+  const [erroreProfilo, setErroreProfilo] = useState('')
+  const [loadingEstraiTest, setLoadingEstraiTest] = useState<string | null>(null)
+
   useEffect(() => {
     Promise.all([
       getTestTemplates(),
@@ -669,6 +675,67 @@ export default function GestioneTest() {
     setFormInitial({ ...INIT_FORM, nome })
     setShowForm(true)
     setSuggerimenti(s => s.filter(x => x !== nome))
+  }
+
+  async function handleEstraiDaProfilo() {
+    setLoadingProfilo(true)
+    setErroreProfilo('')
+    try {
+      const profiloStile = await getProfiloStile()
+      if (!profiloStile || !profiloStile.trim()) {
+        setErroreProfilo('Nessun Profilo di Stile trovato. Generalo prima nella pagina "Il mio stile".')
+        setTimeout(() => setErroreProfilo(''), 5000)
+        return
+      }
+      const nomiEsistenti = templates.map(t => t.nome)
+      const res = await rilevaNomiTestDaProfilo(profiloStile, nomiEsistenti)
+      if (res.length === 0) {
+        setSuccesso('Nessun nuovo test template rilevato nel tuo Profilo di Stile.')
+        setTimeout(() => setSuccesso(''), 4000)
+      } else {
+        setSuggerimentiProfilo(res)
+      }
+    } catch (e: any) {
+      console.error(e)
+      setErroreProfilo('Errore durante l\'estrazione: ' + e.message)
+      setTimeout(() => setErroreProfilo(''), 5000)
+    } finally {
+      setLoadingProfilo(false)
+    }
+  }
+
+  async function precompilaDaProfilo(nome: string) {
+    setLoadingEstraiTest(nome)
+    setErroreProfilo('')
+    try {
+      const profiloStile = await getProfiloStile()
+      if (!profiloStile || !profiloStile.trim()) {
+        setErroreProfilo('Nessun Profilo di Stile trovato.')
+        return
+      }
+      const t = await generaTemplateTest(nome, profiloStile)
+      if (!t) {
+        setErroreProfilo(`Impossibile generare il template dettagliato per il test "${nome}".`)
+        return
+      }
+      setFormInitial({
+        nome: t.nome || nome,
+        categoria: t.categoria || 'altro',
+        scalaDefault: t.scalaDefault || { tipo: 'scalare' },
+        campiPrincipali: (t.campiPrincipali || []).map((c: any) => ({ key: c.key, label: c.label, descr: c.descr || '' })),
+        gruppiSecondari: (t.gruppiSecondari || []).map((g: any) => ({ key: g.key, label: g.label, campi: (g.campi || []).map((c: any) => ({ key: c.key, label: c.label })) })),
+        notaRange: t.notaRange || '',
+        richiedeEtaValutazione: t.richiedeEtaValutazione ?? false,
+        richiedeStrumentiUtilizzati: t.richiedeStrumentiUtilizzati ?? false,
+      })
+      setShowForm(true)
+      setSuggerimentiProfilo(s => s.filter(x => x.nome !== nome))
+    } catch (e: any) {
+      console.error(e)
+      setErroreProfilo('Errore durante la generazione del template: ' + e.message)
+    } finally {
+      setLoadingEstraiTest(null)
+    }
   }
 
   async function handleSave(form: FormState) {
@@ -790,7 +857,11 @@ export default function GestioneTest() {
                 Template attivi ({attivi.length})
               </h3>
               {!showForm && (
-                <div style={{ display: 'flex', gap: 8 }}>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  <button className="btn btn-secondary btn-sm" onClick={handleEstraiDaProfilo} disabled={loadingProfilo} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    {loadingProfilo ? <span className="spinner" style={{ width: 14, height: 14 }} /> : <Sparkles size={14} color="var(--accent)" />}
+                    {loadingProfilo ? 'Estrazione...' : 'Estrai da Profilo'}
+                  </button>
                   <button className="btn btn-secondary btn-sm" onClick={handleSuggerisci} disabled={loadingSuggerimenti} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                     {loadingSuggerimenti ? <span className="spinner" style={{ width: 14, height: 14 }} /> : <Sparkles size={14} color="var(--accent)" />}
                     {loadingSuggerimenti ? 'Analisi...' : 'Suggerisci dall\'archivio'}
@@ -801,6 +872,45 @@ export default function GestioneTest() {
                 </div>
               )}
             </div>
+
+            {erroreProfilo && (
+              <div style={{ marginBottom: 16, padding: '10px 14px', background: 'var(--danger-lt, #fee2e2)', border: '1px solid #f5c6c2', borderRadius: 'var(--radius)', color: 'var(--danger)', fontSize: 12.5, display: 'flex', alignItems: 'center', gap: 8 }}>
+                <AlertTriangle size={14} /> {erroreProfilo}
+              </div>
+            )}
+
+            {suggerimentiProfilo.length > 0 && !showForm && (
+              <div style={{ marginBottom: 16, padding: '12px 14px', background: 'var(--accent-lt)', border: '1px solid var(--accent)', borderRadius: 'var(--radius)' }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--accent-dk)', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <Sparkles size={14} /> Template rilevati nel tuo Profilo di Stile (clicca per creare)
+                </div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+                  {suggerimentiProfilo.map(t => {
+                    const isExtracting = loadingEstraiTest === t.nome
+                    return (
+                      <button key={t.nome} type="button" onClick={() => precompilaDaProfilo(t.nome)} disabled={!!loadingEstraiTest} style={{
+                        background: 'var(--bg-panel)', border: '1px solid var(--accent)', borderRadius: 10,
+                        padding: '8px 14px', fontSize: 12, color: 'var(--text)', cursor: isExtracting ? 'default' : 'pointer', display: 'flex', alignItems: 'center', gap: 8,
+                        textAlign: 'left', boxShadow: '0 2px 4px rgba(0,0,0,0.05)', transition: 'all 0.15s',
+                        opacity: loadingEstraiTest && !isExtracting ? 0.6 : 1
+                      }}>
+                        {isExtracting ? (
+                          <span className="spinner" style={{ width: 14, height: 14, flexShrink: 0 }} />
+                        ) : (
+                          <Plus size={16} color="var(--accent)" style={{ flexShrink: 0 }} />
+                        )}
+                        <div>
+                          <div style={{ fontWeight: 600, color: 'var(--accent-dk)' }}>{t.nome}</div>
+                          <div style={{ fontSize: 10.5, color: 'var(--text-muted)', textTransform: 'capitalize' }}>
+                            {t.categoria} · Clicca per estrarre struttura
+                          </div>
+                        </div>
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
 
             {suggerimenti.length > 0 && !showForm && (
               <div style={{ marginBottom: 16, padding: '12px 14px', background: 'var(--accent-lt)', border: '1px solid var(--accent)', borderRadius: 'var(--radius)' }}>

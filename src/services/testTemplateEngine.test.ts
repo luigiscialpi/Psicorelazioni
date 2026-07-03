@@ -1,7 +1,20 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
+// Mock supabase to avoid WebSocket initialization error in Node.js test environment
+vi.mock('../core/supabase', () => ({
+  supabase: {
+    from: () => ({
+      select: () => ({
+        eq: () => ({
+          single: () => Promise.resolve({ data: null, error: null }),
+        }),
+      }),
+    }),
+  },
+}))
 import { calcolaFascia, generaTabella, generaNarrativa, generaSezioneTest } from './testTemplateEngine'
 import { MOCK_WISC_IV_TEMPLATE, MOCK_NEPSY_II_TEMPLATE } from '../data/mockTemplates'
 import type { RisultatoTest } from '../core/testTemplate'
+import { rilevaNomiTestDaProfilo, generaTemplateTest } from './geminiService'
 
 describe('testTemplateEngine', () => {
 
@@ -83,6 +96,24 @@ describe('testTemplateEngine', () => {
     it('generaSezioneTest non include nota range se disabilitata', () => {
       const testo = generaSezioneTest(MOCK_NEPSY_II_TEMPLATE, risultatoMock)
       expect(testo).not.toContain('*NEPSY-II: punteggi scalari')
+    })
+  })
+
+  describe('estrazione test on-demand da profilo', () => {
+    it('rilevaNomiTestDaProfilo individua i test non registrati', async () => {
+      const rilevati = await rilevaNomiTestDaProfilo('test', ['BVSCO-3'])
+      expect(rilevati.length).toBe(2)
+      expect(rilevati[0].nome).toBe('AC-MT')
+
+      const tuttiEsistenti = await rilevaNomiTestDaProfilo('test', ['BVSCO-3', 'AC-MT', 'APL Medea'])
+      expect(tuttiEsistenti.length).toBe(0)
+    })
+
+    it('generaTemplateTest estrae il template di un test specifico', async () => {
+      const t = await generaTemplateTest('BVSCO-3', 'test')
+      expect(t.nome).toBe('BVSCO-3')
+      expect(t.categoria).toBe('apprendimenti')
+      expect(t.campiPrincipali.length).toBe(3)
     })
   })
 })

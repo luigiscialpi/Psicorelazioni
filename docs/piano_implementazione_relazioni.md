@@ -68,8 +68,9 @@ Non tutte le relazioni includono tutte le sezioni (una rivalutazione può non av
 | Setup progetto | ✅ Completo | React + Vite, design system, font |
 | Modulo 1 — Auth + Import (DOCX/PDF/DOC) | ✅ Completo | Mammoth.js (DOCX) + pdf.js (PDF) funzionanti e testati; `.doc` guidato verso conversione manuale a `.docx`. Rafforzato con fallback Pandoc WASM → docx-preview/Turndown → Mammoth e ricostruzione PDF migliorata (quindicesima correzione) |
 | Livello dati astratto | ✅ Completo | `dataService.js`, `geminiService.js` |
-| Modulo 2 — Profilo di stile | ✅ Calibrato sulla struttura reale | Prompt di analisi aggiornato per riconoscere indici WISC, tabelle NEPSY, formule normative fisse. Affidabilità Gemini (fallback modelli, retry, limiti payload) e logica incrementale deterministica aggiunte (sedicesima e diciassettesima correzione) |
-| Modulo 3 — Wizard | ✅ Calibrato sulla struttura reale | Selettore di sezioni dinamico + step dedicati per anamnesi, osservazione, cognitivo, NEPSY, apprendimenti, questionari, conclusioni. Campi "punteggi" come testo libero per le tabelle incollate. Allineamento bidirezionale col Profilo di Stile e accordion punti ponderati per subtest WISC-IV (diciottesima e ventesima correzione) |
+| Modulo 2 — Profilo di stile | ✅ Calibrato sulla struttura reale | Prompt di analisi aggiornato per riconoscere indici WISC, tabelle NEPSY, formule normative fisse. Affidabilità Gemini (fallback modelli, retry, limiti payload) e logica incrementale deterministica aggiunte (sedicesima e diciassettesima correzione). Architettura Split-Prompt Chaining per evitare troncamento output (ventiquattresima correzione): due chiamate parallele (stile sezioni 1-6 + test clinici sezione 7) |
+| Modulo 2b — Gestione Test Dinamici | ✅ Implementato | CRUD completo per template personalizzabili di test clinici (campi principali, subtest, scale di punteggio, note range). Modifica, disattivazione/riattivazione, eliminazione con conferma gender-aware. Suggerimenti AI da archivio e da Profilo di Stile con estrazione on-demand (venticinquesima correzione) |
+| Modulo 3 — Wizard | ✅ Calibrato sulla struttura reale | Selettore di sezioni dinamico + step dedicati per anamnesi, osservazione, cognitivo, NEPSY, apprendimenti, questionari, conclusioni. Campi "punteggi" come testo libero per le tabelle incollate. Allineamento bidirezionale col Profilo di Stile e accordion punti ponderati per subtest WISC-IV (diciottesima e ventesima correzione). Genere del paziente obbligatorio per concordanza grammaticale (ventitreesima correzione) |
 | Modulo 4 — Generazione + editor | 🟡 Parziale | Generazione e editor testuale aggiornati al nuovo formato; manca ancora "rigenera sezione" e l'anteprima formattata. Campi di contorno (intestazione, età/strumenti, note lettura/scrittura/matematica) ora tessuti nella narrativa di Gemini invece di restare testo grezzo (ventunesima correzione) |
 | Modulo 5 — Export DOCX | ✅ Implementato | Template fedele allo screenshot: Times New Roman, margini 2.5cm, intestazione professionale, titolo centrato sottolineato, numero pagina X/Y, tabelle WISC con intestazione grigia e bordi |
 | Modulo 5 — Archivio | ✅ Implementato | Ricerca full-text, filtro per tipo, apertura dettaglio, riapertura per modifica quando `wizard_snapshot` è presente. Dettaglio ora con rendering Markdown reale (tabelle/liste/blockquote) invece di testo piatto (quattordicesima correzione) |
@@ -302,6 +303,51 @@ Verificato con una relazione di test reale che 4 gruppi di campi finivano nel do
 Segnalato dall'utente dopo un test reale: il campo "Nome inviante" del wizard (step Contesto dell'invio, es. "dott.ssa Maria Rosaria Martina") non compariva in nessun punto del DOCX esportato. La causa era più semplice di un bug di elaborazione: il campo `nome_inviante` veniva raccolto nello stato del wizard ma **non era mai letto** da nessuna funzione a valle — non entrava nel payload per Gemini (introdotto nella ventunesima correzione per `tipo_invio`/`motivo_invio`, ma senza `nome_inviante`), né nella frase fissa di fallback in `assemblaDocumentoMarkdown`. Un campo dell'interfaccia collegato a nulla.
 
 **Correzione**: `nome_inviante` è ora incluso sia nel payload della sezione "intestazione" inviato a Gemini, sia nella frase fallback fissa. A differenza dei nomi di terzi citati incidentalmente in note libere (undicesima correzione, dove il nome viene sostituito con `[PERSONA]` prima dell'invio), qui il nome **non passa dal filtro di anonimizzazione**: è esattamente il dato che l'utente vuole veder comparire per esteso nel referto ("su segnalazione della Dott.ssa Rossi..."), come nei documenti reali forniti da tua sorella. Anonimizzarlo avrebbe prodotto un placeholder `[PERSONA]` visibile in chiaro nel testo finale — l'opposto di quanto richiesto. Aggiornato di conseguenza anche il testo esplicativo dello step del wizard, che affermava erroneamente che tutti i dati di quello step "non contengono informazioni identificative".
+
+### Ventitreesima correzione: genere del paziente obbligatorio per concordanza grammaticale
+
+Nel template reale, la concordanza di genere è pervasiva: "il minore si presenta", "la ragazzina riferisce", "Giovanni accetta" / "Giulia accetta". Senza un'indicazione esplicita del genere, Gemini doveva indovinare dal nome — con risultati inaffidabili soprattutto per nomi ambigui o stranieri.
+
+**Correzione**: aggiunto un campo obbligatorio `genere` (maschio/femmina) nello step Anagrafica del wizard, raccoglibile tramite un selettore a fisarmonica `<details>`. Il genere selezionato viene passato al system prompt di Gemini come istruzione esplicita di concordanza grammaticale ("usa articoli, aggettivi e participi al [maschile/femminile]"), garantendo coerenza in tutto il documento. L'informazione sul genere è l'unico dato anagrafico che viene inviato a Gemini, per necessità grammaticale; nome, cognome e data di nascita continuano a essere esclusi dal payload.
+
+### Ventiquattresima correzione — critica: Prompt Chaining per evitare il troncamento dell'output Gemini nella generazione del Profilo di Stile
+
+Durante i test con il corpus reale di 13 relazioni, la generazione del Profilo di Stile produceva sistematicamente un errore `finishReason: MAX_TOKENS` (8191 token di output, il massimo fisico di Gemini Flash). La risposta veniva troncata e l'intero profilo risultava incompleto — un problema particolarmente grave perché il profilo è il documento fondante per tutte le generazioni successive.
+
+Soluzioni scartate:
+- **Forzare sintesi estrema nel prompt**: degraderebbe la qualità del profilo, che è l'asset più importante dell'applicazione
+- **Aumentare `maxOutputTokens`**: è già al massimo fisico del modello (8192)
+- **Troncare il corpus in input**: il problema non è nella quantità di input (che rientra ampiamente nel milione di token di contesto), ma nella ricchezza dell'output richiesto
+
+**Soluzione adottata — Split-Prompt Chaining**: suddividere la generazione in due chiamate distinte, ciascuna focalizzata su una parte specifica del profilo:
+- **Chiamata 1 (Stile, sezioni 1-6)**: analizza esclusivamente lo stile di scrittura, il registro, le formule ricorrenti, la terminologia, la struttura delle sezioni e il ritmo narrativo. Output tipico: ~3000 token.
+- **Chiamata 2 (Test, sezione 7)**: analizza e cataloga la struttura dettagliata dei test clinici rilevati nell'archivio: nome, categoria, colonne di scoring, subtest, commenti qualitativi tipici, soglie e note range. Output tipico: ~3500 token.
+- I risultati vengono concatenati lato client in un unico documento Markdown completo.
+
+Questa architettura è applicata sia a `analizzaStile` (generazione da zero) sia a `aggiornaProfiloIncrementale` (aggiornamento con nuove relazioni), tramite l'helper `splitProfilo` che divide un profilo esistente al marker `## 7. Analisi dei Test Clinici`.
+
+Modificata anche la gestione di `MAX_TOKENS` in `callGemini`: invece di lanciare un'eccezione bloccante, restituisce il testo parziale con un warning in console — degradazione controllata invece di errore fatale.
+
+### Venticinquesima correzione: Gestione Test Dinamici con estrazione on-demand da Profilo di Stile
+
+Introdotto un intero modulo nuovo per la gestione personalizzata dei test clinici, accessibile dalla navigazione principale come scheda dedicata "Gestione Test".
+
+**CRUD completo per template di test personalizzati**:
+- Creazione di nuovi template con form guidato (nome, categoria, scala di punteggio, campi principali, subtest secondari, nota range)
+- Modifica di template esistenti con precompilazione completa del form
+- Disattivazione e riattivazione di template (soft-delete con flag `attivo`)
+- Eliminazione definitiva con modale di conferma che si adatta grammaticalmente al genere del professionista loggato ("Sei sicuro/a/ə")
+- Policy RLS `DELETE` specifica su Supabase per consentire la cancellazione solo di test non built-in
+
+**Suggerimenti AI da archivio**: la funzione `suggerisciTestDaArchivio` analizza le relazioni esistenti (bozze) per individuare nomi di test menzionati ma non ancora registrati come template.
+
+**Estrazione template da Profilo di Stile — architettura on-demand**: inizialmente la funzione `estraiTestDaProfilo` tentava di estrarre **tutti** i template di **tutti** i test in una singola chiamata a Gemini, producendo output superiori a 8192 token e generando lo stesso errore `MAX_TOKENS` risolto nella ventiquattresima correzione per il profilo di stile.
+
+Soluzione adottata — decomposizione in due funzioni mirate:
+1. **`rilevaNomiTestDaProfilo(profilo, templateEsistenti)`**: chiede a Gemini esclusivamente la lista di nomi e categorie dei test descritti nel profilo (~100 token di output). Velocissima, nessun rischio di troncamento. Mostra le card dei test rilevati nell'interfaccia.
+2. **`generaTemplateTest(nomeTest, profilo)`**: quando l'utente clicca su una card specifica, viene generato il template strutturato JSON solo per quel singolo test (~500 token di output), con tutte le colonne di scoring, i subtest, le soglie e le note range estratte dal profilo. Un'animazione di caricamento sulla card specifica indica l'elaborazione in corso.
+
+Questa decomposizione elimina completamente il problema di troncamento e offre un'esperienza utente migliore: l'utente vede subito i nomi dei test disponibili e sceglie quale approfondire, invece di attendere 30+ secondi per una singola chiamata massiva.
 
 ---
 
@@ -876,10 +922,6 @@ I dati inviati alla Gemini API gratuita (Google AI Studio) potrebbero essere usa
 - [x] Anonimizzazione estesa a tutti i campi di testo libero del wizard (non solo alle relazioni importate per il Profilo di Stile), con due bug di regex corretti (case-insensitive applicato erroneamente a porzioni case-sensitive del pattern)
 - [x] Anamnesi e Osservazione comportamentale riscritte da Gemini in prosa fluida, non più composte meccanicamente da concatenazione di etichette checkbox — con fallback deterministico se la narrativa non è disponibile
 - [x] Colonna "Interpretabilità" nella tabella WISC-IV resa opzionale (checkbox per indice nel wizard), omessa quando tutti gli indici sono interpretabili
-- [ ] Rigenera sezione nell'editor
-- [x] Archivio con ricerca full-text e filtri
-- [x] Anonimizzazione locale + anteprima obbligatoria prima dell'invio a Gemini per l'analisi dello stile (fix di privacy critico)
-- [x] Validazione per step nel wizard (non più accumulata solo alla fine), con indicatore visivo di step incompleti nella barra di progresso
 - [x] Riapertura e modifica di relazioni esistenti (wizard pre-popolato da `wizard_snapshot`)
 - [x] Anagrafica reale persistita separatamente dal contenuto clinico (tabella `pazienti` collegata via `paziente_id`)
 - [x] Salvataggio automatico wizard (debounced)
@@ -893,8 +935,15 @@ I dati inviati alla Gemini API gratuita (Google AI Studio) potrebbero essere usa
 - [x] Chiarezza dei flussi URL bozza/modifica, con etichette contestuali in Dashboard Bozze
 - [x] Subtest WISC-IV per indice come punti ponderati numerici in accordion (non più testo libero), spiegati sempre a parole nella relazione
 - [x] Campi di contorno (intestazione, età/strumenti valutazione, note lettura/scrittura/matematica) tessuti nella narrativa di Gemini invece di restare testo grezzo duplicato
+- [x] Genere del paziente obbligatorio nello step Anagrafica del wizard, usato per istruire Gemini sulla concordanza grammaticale in tutto il documento
+- [x] Profilo di Stile: architettura Split-Prompt Chaining (due chiamate separate per stile e test) che elimina il troncamento `MAX_TOKENS` senza sacrificare qualità
+- [x] Gestione Test Dinamici: CRUD completo per template personalizzabili, con modifica, disattivazione/riattivazione, eliminazione gender-aware
+- [x] Suggerimenti AI da archivio per test non ancora registrati
+- [x] Estrazione on-demand di template test dal Profilo di Stile (due funzioni: rilevamento nomi rapido + generazione struttura singolo test), senza rischi di troncamento output
+- [x] Dashboard: sezione bozze in corso limitata a 6 elementi con scorrimento
 
 ### Versione 1.1 — Priorità 3
+- [ ] Rigenera sezione nell'editor
 - [ ] Anteprima formattata della relazione (HTML renderizzato, non solo textarea)
 - [ ] Statistiche dashboard
 - [ ] Export multiplo ZIP
@@ -933,4 +982,4 @@ Assumendo che la maggior parte del codice (componenti React, API, prompt) venga 
 
 ---
 
-*Documento aggiornato il 29 giugno 2026. Da aggiornare durante lo sviluppo con le decisioni prese e i problemi incontrati.*
+*Documento aggiornato il 3 luglio 2026. Da aggiornare durante lo sviluppo con le decisioni prese e i problemi incontrati.*
