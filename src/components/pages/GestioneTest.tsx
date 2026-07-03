@@ -1,5 +1,5 @@
 import { useState, useEffect, useReducer } from 'react'
-import { Plus, Trash2, ChevronDown, ChevronUp, Eye, Save, AlertTriangle, Lock, FlaskConical, X, GripVertical, Check, Sparkles } from 'lucide-react'
+import { Plus, Trash2, ChevronDown, ChevronUp, Eye, Save, AlertTriangle, Lock, FlaskConical, X, GripVertical, Check, Sparkles, Pencil } from 'lucide-react'
 import {
   getTestTemplates, insertTestTemplate, updateTestTemplate, disattivaTestTemplate, deleteTestTemplate
 } from '../../data/testTemplatesData'
@@ -524,7 +524,7 @@ function FormTemplate({
 }
 
 // ── Card singolo template ─────────────────────────────────────
-function TemplateCard({ template, onDisattiva, onDelete }: { template: TestTemplate, onDisattiva?: () => void, onDelete?: () => void }) {
+function TemplateCard({ template, onDisattiva, onDelete, onEdit, onRiattiva }: { template: TestTemplate, onDisattiva?: () => void, onDelete?: () => void, onEdit?: () => void, onRiattiva?: () => void }) {
   const [open, setOpen] = useState(false)
 
   return (
@@ -557,6 +557,16 @@ function TemplateCard({ template, onDisattiva, onDelete }: { template: TestTempl
             {open ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
             {open ? 'Chiudi' : 'Dettagli'}
           </button>
+          {!template.builtIn && onEdit && (
+            <button type="button" onClick={onEdit} style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 6, padding: '4px 8px', cursor: 'pointer', fontSize: 12, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 4 }}>
+              <Pencil size={13} /> Modifica
+            </button>
+          )}
+          {onRiattiva && (
+            <button type="button" onClick={onRiattiva} style={{ background: 'none', border: '1px solid var(--accent)', borderRadius: 6, padding: '4px 8px', cursor: 'pointer', fontSize: 12, color: 'var(--accent)', display: 'flex', alignItems: 'center', gap: 4 }}>
+              Riattiva
+            </button>
+          )}
           {!template.builtIn && template.attivo && onDisattiva && (
             <button type="button" onClick={onDisattiva} style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 6, padding: '4px 8px', cursor: 'pointer', fontSize: 12, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 4 }}>
               Disattiva
@@ -610,6 +620,7 @@ export default function GestioneTest() {
   const [loading, setLoading] = useState(true)
   const [showForm, setShowForm] = useState(false)
   const [formInitial, setFormInitial] = useState<FormState | undefined>(undefined)
+  const [editingTemplateId, setEditingTemplateId] = useState<string | null>(null)
   const [confirmDisattiva, setConfirmDisattiva] = useState<string | null>(null)
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
   const [profilo, setProfilo] = useState<ProfiloProfessionista | null>(null)
@@ -661,8 +672,30 @@ export default function GestioneTest() {
   }
 
   async function handleSave(form: FormState) {
+    if (editingTemplateId) {
+      // Modalità modifica
+      await updateTestTemplate(editingTemplateId, {
+        nome: sanitizzaStringa(form.nome),
+        categoria: form.categoria,
+        scalaDefault: form.scalaDefault,
+        campiPrincipali: form.campiPrincipali as CampoTest[],
+        gruppiSecondari: form.gruppiSecondari.length > 0 ? form.gruppiSecondari as GruppoTest[] : undefined,
+        notaRange: form.notaRange || undefined,
+        richiedeEtaValutazione: form.richiedeEtaValutazione,
+        richiedeStrumentiUtilizzati: form.richiedeStrumentiUtilizzati,
+      })
+      const updated = await getTestTemplates()
+      setTemplates(updated)
+      setShowForm(false)
+      setEditingTemplateId(null)
+      setFormInitial(undefined)
+      setSuccesso(`Template "${sanitizzaStringa(form.nome)}" aggiornato con successo.`)
+      setTimeout(() => setSuccesso(''), 4000)
+      return
+    }
+    // Modalità creazione
     const nuovoTemplate = await insertTestTemplate({
-      nome: form.nome,
+      nome: sanitizzaStringa(form.nome),
       categoria: form.categoria,
       scalaDefault: form.scalaDefault,
       campiPrincipali: form.campiPrincipali as CampoTest[],
@@ -686,6 +719,14 @@ export default function GestioneTest() {
     setTemplates(updated)
     setConfirmDisattiva(null)
     setSuccesso('Template disattivato. Non comparirà più nel wizard.')
+    setTimeout(() => setSuccesso(''), 4000)
+  }
+
+  async function handleRiattiva(id: string) {
+    await updateTestTemplate(id, { attivo: true })
+    const updated = await getTestTemplates()
+    setTemplates(updated)
+    setSuccesso('Template riattivato. Comparirà di nuovo nel wizard.')
     setTimeout(() => setSuccesso(''), 4000)
   }
 
@@ -779,16 +820,16 @@ export default function GestioneTest() {
               </div>
             )}
 
-            {/* Form creazione */}
+            {/* Form creazione / modifica */}
             {showForm && (
               <div style={{ border: '1px solid var(--accent)', borderRadius: 'var(--radius)', padding: '18px 16px', marginBottom: 16, background: 'var(--accent-lt)' }}>
                 <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--accent-dk)', marginBottom: 14 }}>
-                  Nuovo template di test
+                  {editingTemplateId ? `Modifica template` : 'Nuovo template di test'}
                 </div>
                 <FormTemplate
                   initial={formInitial}
                   onSave={handleSave}
-                  onCancel={() => setShowForm(false)}
+                  onCancel={() => { setShowForm(false); setEditingTemplateId(null); setFormInitial(undefined) }}
                 />
               </div>
             )}
@@ -798,6 +839,21 @@ export default function GestioneTest() {
                 <TemplateCard
                   key={t.id}
                   template={t}
+                  onEdit={!t.builtIn ? () => {
+                    const f: FormState = {
+                      nome: t.nome,
+                      categoria: t.categoria,
+                      scalaDefault: t.scalaDefault,
+                      campiPrincipali: (t.campiPrincipali || []).map(c => ({ key: c.key, label: c.label, descr: c.descr || '' })),
+                      gruppiSecondari: (t.gruppiSecondari || []).map(g => ({ key: g.key, label: g.label, campi: (g.campi || []).map(c => ({ key: c.key, label: c.label })) })),
+                      notaRange: t.notaRange || '',
+                      richiedeEtaValutazione: t.richiedeEtaValutazione,
+                      richiedeStrumentiUtilizzati: t.richiedeStrumentiUtilizzati,
+                    }
+                    setEditingTemplateId(t.id)
+                    setFormInitial(f)
+                    setShowForm(true)
+                  } : undefined}
                   onDisattiva={!t.builtIn ? () => setConfirmDisattiva(t.id) : undefined}
                   onDelete={!t.builtIn ? () => setConfirmDelete(t.id) : undefined}
                 />
@@ -822,6 +878,7 @@ export default function GestioneTest() {
                 <TemplateCard
                   key={t.id}
                   template={t}
+                  onRiattiva={() => handleRiattiva(t.id)}
                   onDelete={!t.builtIn ? () => setConfirmDelete(t.id) : undefined}
                 />
               ))}
