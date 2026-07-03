@@ -120,39 +120,53 @@ export default function Dashboard({ mode = 'dashboard' }) {
         {/* Sessioni wizard sospese */}
         {sospese.length > 0 && (
           <div className="card" style={{ marginBottom: 16, borderLeft: '3px solid var(--accent)' }}>
-            <div className="card-title">{isBozzePage ? 'Elenco bozze' : 'Bozze in corso'}</div>
-            {sospese.map(s => (
-              <div key={s.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid var(--border)' }}>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0, paddingRight: 10 }}>
-                  <span style={{ fontSize: 13, color: 'var(--text)', fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                    {getBozzaTitolo(s)}
-                  </span>
-                  <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-                    Ultimo salvataggio: {formatData(s.created_at)}
-                  </span>
-                </div>
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                  <button className="btn btn-secondary btn-sm" onClick={() => navigate(`/bozza/riprendi?sessionId=${encodeURIComponent(s.id)}`)}>
-                    Riprendi
-                  </button>
-                  <button
-                    className="btn btn-secondary btn-sm"
-                    style={{ color: 'var(--danger)', padding: 6, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-                    onClick={async () => {
-                      if (confirm('Vuoi eliminare questa bozza?')) {
-                        const ok = await deleteSessione(s.id)
-                        if (ok) dispatch({ type: 'DELETE_SOSPESA', id: s.id })
-                      }
-                    }}
-                    title="Elimina bozza"
-                  >
-                    <Trash2 size={14} />
-                  </button>
-                </div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+              <div className="card-title" style={{ margin: 0 }}>{isBozzePage ? 'Elenco bozze' : 'Bozze in corso'}</div>
+              {sospese.length > 6 && (
+                <span style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>{sospese.length} bozze</span>
+              )}
+            </div>
+            <div style={{ position: 'relative' }}>
+              <div style={{ maxHeight: 340, overflowY: 'auto', paddingRight: 2 }}>
+                {sospese.map((s, i) => (
+                  <div key={s.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0', borderBottom: i < sospese.length - 1 ? '1px solid var(--border)' : 'none' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0, paddingRight: 10 }}>
+                      <span style={{ fontSize: 13, color: 'var(--text)', fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {getBozzaTitolo(s)}
+                      </span>
+                      <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                        Ultimo salvataggio: {formatData(s.created_at)}
+                      </span>
+                    </div>
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                      <button className="btn btn-secondary btn-sm" onClick={() => navigate(`/bozza/riprendi?sessionId=${encodeURIComponent(s.id)}`)}>
+                        Riprendi
+                      </button>
+                      <button
+                        className="btn btn-secondary btn-sm"
+                        style={{ color: 'var(--danger)', padding: 6, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                        onClick={async () => {
+                          if (confirm('Vuoi eliminare questa bozza?')) {
+                            const ok = await deleteSessione(s.id)
+                            if (ok) dispatch({ type: 'DELETE_SOSPESA', id: s.id })
+                          }
+                        }}
+                        title="Elimina bozza"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  </div>
+                ))}
               </div>
-            ))}
+              {/* Fade gradient quando ci sono più elementi */}
+              {sospese.length > 6 && (
+                <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 32, background: 'linear-gradient(to bottom, transparent, var(--bg-panel))', pointerEvents: 'none', borderRadius: '0 0 4px 4px' }} />
+              )}
+            </div>
           </div>
         )}
+
 
         {isBozzePage && !loading && sospese.length === 0 && (
           <div className="card" style={{ textAlign: 'center', padding: '42px 24px' }}>
