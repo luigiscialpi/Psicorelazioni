@@ -35,6 +35,12 @@ export const GruppoTestSchema = z.object({
   campi: z.array(CampoTestSchema), // subtest del gruppo (narrativa, mai tabella)
 });
 
+export const FormulaCalcoloSchema = z.object({
+  targetKey: z.string(),          // chiave del campo da calcolare (es. 'totale', 'iag')
+  espressione: z.string(),        // espressione matematica, es. '{cf} + {rs}' o '({icv} + {irp}) / 2'
+  descrizione: z.string().optional(),
+});
+
 export const TestTemplateSchema = z.object({
   id: z.string(),                 // slug stabile: 'wisc-iv', 'nepsy-ii', o UUID per i custom
   nome: z.string(),               // "WISC-IV", visualizzato ovunque
@@ -50,6 +56,9 @@ export const TestTemplateSchema = z.object({
   schemaVersion: z.number().default(1), // Gestione compatibilità schemi futuri
   createdAt: z.string().optional(),
   updatedAt: z.string().optional(),
+  // Estensioni per unificazione e flessibilità
+  colonne: z.array(z.string()).default(['Punteggio']), // Intestazioni colonne punteggio, es. ['Punti T', 'Percentile']
+  formule: z.array(FormulaCalcoloSchema).optional(),  // Formule di calcolo per indici sintetici/totale
 });
 
 // Estrazione tipi TypeScript dagli schemi Zod
@@ -58,11 +67,14 @@ export type SogliaCustom = z.infer<typeof SogliaCustomSchema>;
 export type ScalaPunteggio = z.infer<typeof ScalaPunteggioSchema>;
 export type CampoTest = z.infer<typeof CampoTestSchema>;
 export type GruppoTest = z.infer<typeof GruppoTestSchema>;
+export type FormulaCalcolo = z.infer<typeof FormulaCalcoloSchema>;
 export type TestTemplate = z.infer<typeof TestTemplateSchema>;
 
 // Risultato di un test compilato nel wizard
 export type RisultatoTest = {
   somministrato?: boolean
+  // I punteggi della colonna principale (la prima in template.colonne) sono salvati con chiave campoKey.
+  // I punteggi delle colonne successive sono salvati con chiave campoKey + '_' + nomeColonna (es. 'esternalizzazione_Percentile').
   punteggi: Record<string, string | number>              // chiave = CampoTest.key dei campiPrincipali
   punteggiSecondari?: Record<string, string | number>       // chiave = CampoTest.key dentro i gruppiSecondari
   interpretabilita?: Record<string, boolean>                  // solo per campiPrincipali, default true se assente

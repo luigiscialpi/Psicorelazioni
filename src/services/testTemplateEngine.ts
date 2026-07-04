@@ -3,6 +3,66 @@ import type { TestTemplate, CampoTest, RisultatoTest, ScalaPunteggio, SogliaCust
 // Tipi di utilità interni
 type FasciaType = string | null
 
+/**
+ * Converte al volo la struttura dati legacy (cognitivo, nepsy) nel nuovo formato unificato (test_risultati).
+ */
+export function migraWizardSnapshotLegacy(raw: any): any {
+  if (!raw) return raw
+  // Se ha già test_risultati con wisc-iv o nepsy-ii, o se non ha i campi legacy, non facciamo nulla.
+  const hasWisc = raw.test_risultati?.['wisc-iv']
+  const hasNepsy = raw.test_risultati?.['nepsy-ii']
+  if ((hasWisc || hasNepsy) || (!raw.cognitivo && !raw.nepsy)) {
+    // Assicuriamoci comunque che sezioni_attive sia mappato con i nuovi ID
+    if (raw.sezioni_attive) {
+      raw.sezioni_attive = raw.sezioni_attive.map((s: string) => 
+        s === 'cognitivo' ? 'wisc-iv' : s === 'nepsy' ? 'nepsy-ii' : s
+      )
+    }
+    return raw
+  }
+
+  const test_risultati = { ...(raw.test_risultati || {}) }
+
+  if (raw.cognitivo && (raw.cognitivo.somministrato || Object.keys(raw.cognitivo.punteggi || {}).length > 0)) {
+    test_risultati['wisc-iv'] = {
+      somministrato: raw.cognitivo.somministrato ?? true,
+      punteggi: raw.cognitivo.punteggi || {},
+      punteggiSecondari: raw.cognitivo.subtest_pp || {},
+      interpretabilita: raw.cognitivo.interpretabilita || {},
+      includiNotaRange: raw.cognitivo.includi_nota_range !== false,
+      etaValutazione: raw.cognitivo.eta_valutazione || '',
+      strumentiUtilizzati: raw.cognitivo.strumenti_utilizzati || '',
+      noteCliniche: raw.cognitivo.note_cliniche || '',
+    }
+  }
+
+  if (raw.nepsy && (raw.nepsy.somministrato || Object.keys(raw.nepsy.punteggi || {}).length > 0)) {
+    test_risultati['nepsy-ii'] = {
+      somministrato: raw.nepsy.somministrato ?? true,
+      punteggi: raw.nepsy.punteggi || {},
+      punteggiSecondari: {},
+      interpretabilita: {},
+      includiNotaRange: raw.nepsy.includi_nota_range !== false,
+      etaValutazione: '',
+      strumentiUtilizzati: raw.nepsy.strumenti_utilizzati || '',
+      noteCliniche: raw.nepsy.note_cliniche || '',
+    }
+  }
+
+  let sezioni_attive = raw.sezioni_attive || []
+  sezioni_attive = sezioni_attive.map((s: string) => 
+    s === 'cognitivo' ? 'wisc-iv' : s === 'nepsy' ? 'nepsy-ii' : s
+  )
+
+  return {
+    ...raw,
+    test_risultati,
+    sezioni_attive,
+    cognitivo: undefined,
+    nepsy: undefined
+  }
+}
+
 // Funzione base per determinare la fascia di un QI (Media 100, DS 15)
 export function getFasciaWISC(punteggio: number): string {
   if (punteggio > 129) return 'Molto superiore'
@@ -61,25 +121,98 @@ export function getScalaApplicabile(campo: CampoTest, template: TestTemplate): S
 }
 
 /**
- * Genera la tabella Markdown per i risultati di un test.
+ * Valuta un'espressione aritmetica in modo controllato e sicuro.
+ */
+export function valutaFormulaSicura(espressione: string, variabili: Record<string, number>): number {
+  let expr = espressione.trim()
+  const matchVar = espressione.match(/\{[a-zA-Z0-9_-]+\}/g)
+  if (matchVar) {
+    for (const m of matchVar) {
+      const key = m.slice(1, -1)
+      const val = variabili[key] !== undefined ? variabili[key] : NaN
+      expr = expr.replace(m, String(val))
+    }
+  }
+
+  // Verifica di sicurezza: consente solo numeri, spazi, decimali, parentesi e operatori
+  if (!/^[0-9\s.+\-*/()]+$/.test(expr)) {
+    return NaN
+  }
+
+  try {
+    const result = new Function(`return (${expr})`)()
+    return typeof result === 'number' && !isNaN(result) ? result : NaN
+  } catch (e) {
+    return NaN
+  }
+}
+
+/**
+ * Calcola in tempo reale i valori delle formule definite nel template.
+ */
+export function valutaFormule(template: TestTemplate, risultato: RisultatoTest): Record<string, string | number> {
+  const tuttiPunteggi = { ...risultato.punteggi }
+  
+  if (!template.formule || template.formule.length === 0) {
+    return tuttiPunteggi
+  }
+
+  const variabili: Record<string, number> = {}
+  for (const [k, v] of Object.entries(risultato.punteggi)) {
+    const n = parseFloat(String(v))
+    if (!isNaN(n)) variabili[k] = n
+  }
+  if (risultato.punteggiSecondari) {
+    for (const [k, v] of Object.entries(risultato.punteggiSecondari)) {
+      const n = parseFloat(String(v))
+      if (!isNaN(n)) variabili[k] = n
+    }
+  }
+
+  // Valuta ogni formula sequenzialmente (in modo che le formule successive possano dipendere da quelle precedenti)
+  for (const f of template.formule) {
+    const val = valutaFormulaSicura(f.espressione, variabili)
+    if (!isNaN(val)) {
+      const arrotondato = Math.round(val * 10) / 10
+      tuttiPunteggi[f.targetKey] = arrotondato
+      variabili[f.targetKey] = arrotondato
+    }
+  }
+
+  return tuttiPunteggi
+}
+
+/**
+ * Genera la tabella Markdown per i risultati di un test, supportando colonne multiple.
  */
 export function generaTabella(template: TestTemplate, risultato: RisultatoTest): string {
   let table = ''
   
-  // Tabella principale (se ci sono punteggi per i campi principali)
   const campiPrincipaliValidi = template.campiPrincipali.filter(c => 
     risultato.punteggi[c.key] !== undefined && risultato.punteggi[c.key] !== ''
   )
   
   if (campiPrincipaliValidi.length > 0) {
-    table += `| ${template.nome} scale | Punteggio | Categoria descrittiva | Interpretabilità |\n`
-    table += `|---|---|---|---|\n`
+    const colList = template.colonne || ['Punteggio']
+    
+    // Intestazione tabella
+    table += `| ${template.nome} scale | ` + colList.join(' | ') + ` | Categoria descrittiva | Interpretabilità |\n`
+    table += `|---|` + colList.map(() => '---').join('|') + `|---|---|\n`
+    
     for (const c of campiPrincipaliValidi) {
       const p = risultato.punteggi[c.key]
       const scala = getScalaApplicabile(c, template)
       const fascia = calcolaFascia(p, scala) ?? '-'
       const interpret = risultato.interpretabilita?.[c.key] !== false ? 'Sì' : 'No'
-      table += `| ${c.label} | ${p} | ${fascia} | ${interpret} |\n`
+      
+      // Estrae i punteggi per ciascuna colonna definita nel template
+      const rowScores = colList.map((colName, index) => {
+        if (index === 0) return p // Prima colonna: chiave campoKey standard
+        const extraKey = `${c.key}_${colName}`
+        return risultato.punteggi[extraKey] !== undefined ? risultato.punteggi[extraKey] : '—'
+      })
+      
+      table += `| ${c.label} | ` + rowScores.join(' | ') + ` | ${fascia} | ${interpret} |\n`
     }
     table += '\n'
   }

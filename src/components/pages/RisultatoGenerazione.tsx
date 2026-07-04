@@ -9,6 +9,7 @@ import { generaRelazione, USE_MOCK_AI } from '../../services/geminiService'
 import { sostituisciNomePlaceholder } from '../../services/wizardToText'
 import { esportaDocx, scaricaDocx } from '../../services/exportDocx'
 import { getTestTemplatesAttivi } from '../../data/testTemplatesData'
+import { migraWizardSnapshotLegacy } from '../../services/testTemplateEngine'
 
 function reducer(state, action) {
   switch (action.type) {
@@ -31,7 +32,7 @@ function reducer(state, action) {
 export default function RisultatoGenerazione() {
   const location = useLocation()
   const navigate = useNavigate()
-  const wizardData = location.state?.wizardData || null
+  const wizardData = location.state?.wizardData ? migraWizardSnapshotLegacy(location.state.wizardData) : null
   const sourceRoute = wizardData?._sourceRoute || '/nuova'
   const breadcrumb = wizardData?._isDirectEdit
     ? 'Archivio > Modifica testo'

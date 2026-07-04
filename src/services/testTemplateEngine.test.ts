@@ -11,12 +11,82 @@ vi.mock('../core/supabase', () => ({
     }),
   },
 }))
-import { calcolaFascia, generaTabella, generaNarrativa, generaSezioneTest } from './testTemplateEngine'
+import { calcolaFascia, generaTabella, generaNarrativa, generaSezioneTest, valutaFormule, migraWizardSnapshotLegacy } from './testTemplateEngine'
 import { MOCK_WISC_IV_TEMPLATE, MOCK_NEPSY_II_TEMPLATE } from '../data/mockTemplates'
-import type { RisultatoTest } from '../core/testTemplate'
+import type { RisultatoTest, TestTemplate } from '../core/testTemplate'
 import { rilevaNomiTestDaProfilo, generaTemplateTest } from './geminiService'
 
 describe('testTemplateEngine', () => {
+
+  describe('valutaFormule', () => {
+    it('calcola correttamente formule semplici e complesse', () => {
+      const templateMock: TestTemplate = {
+        id: 'test-formule',
+        nome: 'Test Formule',
+        categoria: 'altro',
+        scalaDefault: { tipo: 'scalare' },
+        campiPrincipali: [
+          { key: 'a', label: 'Campo A' },
+          { key: 'b', label: 'Campo B' },
+          { key: 'somma', label: 'Somma' },
+          { key: 'media', label: 'Media' },
+        ],
+        formule: [
+          { targetKey: 'somma', espressione: '{a} + {b}' },
+          { targetKey: 'media', espressione: '({somma}) / 2' }
+        ],
+        colonne: ['Punteggio'],
+        schemaVersion: 1,
+        builtIn: false,
+        attivo: true,
+        richiedeEtaValutazione: false,
+        richiedeStrumentiUtilizzati: false
+      }
+
+      const risultato: RisultatoTest = {
+        punteggi: { a: '10', b: '20' }
+      }
+
+      const punteggiCalcolati = valutaFormule(templateMock, risultato)
+      expect(punteggiCalcolati.somma).toBe(30)
+      expect(punteggiCalcolati.media).toBe(15)
+    })
+  })
+
+  describe('migraWizardSnapshotLegacy', () => {
+    it('converte correttamente il formato legacy in test_risultati', () => {
+      const legacyWizard = {
+        sezioni_attive: ['cognitivo', 'nepsy'],
+        cognitivo: {
+          somministrato: true,
+          punteggi: { icv: '100' },
+          subtest_pp: { so: '10' },
+          interpretabilita: { icv: true },
+          eta_valutazione: '8 anni',
+          strumenti_utilizzati: 'WISC-IV',
+          note_cliniche: 'Leggera stanchezza.'
+        },
+        nepsy: {
+          somministrato: true,
+          punteggi: { inibizione: '8' },
+          strumenti_utilizzati: 'NEPSY-II',
+          note_cliniche: 'Collaborativo.'
+        }
+      }
+
+      const migrated = migraWizardSnapshotLegacy(legacyWizard)
+
+      expect(migrated.sezioni_attive).toContain('wisc-iv')
+      expect(migrated.sezioni_attive).toContain('nepsy-ii')
+      expect(migrated.test_risultati['wisc-iv'].punteggi.icv).toBe('100')
+      expect(migrated.test_risultati['wisc-iv'].punteggiSecondari.so).toBe('10')
+      expect(migrated.test_risultati['wisc-iv'].etaValutazione).toBe('8 anni')
+      expect(migrated.test_risultati['nepsy-ii'].punteggi.inibizione).toBe('8')
+      expect(migrated.test_risultati['nepsy-ii'].noteCliniche).toBe('Collaborativo.')
+      expect(migrated.cognitivo).toBeUndefined()
+      expect(migrated.nepsy).toBeUndefined()
+    })
+  })
 
   describe('calcolaFascia', () => {
     it('calcola correttamente fasce WISC', () => {

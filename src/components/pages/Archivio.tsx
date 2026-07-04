@@ -7,6 +7,7 @@ import { getRelazioni, deleteRelazione } from '../../data/relazioniData'
 import { getPazienteById } from '../../data/pazientiData'
 import { ARCHIVIO_INIT, archivioReducer } from '../state/archivioState'
 import type { Relazione } from '../../core/types'
+import { migraWizardSnapshotLegacy } from '../../services/testTemplateEngine'
 
 const MESI = ['gen','feb','mar','apr','mag','giu','lug','ago','set','ott','nov','dic']
 function formatData(iso?: string | null) {
@@ -42,6 +43,10 @@ export default function Archivio() {
 
   function handleModificaTestoDiretto(relazione: Relazione) {
     const snap = (relazione.wizard_snapshot || {}) as any
+    const migrated = migraWizardSnapshotLegacy({
+      ...snap,
+      sezioni_attive: snap.sezioni_attive || relazione.tag || []
+    })
     navigate('/risultato', {
       state: {
         wizardData: {
@@ -54,13 +59,11 @@ export default function Archivio() {
             cognome: pazienteAperta?.cognome || '',
             dataNascita: pazienteAperta?.data_nascita || '',
             genere: pazienteAperta?.genere || 'maschio',
-            scuola: pazienteAperta?.scuola || '',
-            classe: pazienteAperta?.classe || '',
+            scuola: '',
+            classe: '',
           },
-          cognitivo: snap.cognitivo || { somministrato: false, punteggi: {} },
-          nepsy: snap.nepsy || { somministrato: false, punteggi: {} },
-          sezioni_attive: snap.sezioni_attive || relazione.tag || [],
-          test_risultati: snap.test_risultati || {},
+          sezioni_attive: migrated.sezioni_attive,
+          test_risultati: migrated.test_risultati,
         },
         testoPreesistente: relazione.testo_markdown
       }

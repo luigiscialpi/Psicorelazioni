@@ -760,6 +760,7 @@ export default function GestioneTest() {
       richiedeStrumentiUtilizzati: form.richiedeStrumentiUtilizzati,
       attivo: true,
       schemaVersion: 1,
+      colonne: ['Punteggio'],
     })
     const updated = await getTestTemplates()
     setTemplates(updated)

@@ -101,7 +101,6 @@ type WizardPayload = UnknownRecord & {
     punteggi_grezzi?: string
     note_cliniche?: string
   }
-  test_risultati?: Record<string, RisultatoTest>
   conclusioni?: UnknownRecord & {
     diagnosi?: string
     codice_icd?: string
@@ -566,25 +565,21 @@ Rispondi SOLO con la sezione 7 in formato Markdown, senza introduzioni.`
 // il Markdown completo a Gemini. Gemini riceve solo le sezioni
 // narrative (cognitivo, nepsy, conclusioni...) mentre le tabelle
 // WISC/NEPSY sono precalcolate lato client.
+// ── GENERAZIONE RELAZIONE ──────────────────────────────────
+// Strategia: la relazione viene assemblata deterministicamente da
+// wizardToText.assemblaDocumentoMarkdown() invece che fare generare
+// il Markdown completo a Gemini. Gemini riceve solo le sezioni
+// narrative (cognitivo, nepsy, conclusioni...) mentre le tabelle
+// WISC/NEPSY sono precalcolate lato client.
 export async function generaNarrativaSezioni(
   profiloStile: string,
   wizard: WizardPayload,
   esempi: Relazione[] = [],
   isMock = false,
-  templates: TestTemplate[] = []
+  templatesDinamici: TestTemplate[] = []
 ): Promise<Record<string, string>> {
   const sez = wizard.sezioni_attive || []
   const out: Record<string, string> = {}
-  // Template dinamici (id = UUID) presenti tra le sezioni attive e con un
-  // risultato compilato in wizard.test_risultati — es. un questionario CBCL
-  // creato con la Gestione Test. Vanno trattati come cognitivo/nepsy: mai
-  // lasciarli fuori dal payload per Gemini, altrimenti l'AI riceve solo il
-  // testo libero legacy (questionari.punteggi_grezzi) e "inventa" nomi di
-  // sottoscale e giudizi di significatività clinica non ancorati ai dati.
-  const templatesById = new Map(templates.map(t => [t.id, t]))
-  const templatesDinamiciAttivi = sez
-    .map(id => templatesById.get(id))
-    .filter((t): t is TestTemplate => Boolean(t) && Boolean(wizard.test_risultati?.[t!.id]?.somministrato))
 
   if (isMock || USE_MOCK_AI) {
     await new Promise<void>(resolve => setTimeout(resolve, 1200))
@@ -592,10 +587,22 @@ export async function generaNarrativaSezioni(
       const chiInvia = [wizard.nome_inviante, wizard.tipo_invio].filter(Boolean).join(', ') || '[inviante]'
       out['intestazione'] = `Il/la paziente {{NOME}} viene inviato/a da ${chiInvia} per ${wizard.motivo_invio || 'valutazione neuropsicologica'}.`
     }
-    if ((sez.includes('cognitivo') || sez.includes('wisc-iv')) && wizard.cognitivo?.punteggi) {
+    if (sez.includes('cognitivo') && wizard.cognitivo?.punteggi) {
+      const cleanPunteggi = (p: ScoreMap | undefined): Record<string, string | number> => {
+        const cleaned: Record<string, string | number> = {}
+        if (!p) return cleaned
+        for (const [k, v] of Object.entries(p)) {
+          if (typeof v === 'string' || typeof v === 'number') {
+            cleaned[k] = v
+          }
+        }
+        return cleaned
+      }
+
       const ris: RisultatoTest = {
-        somministrato: true, punteggi: wizard.cognitivo.punteggi,
-        punteggiSecondari: wizard.cognitivo.subtest_pp || {},
+        somministrato: true,
+        punteggi: cleanPunteggi(wizard.cognitivo.punteggi),
+        punteggiSecondari: cleanPunteggi(wizard.cognitivo.subtest_pp),
       }
       const premessa = [
         wizard.cognitivo?.eta_valutazione ? `Età al momento della valutazione: ${wizard.cognitivo.eta_valutazione}.` : '',
@@ -604,13 +611,7 @@ export async function generaNarrativaSezioni(
       // For mock output, we just generate something simple.
       out['cognitivo'] = [premessa, 'I risultati del test cognitivo sono riportati nella tabella corrispondente.'].filter(Boolean).join(' ')
     }
-    for (const template of templatesDinamiciAttivi) {
-      const ris = wizard.test_risultati![template.id]
-      const premessa = template.richiedeStrumentiUtilizzati && ris.strumentiUtilizzati
-        ? `Strumenti utilizzati: ${ris.strumentiUtilizzati}.` : ''
-      out[template.id] = [premessa, `I risultati di ${template.nome} sono riportati nella tabella corrispondente.`].filter(Boolean).join(' ')
-    }
-    if ((sez.includes('nepsy') || sez.includes('nepsy-ii')) && wizard.nepsy?.punteggi) {
+    if (sez.includes('nepsy') && wizard.nepsy?.punteggi) {
       const premessa = wizard.nepsy?.strumenti_utilizzati ? `Strumenti utilizzati: ${wizard.nepsy.strumenti_utilizzati}.` : ''
       out['nepsy'] = [premessa, 'I risultati dell\'approfondimento neuropsicologico sono riportati nella tabella corrispondente.'].filter(Boolean).join(' ')
     }
@@ -657,7 +658,7 @@ export async function generaNarrativaSezioni(
       ? 'Il/la paziente è una FEMMINA: usa sempre il femminile per i pronomi e le concordanze grammaticali relative alla persona valutata (es. "è stata valutata", "ha mostrato", "la bambina").'
       : 'Il genere del/la paziente non è specificato: usa forme neutre o la barra (es. "il/la paziente") quando necessario.'
 
-  const systemPrompt = `Sei un assistente specializzato nella redazione di relazioni di valutazione neuropsicologica e dell'apprendimento in età evolutiva.
+  const baseSystemPrompt = `Sei un assistente specializzato nella redazione di relazioni di valutazione neuropsicologica e dell'apprendimento in età evolutiva.
 REGOLA ASSOLUTA: scrivi ESCLUSIVAMENTE seguendo il Profilo di Stile fornito.
 Non inventare mai punteggi o dati non presenti nell'input.
 Genera SOLO il testo narrativo per ogni sezione richiesta. NON generare tabelle, le tabelle sono già pronte.
@@ -667,60 +668,36 @@ Per la sezione "intestazione": genera UNA sola frase iniziale che dichiara chi i
 Per la sezione "cognitivo": prima di descrivere gli indici, se sono forniti età al momento della valutazione e/o strumenti utilizzati, aprine la narrazione con una breve frase che li riporta in modo discorsivo (es. "La valutazione è stata condotta all'età di 8 anni, mediante la somministrazione della scala WISC-IV.") — non elencarli come campo/valore separato.
 Per la sezione "nepsy": stessa logica per gli strumenti utilizzati, integrati in una frase discorsiva a inizio sezione, non come riga a sé.
 Per la sezione "apprendimenti": integra le note su lettura, scrittura e matematica fornite nella narrazione in prosa, non riportarle come frasi isolate o elenco.
-Non usare mai nomi reali o dati identificativi: ovunque scriveresti il nome del/la paziente, usa esattamente il segnaposto {{NOME}} (con le doppie graffe, senza spazi interni). Non usare "il/la paziente" o altre perifrasi impersonali al posto del segnaposto: scrivi le frasi come le scriveresti con un nome vero, sostituendo solo il nome con {{NOME}} (es. "{{NOME}} accetta e porta a termine le attività proposte" invece di "il/la paziente accetta..."). Questo segnaposto verrà sostituito automaticamente con il nome reale dopo la generazione.
+Non usare mai nomi reali o dati identificativi: ovunque scriveresti il nome del/la paziente, usa esattamente il segnaposto {{NOME}} (con le doppie graffe, senza spazi interni). Non usare "il/la paziente" o altre perifrasi impersonali al posto del segnaposto: scrivi le frasi come le scriveresti con un nome vero, sostituendo solo il nome con {{NOME}} (es. "{{NOME}} accetta e porta a termine le attività proposte" invece di "il/la paziente accetta..."). Questo segnaposto verra sostituito automaticamente con il nome reale dopo la generazione.
 ORDINE DI ANALISI NEI TEST: Per la narrativa di qualsiasi test clinico (es. cognitivo, nepsy, questionari, ecc.), esponi sempre prima il risultato globale/finale (es. QIT/IAG/ICC per la WISC-IV, o il punteggio totale del test) e solo successivamente procedi con l'analisi dettagliata dei singoli indici o subtest secondari. Questo ordine dal generale al particolare è tassativo.
+STRUTTURA E SUDDIVISIONE NARRATIVA SEZIONI CON SOTTOTEST/GRUPPI CONDIVISI O COMPLESSI:
+Se una sezione di un test clinico contiene gruppi o sottotest secondari (ad esempio i questionari CBCL con "Scale Sindromiche" e "Scale DSM Oriented", o la WISC-IV con i vari indici), non formattare mai il testo come un unico blocco narrativo omogeneo. 
+Spezza e suddividi esplicitamente la narrativa inserendo i tag di sottosezione corrispondenti (es. "=== SOTTOSEZIONE: Scale Sindromiche ===" prima di analizzare i subtest sindromici, o "=== SOTTOSEZIONE: Scale DSM Oriented ===" prima dell'analisi DSM). Questo permetterà di inserire e posizionare ciascuna parte di testo direttamente sotto la corrispettiva tabella.
 CONCORDANZA GRAMMATICALE: ${istruzioneGenere}
 ${istruzioneLunghezza ? `\nLIVELLO DI DETTAGLIO RICHIESTO: ${istruzioneLunghezza}\n` : ''}
-Rispondi SOLO con il testo narrativo per ogni sezione, separato da intestazioni "=== SEZIONE: nome ===".
+Rispondi SOLO con il testo narrativo per ogni sezione richiesta del blocco, separato esattamente da intestazioni "=== SEZIONE: nome ===". Non includere altre sezioni oltre a quelle richieste.
 
 === PROFILO DI STILE (priorità massima) ===
 ${profiloStile}
 
 ${esempiFewShot ? `=== ESEMPI DI RIFERIMENTO ===\n${esempiFewShot}` : ''}`
 
-  // I campi di testo libero del wizard (note_cliniche,
-  // consigli...) sono scritti direttamente da tua sorella e possono
-  // contenere nomi di terzi non anticipabili — es. "su indicazione della
-  // dott.ssa Martina" o "già seguito dalla Scuola X". A differenza del nome
-  // del PAZIENTE (gestito col segnaposto {{NOME}}, mai inviato a Gemini),
-  // qui non c'è modo di sapere a priori cosa scriverà l'utente: si applica
-  // la stessa anonimizzazione euristica già usata per le relazioni
-  // importate (anonimizza.ts — riconosce titoli professionali "dott./dott.
-  // ssa/prof." seguiti da nome, e nomi di istituti scolastici), qui senza
-  // passare l'anagrafica del paziente (non serve: quella parte la gestisce
-  // già {{NOME}} a monte).
   const anon = (testo: unknown): string => {
     const s = typeof testo === 'string' ? testo : ''
     return s ? anonimizzaTesto(s, {}) : ''
   }
 
-  const userData: string[] = []
+  // 1. Costruiamo TUTTI i payload teoricamente disponibili
+  const tuttiPayloads: Record<string, string> = {}
 
   if (wizard.tipo_invio || wizard.motivo_invio || wizard.nome_inviante) {
-    // Non è una sezione opzionale del wizard (non compare in
-    // sezioni_attive): è l'apertura fissa del documento, ma va comunque
-    // generata da Gemini invece che con una frase hardcoded, per restare
-    // aderente allo stile osservato nel Profilo di Stile.
-    // NOTA: nome_inviante NON passa dal filtro anon() — a differenza dei
-    // nomi di terzi citati incidentalmente in anamnesi/note (undicesima
-    // correzione), qui il nome del professionista che invia è il dato
-    // stesso che l'utente vuole veder comparire nel referto, come nei
-    // documenti reali ("su segnalazione della Dott.ssa..."). Anonimizzarlo
-    // produrrebbe un placeholder [PERSONA] visibile in chiaro nel testo
-    // finale, l'opposto di quanto richiesto.
-    userData.push(`=== SEZIONE: intestazione ===
+    tuttiPayloads['intestazione'] = `=== SEZIONE: intestazione ===
 Tipo di invio: ${anon(wizard.tipo_invio) || 'Non specificato'}
 Nome di chi invia (se presente, va citato per esteso nella frase, es. "su segnalazione della Dott.ssa Rossi..."): ${wizard.nome_inviante || 'Non specificato'}
-Motivo dell'invio: ${anon(wizard.motivo_invio) || 'valutazione neuropsicologica'}`)
+Motivo dell'invio: ${anon(wizard.motivo_invio) || 'valutazione neuropsicologica'}`
   }
 
   if (sez.includes('anamnesi') && wizard.anamnesi) {
-    // Le voci checkbox selezionate vengono passate come elenco di fatti
-    // grezzi (non più pre-composte in una frase telegrafica con vociToTesto,
-    // che restava fuori dal Profilo di Stile — vedi wizardToText.ts).
-    // Gemini le trasforma in prosa coerente col resto del documento.
-    // I campi "dettagli" e "extra" sono testo libero scritto da tua sorella:
-    // passano dallo stesso filtro di anonimizzazione degli altri campi.
     const anamnesi = wizard.anamnesi as UnknownRecord
     const remotaVoci = (anamnesi.remota_voci as string[] | undefined) || []
     const remotaDettagli = (anamnesi.remota_dettagli as Record<string, string> | undefined) || {}
@@ -744,11 +721,11 @@ Motivo dell'invio: ${anon(wizard.motivo_invio) || 'valutazione neuropsicologica'
       })
       .filter(Boolean)
 
-    userData.push(`=== SEZIONE: anamnesi ===
+    tuttiPayloads['anamnesi'] = `=== SEZIONE: anamnesi ===
 Fatti anamnesi remota (da esporre in prosa fluida, non come elenco): ${vociRemota.length ? vociRemota.join('; ') : 'Nessuno'}
 Dettagli aggiuntivi remota: ${anon(anamnesi.remota_extra) || 'Nessuno'}
 Fatti situazione attuale/recente (da esporre in prosa fluida): ${vociRecente.length ? vociRecente.join('; ') : 'Nessuno'}
-Dettagli aggiuntivi recente: ${anon(anamnesi.recente_extra) || 'Nessuno'}`)
+Dettagli aggiuntivi recente: ${anon(anamnesi.recente_extra) || 'Nessuno'}`
   }
 
   if (sez.includes('osservazione') && wizard.osservazione) {
@@ -763,81 +740,154 @@ Dettagli aggiuntivi recente: ${anon(anamnesi.recente_extra) || 'Nessuno'}`)
       .map((id: string) => OSSERVAZIONE_ATTEGGIAMENTO_VOCI.find(v => v.id === id)?.testo)
       .filter(Boolean)
 
-    userData.push(`=== SEZIONE: osservazione ===
+    tuttiPayloads['osservazione'] = `=== SEZIONE: osservazione ===
 Fatti osservati (da esporre in prosa fluida, non come elenco): ${[...vociAdatt, ...vociAtteg].length ? [...vociAdatt, ...vociAtteg].join('; ') : 'Nessuno'}
-Note aggiuntive: ${anon(osservazione.note) || 'Nessuna'}`)
+Note aggiuntive: ${anon(osservazione.note) || 'Nessuna'}`
   }
 
-  if ((sez.includes('cognitivo') || sez.includes('wisc-iv')) && wizard.cognitivo?.punteggi) {
+  if (sez.includes('cognitivo') && wizard.cognitivo?.punteggi) {
+    const cleanP = (p: any): Record<string, string | number> => {
+      const res: Record<string, string | number> = {}
+      if (!p) return res
+      for (const [k, v] of Object.entries(p)) {
+        if (typeof v === 'string' || typeof v === 'number') {
+          res[k] = v
+        }
+      }
+      return res
+    }
+
+    const cleanInterp = (p: any): Record<string, boolean> => {
+      const res: Record<string, boolean> = {}
+      if (!p) return res
+      for (const [k, v] of Object.entries(p)) {
+        if (typeof v === 'boolean') {
+          res[k] = v
+        }
+      }
+      return res
+    }
+
     const ris: RisultatoTest = {
       somministrato: true,
-      punteggi: wizard.cognitivo?.punteggi || {},
-      punteggiSecondari: wizard.cognitivo?.subtest_pp || {},
-      interpretabilita: wizard.cognitivo?.interpretabilita || {},
+      punteggi: cleanP(wizard.cognitivo?.punteggi),
+      punteggiSecondari: cleanP(wizard.cognitivo?.subtest_pp),
+      interpretabilita: cleanInterp(wizard.cognitivo?.interpretabilita),
       includiNotaRange: wizard.cognitivo?.includi_nota_range !== false,
-      etaValutazione: wizard.cognitivo?.eta_valutazione,
-      strumentiUtilizzati: wizard.cognitivo?.strumenti_utilizzati,
-      noteCliniche: wizard.cognitivo?.note_cliniche
+      etaValutazione: wizard.cognitivo?.eta_valutazione as string | undefined,
+      strumentiUtilizzati: wizard.cognitivo?.strumenti_utilizzati as string | undefined,
+      noteCliniche: wizard.cognitivo?.note_cliniche as string | undefined
     }
-    userData.push(buildGeminiPayload(MOCK_WISC_IV_TEMPLATE, ris))
+    tuttiPayloads['cognitivo'] = buildGeminiPayload(MOCK_WISC_IV_TEMPLATE, ris)
   }
-  if ((sez.includes('nepsy') || sez.includes('nepsy-ii')) && wizard.nepsy?.punteggi) {
+
+  if (sez.includes('nepsy') && wizard.nepsy?.punteggi) {
+    const cleanP = (p: any): Record<string, string | number> => {
+      const res: Record<string, string | number> = {}
+      if (!p) return res
+      for (const [k, v] of Object.entries(p)) {
+        if (typeof v === 'string' || typeof v === 'number') {
+          res[k] = v
+        }
+      }
+      return res
+    }
+
     const ris: RisultatoTest = {
       somministrato: true,
-      punteggi: wizard.nepsy?.punteggi || {},
+      punteggi: cleanP(wizard.nepsy?.punteggi),
       includiNotaRange: wizard.nepsy?.includi_nota_range !== false,
-      strumentiUtilizzati: wizard.nepsy?.strumenti_utilizzati,
-      noteCliniche: wizard.nepsy?.note_cliniche
+      strumentiUtilizzati: wizard.nepsy?.strumenti_utilizzati as string | undefined,
+      noteCliniche: wizard.nepsy?.note_cliniche as string | undefined
     }
-    userData.push(buildGeminiPayload(MOCK_NEPSY_II_TEMPLATE, ris))
+    tuttiPayloads['nepsy'] = buildGeminiPayload(MOCK_NEPSY_II_TEMPLATE, ris)
   }
-  for (const template of templatesDinamiciAttivi) {
-    const ris = wizard.test_risultati![template.id]
-    userData.push(buildGeminiPayload(template, ris))
-  }
+
   if (sez.includes('apprendimenti') && wizard.apprendimenti) {
-    userData.push(`=== SEZIONE: apprendimenti ===
+    tuttiPayloads['apprendimenti'] = `=== SEZIONE: apprendimenti ===
 Strumenti: ${anon(wizard.apprendimenti?.strumenti) || 'Nessuno'}
 Punteggi grezzi: ${wizard.apprendimenti?.punteggi_grezzi || 'Nessuno'}
 Note su lettura: ${anon(wizard.apprendimenti?.lettura) || 'Nessuna'}
 Note su scrittura: ${anon(wizard.apprendimenti?.scrittura) || 'Nessuna'}
 Note su matematica: ${anon(wizard.apprendimenti?.matematica) || 'Nessuna'}
-Note: ${anon(wizard.apprendimenti?.note_cliniche) || 'Nessuna'}`)
+Note: ${anon(wizard.apprendimenti?.note_cliniche) || 'Nessuna'}`
   }
+
   if (sez.includes('questionari') && wizard.questionari) {
-    userData.push(`=== SEZIONE: questionari ===
+    tuttiPayloads['questionari'] = `=== SEZIONE: questionari ===
 Tipo: ${anon(wizard.questionari?.tipo) || 'Nessuno'}
 Punteggi grezzi: ${wizard.questionari?.punteggi_grezzi || 'Nessuno'}
-Note: ${anon(wizard.questionari?.note_cliniche) || 'Nessuna'}`)
+Note: ${anon(wizard.questionari?.note_cliniche) || 'Nessuna'}`
   }
+
   if (sez.includes('conclusioni') && wizard.conclusioni) {
     const c = wizard.conclusioni
-    userData.push(`=== SEZIONE: conclusioni ===
+    tuttiPayloads['conclusioni'] = `=== SEZIONE: conclusioni ===
 Diagnosi: ${anon(c.diagnosi) || 'Nessuna'}${c.codice_icd ? ` (${c.codice_icd})` : ''}
 Consigli paziente: ${anon(c.consigli_paziente) || 'Nessuno'}
 Consigli scuola: ${anon(c.consigli_scuola) || 'Nessuno'}
 Strumenti compensativi: ${anon(c.strumenti_compensativi) || 'Nessuno'}
-Misure dispensative: ${anon(c.misure_dispensative) || 'Nessuna'}`)
+Misure dispensative: ${anon(c.misure_dispensative) || 'Nessuna'}`
   }
 
-  const userPrompt = `Genera SOLO il testo narrativo per ogni sezione indicata. Le tabelle sono già pronte e verranno inserite automaticamente.
-Per ogni sezione, fornisci un testo fluido e coerente con il Profilo di Stile.
-
-${userData.join('\n\n')}`
-
-  const maxTokens = wizard.lunghezza === 'dettagliata' ? 6144 : 4096
-  const risposta = await callGemini(systemPrompt, userPrompt, { maxOutputTokens: maxTokens, temperature: 0.7 })
-
-  const sezioneRegex = /=== SEZIONE: ([\w-]+) ===\n([\s\S]*?)(?=\n=== SEZIONE:|\n*$)/g
-  const matches = risposta.matchAll(sezioneRegex)
-  let numSezioniTrovate = 0
-  for (const match of matches) {
-    const nome = match[1]
-    const testo = match[2].trim()
-    if (nome && testo) { out[nome] = testo; numSezioniTrovate++ }
+  // 1b. Inseriamo i payload per i template dinamici
+  for (const sezId of sez) {
+    const template = templatesDinamici.find(t => t.id === sezId)
+    const risultato: RisultatoTest | undefined = wizard.test_risultati?.[sezId]
+    if (template && risultato?.somministrato) {
+      tuttiPayloads[sezId] = buildGeminiPayload(template, risultato)
+    }
   }
-  if (numSezioniTrovate === 0) {
-    console.warn('[generaNarrativaSezioni] Parsing fallito: nessuna sezione ha rispettato il formato atteso "=== SEZIONE: nome ===". Verificare il prompt o la risposta di Gemini.')
+
+  // 2. Suddividiamo le sezioni attive in blocchi di massimo 3 sezioni ciascuno
+  const sezioniSelezionate = Object.keys(tuttiPayloads)
+  const blocchi: string[][] = []
+
+  for (let i = 0; i < sezioniSelezionate.length; i += 3) {
+    blocchi.push(sezioniSelezionate.slice(i, i + 3))
+  }
+
+  console.log(`[generaNarrativaSezioni] Suddivisa generazione in ${blocchi.length} blocchi di chiamate da max 3 sezioni ciasuna`, blocchi)
+
+  // 3. Eseguiamo le chiamate per ciascun blocco
+  for (const blocco of blocchi) {
+    const blockPayload = blocco.map(secName => tuttiPayloads[secName]).join('\n\n')
+    const userPrompt = `Genera SOLO il testo narrativo per le sezioni di QUESTO specifico blocco: ${blocco.join(', ')}. Le tabelle sono già pronte e verranno inserite automaticamente.
+Per ogni sezione del blocco, fornisci un testo fluido e coerente con il Profilo di Stile.
+
+${blockPayload}`
+
+    const maxTokens = wizard.lunghezza === 'dettagliata' ? 4096 : 3072
+    console.log(`[generaNarrativaSezioni] Chiamata Gemini per il blocco: ${blocco.join(', ')}...`)
+    const risposta = await callGemini(baseSystemPrompt, userPrompt, { maxOutputTokens: maxTokens, temperature: 0.7 })
+
+    const sezioneRegex = /=== SEZIONE: ([\w-]+) ===\n([\s\S]*?)(?=\n=== SEZIONE:|\n*$)/g
+    const matches = risposta.matchAll(sezioneRegex)
+    let numSezioniTrovate = 0
+
+    for (const match of matches) {
+      const nome = match[1]
+      const testo = match[2].trim()
+      if (nome && blocco.includes(nome) && testo) {
+        out[nome] = testo
+        numSezioniTrovate++
+      }
+    }
+
+    if (numSezioniTrovate < blocco.length) {
+      console.warn(`[generaNarrativaSezioni] Chiamata blocco [${blocco.join(', ')}]: trovate solo ${numSezioniTrovate}/${blocco.length} sezioni. Tento fallback regex più lasco per le sezioni mancanti.`)
+      // Fallback: se Gemini ha fluttuato sui tag ma li ha scritti comunque
+      for (const nome of blocco) {
+        if (!out[nome]) {
+          const fallbackRegex = new RegExp(`===\\s*SEZIONE:\\s*${nome}\\s*===\n([\\s\\S]*?)(?=\\n===\\s*SEZIONE:|\\n*$)`, 'i')
+          const fMatch = risposta.match(fallbackRegex)
+          if (fMatch && fMatch[1].trim()) {
+            out[nome] = fMatch[1].trim()
+            console.log(`[generaNarrativaSezioni] Fallback riuscito per sezione: ${nome}`)
+          }
+        }
+      }
+    }
   }
 
   return out
@@ -848,23 +898,31 @@ ${userData.join('\n\n')}`
 // a Gemini. Quei dati vengono ricomposti nel documento finale solo
 // lato client, in RisultatoGenerazione.tsx + exportDocx.ts, mai visti
 // dall'AI.
-export async function generaRelazione(profiloStile: string, wizardCompleto: WizardPayload, esempi: Relazione[] = [], templates: TestTemplate[] = []): Promise<string> {
-  const { anagrafica, ...resto } = wizardCompleto
-  // Il genere NON è un dato identificativo (a differenza di nome/cognome/data
-  // di nascita/scuola, che restano fuori) e serve a Gemini per la concordanza
-  // grammaticale corretta (vedi istruzioneGenere sopra). Va preservato,
-  // altrimenti generePaziente legge sempre '' e il testo esce con le forme
-  // ambigue "o/a" anche quando il genere è stato specificato nel wizard.
-  const wizard = { ...resto, anagrafica: { genere: (anagrafica as UnknownRecord | undefined)?.genere as string | undefined } }
+// NOTA: Conserviamo però il genere della persona (es. per accordo pronomi)
+// estraendolo prima di rimuovere il resto delle informazioni identificative,
+// così l'AI riceve l'istruzione sul genere ma non nome, cognome ecc.
+export async function generaRelazione(
+  profiloStile: string,
+  wizardCompleto: WizardPayload,
+  esempi: Relazione[] = [],
+  templatesDinamici: TestTemplate[] = []
+): Promise<string> {
+  const { anagrafica, ...wizard } = wizardCompleto
+
+  // Lasciamo solo genere in wizard.anagrafica in modo che generaNarrativaSezioni possa leggerlo
+  const wizardPrivato = {
+    ...wizard,
+    anagrafica: anagrafica?.genere ? { genere: anagrafica.genere } : undefined
+  }
 
   if (USE_MOCK_AI) {
     await new Promise<void>(resolve => setTimeout(resolve, 2200))
-    const narrativa = await generaNarrativaSezioni('', wizard, [], true, templates)
-    return assemblaDocumentoMarkdown(wizard, narrativa, templates)
+    const narrativa = await generaNarrativaSezioni('', wizardPrivato, [], true, templatesDinamici)
+    return assemblaDocumentoMarkdown(wizardCompleto, narrativa, templatesDinamici)
   }
 
-  const narrativa = await generaNarrativaSezioni(profiloStile, wizard, esempi, false, templates)
-  return assemblaDocumentoMarkdown(wizard, narrativa, templates)
+  const narrativa = await generaNarrativaSezioni(profiloStile, wizardPrivato, esempi, false, templatesDinamici)
+  return assemblaDocumentoMarkdown(wizardCompleto, narrativa, templatesDinamici)
 }
 
 // ── RIGENERA SEZIONE ───────────────────────────────────────

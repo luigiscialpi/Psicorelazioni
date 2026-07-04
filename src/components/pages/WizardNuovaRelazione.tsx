@@ -15,7 +15,7 @@ import {
   OSSERVAZIONE_ADATTAMENTO_VOCI, OSSERVAZIONE_ATTEGGIAMENTO_VOCI,
 } from '../constants/anamnesiVoci'
 import { getTestTemplatesAttivi } from '../../data/testTemplatesData'
-import { calcolaFascia, getScalaApplicabile } from '../../services/testTemplateEngine'
+import { calcolaFascia, getScalaApplicabile, migraWizardSnapshotLegacy, valutaFormule } from '../../services/testTemplateEngine'
 import type { TestTemplate, RisultatoTest } from '../../core/testTemplate'
 
 // ─────────────────────────────────────────────────────────────
@@ -65,14 +65,6 @@ const INIT = {
 
   anamnesi:      { remota_voci: [], remota_dettagli: {}, remota_extra: '', recente_voci: [], recente_dettagli: {}, recente_extra: '' },
   osservazione:  { adattamento_voci: [], atteggiamento_voci: [], note: '' },
-  // Legacy fields mantenuti per retrocompatibilità e per il path di export che li legge ancora
-  cognitivo:     {
-    somministrato: true, punteggi: {}, interpretabilita: {},
-    subtest_pp: {}, eta_valutazione: '', strumenti_utilizzati: '',
-    includi_nota_range: true, note_cliniche: '',
-  },
-  nepsy:         { somministrato: true, punteggi: {}, strumenti_utilizzati: '', includi_nota_range: true, note_cliniche: '' },
-  // test_risultati: nuovo formato dinamico per template generici
   test_risultati: {} as Record<string, RisultatoTest>,
   apprendimenti: { strumenti: '', punteggi_grezzi: '', lettura: '', scrittura: '', matematica: '' },
   questionari:   { tipo: '', punteggi_grezzi: '', note_cliniche: '' },
@@ -151,24 +143,6 @@ function validateStep(stepId, data, templates: TestTemplate[] = []) {
     case 'contesto':
       if (!String(data.motivo_invio || '').trim()) mancanti.push('Motivo dell\'invio')
       break
-
-    case 'cognitivo':
-    case 'wisc-iv': {
-      // Retrocompatibilità con sessioni legacy che usano ancora wizard.cognitivo
-      const punteggi = data.cognitivo?.punteggi || data.test_risultati?.['wisc-iv']?.punteggi || {}
-      const almenoUno = Object.values(punteggi).some(v => String(v ?? '').trim() !== '')
-      if (!almenoUno) mancanti.push('Almeno un punteggio WISC-IV (o deseleziona la sezione)')
-      break
-    }
-
-    case 'nepsy':
-    case 'nepsy-ii': {
-      // Retrocompatibilità
-      const punteggi = data.nepsy?.punteggi || data.test_risultati?.['nepsy-ii']?.punteggi || {}
-      const almenoUno = Object.values(punteggi).some(v => String(v ?? '').trim() !== '')
-      if (!almenoUno) mancanti.push('Almeno un punteggio NEPSY-II (o deseleziona la sezione)')
-      break
-    }
 
     case 'conclusioni':
       if (!String(data.conclusioni?.diagnosi || '').trim()) mancanti.push('Diagnosi')
@@ -259,7 +233,7 @@ function StepSezioni({ data, dispatch, templates }: { data: any, dispatch: any, 
               <span style={{ fontSize: 13.5, color: attiva ? 'var(--accent-dk)' : 'var(--text)', fontWeight: attiva ? 500 : 400, flex: 1 }}>{s.label}</span>
               {isTest && (
                 <span style={{ fontSize: 10.5, color: 'var(--text-muted)', border: '1px solid var(--border)', borderRadius: 12, padding: '1px 7px' }}>
-                  {'badge' in s ? s.badge : 'test'}
+                  {(s as any).badge || 'test'}
                 </span>
               )}
             </button>
@@ -438,57 +412,59 @@ function StepOsservazione({ data, dispatch }) {
 // Per WISC-IV e NEPSY-II usa ancora wizard.cognitivo / wizard.nepsy
 // per retrocompatibilità con le sessioni esistenti.
 function StepTestGenerico({ template, data, dispatch }: { template: TestTemplate, data: any, dispatch: any }) {
-  // Retrocompatibilità: WISC-IV e NEPSY-II leggono ancora dal vecchio formato
-  const isWisc = template.id === 'wisc-iv'
-  const isNepsy = template.id === 'nepsy-ii'
-  const legacySection = isWisc ? 'cognitivo' : isNepsy ? 'nepsy' : null
+  // Legge i dati direttamente da test_risultati
+  const risultato: RisultatoTest = data.test_risultati?.[template.id] || { somministrato: true, punteggi: {} }
 
-  // Legge i dati dalla sezione legacy O da test_risultati
-  const risultato: RisultatoTest = legacySection
-    ? {
-        somministrato: data[legacySection]?.somministrato ?? true,
-        punteggi: data[legacySection]?.punteggi || {},
-        punteggiSecondari: data[legacySection]?.subtest_pp || {},
-        interpretabilita: data[legacySection]?.interpretabilita || {},
-        includiNotaRange: data[legacySection]?.includi_nota_range ?? true,
-        etaValutazione: data[legacySection]?.eta_valutazione || '',
-        strumentiUtilizzati: data[legacySection]?.strumenti_utilizzati || '',
-        noteCliniche: data[legacySection]?.note_cliniche || '',
-      }
-    : (data.test_risultati?.[template.id] || { somministrato: true, punteggi: {} })
+  // Helper per dispatch con supporto a colonne multiple e formule
+  function setPunteggio(key: string, v: string, colName?: string) {
+    const colList = template.colonne || ['Punteggio']
+    const isPrimaCol = !colName || colName === colList[0]
+    const destKey = isPrimaCol ? key : `${key}_${colName}`
 
-  // Helper per dispatch verso la sezione corretta
-  function setPunteggio(key: string, v: string) {
-    if (legacySection) {
-      dispatch({ type: 'SET_NESTED', section: legacySection, group: 'punteggi', k: key, v })
-    } else {
-      dispatch({ type: 'SET_TEST_RISULTATO', templateId: template.id, group: 'punteggi', k: key, v })
+    const nuovoRisultato = {
+      ...risultato,
+      punteggi: { ...risultato.punteggi, [destKey]: v }
     }
+    const punteggiCalcolati = valutaFormule(template, nuovoRisultato)
+
+    dispatch({
+      type: 'SET_TEST_RISULTATO',
+      templateId: template.id,
+      group: 'punteggi',
+      k: null,
+      v: punteggiCalcolati
+    })
   }
+
   function setSubtest(key: string, v: string) {
-    if (legacySection === 'cognitivo') {
-      dispatch({ type: 'SET_NESTED', section: 'cognitivo', group: 'subtest_pp', k: key, v })
-    } else if (!legacySection) {
-      dispatch({ type: 'SET_TEST_RISULTATO', templateId: template.id, group: 'punteggiSecondari', k: key, v })
+    const nuovoRisultato = {
+      ...risultato,
+      punteggiSecondari: { ...(risultato.punteggiSecondari || {}), [key]: v }
     }
+    const punteggiCalcolati = valutaFormule(template, nuovoRisultato)
+
+    dispatch({
+      type: 'SET_TEST_RISULTATO',
+      templateId: template.id,
+      group: 'punteggiSecondari',
+      k: key,
+      v
+    })
+    dispatch({
+      type: 'SET_TEST_RISULTATO',
+      templateId: template.id,
+      group: 'punteggi',
+      k: null,
+      v: punteggiCalcolati
+    })
   }
+
   function setInterp(key: string, v: boolean) {
-    if (legacySection === 'cognitivo') {
-      dispatch({ type: 'SET_NESTED', section: 'cognitivo', group: 'interpretabilita', k: key, v })
-    } else if (!legacySection) {
-      dispatch({ type: 'SET_TEST_RISULTATO', templateId: template.id, group: 'interpretabilita', k: key, v })
-    }
+    dispatch({ type: 'SET_TEST_RISULTATO', templateId: template.id, group: 'interpretabilita', k: key, v })
   }
+
   function setField(k: string, v: any) {
-    if (legacySection) {
-      const legacyKey = k === 'includiNotaRange' ? 'includi_nota_range'
-        : k === 'etaValutazione' ? 'eta_valutazione'
-        : k === 'strumentiUtilizzati' ? 'strumenti_utilizzati'
-        : k === 'noteCliniche' ? 'note_cliniche' : k
-      dispatch({ type: 'SET', section: legacySection, k: legacyKey, v })
-    } else {
-      dispatch({ type: 'SET_TEST_RISULTATO', templateId: template.id, group: k, k: null, v })
-    }
+    dispatch({ type: 'SET_TEST_RISULTATO', templateId: template.id, group: k, k: null, v })
   }
 
   const categoriaLabel = template.categoria === 'cognitivo'
@@ -537,29 +513,71 @@ function StepTestGenerico({ template, data, dispatch }: { template: TestTemplate
 
       {/* Campi principali (indici/scale principali) */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {/* Intestazione colonne (se ci sono colonne multiple) */}
+        {template.colonne && template.colonne.length > 1 && (
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: '1fr ' + template.colonne.map(() => '90px').join(' ') + ' 140px' + (haInterpretabilita ? ' 30px' : ''),
+            gap: 10, alignItems: 'center',
+            padding: '4px 10px', fontWeight: 600, fontSize: 11, color: 'var(--text-muted)',
+            borderBottom: '1px solid var(--border-md, #ddd)', marginBottom: 4
+          }}>
+            <span>Scala</span>
+            {template.colonne.map(col => <span key={col} style={{ textAlign: 'center' }}>{col}</span>)}
+            <span>Fascia</span>
+            {haInterpretabilita && <span style={{ textAlign: 'center' }}>Interp.</span>}
+          </div>
+        )}
+
         {template.campiPrincipali.map(campo => {
           const scala = getScalaApplicabile(campo, template)
           const val = risultato.punteggi[campo.key] || ''
           const fascia = val ? (calcolaFascia(val, scala) || '—') : '—'
           const interpretabile = risultato.interpretabilita?.[campo.key] !== false
+          const colList = template.colonne || ['Punteggio']
+          const haFormula = template.formule?.some(f => f.targetKey === campo.key)
+
           return (
             <div key={campo.key} style={{
               display: 'grid',
-              gridTemplateColumns: haInterpretabilita ? '1fr 90px 140px 30px' : '1fr 90px 140px',
+              gridTemplateColumns: '1fr ' + colList.map(() => '90px').join(' ') + ' 140px' + (haInterpretabilita ? ' 30px' : ''),
               gap: 10, alignItems: 'center',
               padding: '8px 10px', borderRadius: 'var(--radius)',
               background: 'transparent',
             }}>
-              <span style={{ fontSize: 12.5 }}>{campo.label}</span>
-              <input
-                className="form-input" type="number" placeholder="—"
-                value={val}
-                onChange={e => setPunteggio(campo.key, e.target.value)}
-                style={{ textAlign: 'center', padding: '6px 8px' }}
-              />
+              <span style={{ fontSize: 12.5, fontWeight: haFormula ? 600 : 400 }}>{campo.label}</span>
+              
+              {/* Rendering input per ciascuna colonna di punteggio */}
+              {colList.map((colName, idx) => {
+                const isPrima = idx === 0
+                const inputKey = isPrima ? campo.key : `${campo.key}_${colName}`
+                const inputVal = risultato.punteggi[inputKey] || ''
+                const isReadOnly = haFormula && isPrima // Solo il punteggio principale della formula è calcolato/read-only
+
+                return (
+                  <input
+                    key={colName}
+                    className="form-input"
+                    type="number"
+                    placeholder="—"
+                    value={inputVal}
+                    onChange={e => setPunteggio(campo.key, e.target.value, colName)}
+                    readOnly={isReadOnly}
+                    style={{
+                      textAlign: 'center',
+                      padding: '6px 8px',
+                      background: isReadOnly ? 'var(--bg-light, #f5f5f5)' : undefined,
+                      color: isReadOnly ? 'var(--text-muted, #777)' : undefined,
+                      border: isReadOnly ? '1px dashed var(--border-md, #ccc)' : undefined,
+                    }}
+                  />
+                )
+              })}
+
               <span style={{ fontSize: 11.5, color: fascia !== '—' ? 'var(--accent-dk)' : 'var(--text-muted)', fontWeight: fascia !== '—' ? 500 : 400 }}>
                 {fascia}
               </span>
+              
               {haInterpretabilita && (
                 <label title="Interpretabile (Sì/No)" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
                   <input
@@ -831,21 +849,13 @@ export default function WizardNuovaRelazione() {
 
   function normalizzaDatiIniziali(raw) {
     if (!raw) return INIT
+    const migrated = migraWizardSnapshotLegacy(raw)
     return {
       ...INIT,
-      ...raw,
-      cognitivo: {
-        ...INIT.cognitivo,
-        ...(raw.cognitivo || {}),
-        // Nota: bozze salvate prima dell'introduzione dei punti ponderati
-        // avevano "riferimenti_subtest" come testo libero (nomi dei subtest,
-        // non punteggi) — non è convertibile in pp numerici, quindi viene
-        // scartato e subtest_pp riparte vuoto per quelle bozze.
-        subtest_pp: { ...INIT.cognitivo.subtest_pp, ...(raw.cognitivo?.subtest_pp || {}) },
-      },
-      nepsy: {
-        ...INIT.nepsy,
-        ...(raw.nepsy || {}),
+      ...migrated,
+      test_risultati: {
+        ...(INIT.test_risultati || {}),
+        ...(migrated.test_risultati || {}),
       },
     }
   }

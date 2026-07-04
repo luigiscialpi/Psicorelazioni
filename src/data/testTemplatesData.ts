@@ -23,7 +23,9 @@ export async function getTestTemplates(): Promise<TestTemplate[]> {
     attivo: d.attivo,
     schemaVersion: d.schema_version,
     createdAt: d.created_at ?? undefined,
-    updatedAt: d.updated_at ?? undefined
+    updatedAt: d.updated_at ?? undefined,
+    colonne: d.colonne ?? undefined,
+    formule: d.formule ?? undefined
   }))
 }
 
@@ -48,7 +50,9 @@ export async function insertTestTemplate(t: Omit<TestTemplate,'id'|'createdAt'|'
     richiede_strumenti_utilizzati: t.richiedeStrumentiUtilizzati,
     built_in: false,
     attivo: t.attivo,
-    schema_version: t.schemaVersion || 1
+    schema_version: t.schemaVersion || 1,
+    colonne: t.colonne ?? ['Punteggio'],
+    formule: t.formule
   }
   
   const { data, error } = await supabase.from('test_templates').insert(payload).select().single()
@@ -68,7 +72,9 @@ export async function insertTestTemplate(t: Omit<TestTemplate,'id'|'createdAt'|'
     attivo: data.attivo,
     schemaVersion: data.schema_version,
     createdAt: data.created_at ?? undefined,
-    updatedAt: data.updated_at ?? undefined
+    updatedAt: data.updated_at ?? undefined,
+    colonne: data.colonne ?? undefined,
+    formule: data.formule ?? undefined
   })
 }
 
@@ -85,6 +91,8 @@ export async function updateTestTemplate(id: string, patch: Partial<TestTemplate
   if (patch.richiedeEtaValutazione !== undefined) payload.richiede_eta_valutazione = patch.richiedeEtaValutazione
   if (patch.richiedeStrumentiUtilizzati !== undefined) payload.richiede_strumenti_utilizzati = patch.richiedeStrumentiUtilizzati
   if (patch.attivo !== undefined) payload.attivo = patch.attivo
+  if (patch.colonne !== undefined) payload.colonne = patch.colonne
+  if (patch.formule !== undefined) payload.formule = patch.formule
   
   const { error } = await supabase.from('test_templates').update(payload).eq('id', id)
   if (error) throw error

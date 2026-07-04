@@ -24,7 +24,7 @@ import { fasciaWISC, fasciaScalare, WISC_IV_CAMPI, NEPSY_II_DOMINI } from '../co
 import { MOCK_WISC_IV_TEMPLATE, MOCK_NEPSY_II_TEMPLATE } from '../data/mockTemplates'
 import type { TestTemplate, RisultatoTest, ScalaPunteggio } from '../core/testTemplate'
 import { calcolaFascia, getScalaApplicabile } from './testTemplateEngine'
-import { notaRangeWisc, notaRangeNepsy, titoloSezioneTest } from './wizardToText'
+import { titoloSezioneTest } from './wizardToText'
 
 // ── Tipi per input strutturato ──────────────────────────────
 type ScoreMap = Record<string, string | number | boolean | null | undefined>
@@ -418,67 +418,72 @@ function makeTestTable(template: TestTemplate, risultato: RisultatoTest): Table 
     }),
   ]
 
-  // Aggiungi tabelle per gruppi secondari (es. subtest Nepsy o WISC)
-  if (template.gruppiSecondari && risultato.punteggiSecondari) {
-    for (const gruppo of template.gruppiSecondari) {
-      const secValidi = gruppo.campi.filter(c => risultato.punteggiSecondari![c.key])
-      if (secValidi.length > 0) {
-        rows.push(
-          new TableRow({
-            children: [
-              new TableCell({
-                borders, width: { size: CONTENT_W, type: WidthType.DXA },
-                columnSpan: numColonne,
-                margins: { top: 80, bottom: 80, left: 120, right: 120 },
-                shading: { fill: TABLE_HEADER_FILL, type: ShadingType.CLEAR },
-                children: [new Paragraph({
-                  alignment: AlignmentType.CENTER,
-                  children: [new TextRun({ text: gruppo.label, font: FONT, size: SIZE_BODY, bold: true })],
-                })],
-              })
-            ]
+  return new Table({ width: { size: CONTENT_W, type: WidthType.DXA }, columnWidths: colWidths, rows })
+}
+
+function makeSecondaryTestTable(subLabel: string, campi: Array<{ key: string; label: string }>, punteggiSecondari: Record<string, string | number>): Table {
+  const border = { style: BorderStyle.SINGLE, size: 4, color: '000000' }
+  const borders = { top: border, bottom: border, left: border, right: border }
+  const colW = Math.floor(CONTENT_W / 2)
+  const colWidths = [colW, colW]
+
+  const rows = [
+    new TableRow({
+      children: [
+        new TableCell({
+          borders, width: { size: colW * 2, type: WidthType.DXA },
+          columnSpan: 2,
+          margins: { top: 80, bottom: 80, left: 120, right: 120 },
+          shading: { fill: TABLE_HEADER_FILL, type: ShadingType.CLEAR },
+          children: [new Paragraph({
+            alignment: AlignmentType.CENTER,
+            children: [new TextRun({ text: subLabel, font: FONT, size: SIZE_BODY, bold: true })],
+          })],
+        })
+      ]
+    }),
+    new TableRow({
+      children: [
+        new TableCell({
+          borders, width: { size: colW, type: WidthType.DXA },
+          margins: { top: 80, bottom: 80, left: 120, right: 120 },
+          shading: { fill: 'F2F2F2', type: ShadingType.CLEAR },
+          children: [new Paragraph({
+            children: [new TextRun({ text: 'Sottotest', font: FONT, size: SIZE_BODY, bold: true })],
+          })],
+        }),
+        new TableCell({
+          borders, width: { size: colW, type: WidthType.DXA },
+          margins: { top: 80, bottom: 80, left: 120, right: 120 },
+          shading: { fill: 'F2F2F2', type: ShadingType.CLEAR },
+          children: [new Paragraph({
+            alignment: AlignmentType.CENTER,
+            children: [new TextRun({ text: 'Punteggio', font: FONT, size: SIZE_BODY, bold: true })],
+          })],
+        }),
+      ]
+    }),
+    ...campi.map(c => {
+      const p = punteggiSecondari[c.key] ?? '—'
+      return new TableRow({
+        children: [
+          new TableCell({
+            borders, width: { size: colW, type: WidthType.DXA },
+            margins: { top: 80, bottom: 80, left: 120, right: 120 },
+            children: [new Paragraph({ children: [new TextRun({ text: c.label, font: FONT, size: SIZE_BODY })] })],
           }),
-          ...secValidi.map(c => {
-            const p = risultato.punteggiSecondari![c.key]
-            const scala = c.scala || gruppo.scalaDefault || template.scalaDefault
-            const fascia = calcolaFascia(p, scala) ?? '-'
-            
-            return new TableRow({
-              children: [
-                new TableCell({
-                  borders, width: { size: colWidths[0], type: WidthType.DXA },
-                  margins: { top: 80, bottom: 80, left: 120, right: 120 },
-                  children: [new Paragraph({ children: [new TextRun({ text: c.label, font: FONT, size: SIZE_BODY })] })],
-                }),
-                new TableCell({
-                  borders, width: { size: colWidths[1], type: WidthType.DXA },
-                  margins: { top: 80, bottom: 80, left: 120, right: 120 },
-                  children: [new Paragraph({
-                    alignment: AlignmentType.CENTER,
-                    children: [new TextRun({ text: String(p), font: FONT, size: SIZE_BODY })],
-                  })],
-                }),
-                new TableCell({
-                  borders, width: { size: colWidths[2], type: WidthType.DXA },
-                  margins: { top: 80, bottom: 80, left: 120, right: 120 },
-                  children: [new Paragraph({
-                    alignment: AlignmentType.CENTER,
-                    children: [new TextRun({ text: fascia, font: FONT, size: SIZE_BODY })],
-                  })],
-                }),
-                ...(mostraColonna ? [
-                  new TableCell({
-                    borders, width: { size: colWidths[3], type: WidthType.DXA },
-                    children: [new Paragraph("")]
-                  })
-                ] : [])
-              ]
-            })
-          })
-        )
-      }
-    }
-  }
+          new TableCell({
+            borders, width: { size: colW, type: WidthType.DXA },
+            margins: { top: 80, bottom: 80, left: 120, right: 120 },
+            children: [new Paragraph({
+              alignment: AlignmentType.CENTER,
+              children: [new TextRun({ text: String(p), font: FONT, size: SIZE_BODY })],
+            })],
+          }),
+        ]
+      })
+    })
+  ]
 
   return new Table({ width: { size: CONTENT_W, type: WidthType.DXA }, columnWidths: colWidths, rows })
 }
@@ -513,6 +518,41 @@ export async function esportaDocx({ testo, data, nomeStudio, anagrafica, profess
   const flushDinamica = () => {
     if (inDinamica) {
       const narrativa = dinamicaNarrativaLines.join('\n').trim()
+      
+      // Definiamo una mappa per contenere i diversi pezzi di narrativa spezzettati.
+      // Chiave 'generale' per il testo iniziale del test.
+      // Altre chiavi basate sui nomi dei gruppi secondari (es: "Scale Sindromiche", "Scale DSM Oriented")
+      const narrativaSpezzata: Record<string, string> = { generale: '' }
+      
+      if (narrativa) {
+        // Spezziamo la narrativa basandoci su marcatori dinamici o intestazioni standard
+        const righeNarrative = narrativa.split('\n')
+        let sezioneCorrente = 'generale'
+        let righeAccumulate: string[] = []
+        
+        for (const riga of righeNarrative) {
+          const matchSottosezione = riga.match(/===\s*SOTTOSEZIONE:\s*(.*?)\s*===/i) || 
+                                    riga.match(/^###\s*(.*)$/) ||
+                                    riga.match(/^\*\*(Scale Sindromiche|Scale DSM Oriented|Scale DSM|Sindromiche|DSM)\*\*\s*$/i)
+
+          if (matchSottosezione) {
+            // Salva la sezione precedente
+            narrativaSpezzata[sezioneCorrente] = righeAccumulate.join('\n').trim()
+            righeAccumulate = []
+            
+            // Estrae il nome pulito della nuova sottosezione
+            const nomeTrovato = matchSottosezione[1].trim()
+            
+            // Normalizziamo il nome della sezione per fare matching più resiliente con i gruppi secondari
+            sezioneCorrente = nomeTrovato.toLowerCase()
+          } else {
+            righeAccumulate.push(riga)
+          }
+        }
+        narrativaSpezzata[sezioneCorrente] = righeAccumulate.join('\n').trim()
+      }
+
+      // 1. Aggiungi la tabella principale del test
       if (Object.keys(inDinamica.risultato.punteggi || {}).length > 0) {
         blocchi.push(makeTestTable(inDinamica.template, inDinamica.risultato))
         if (inDinamica.risultato.includiNotaRange !== false && inDinamica.template.notaRange) {
@@ -521,10 +561,51 @@ export async function esportaDocx({ testo, data, nomeStudio, anagrafica, profess
             children: [new TextRun({ text: inDinamica.template.notaRange, font: FONT, size: SIZE_SMALL, italics: true })],
           }))
         }
+        blocchi.push(emptyLine(60))
       }
-      if (narrativa) {
-        blocchi.push(...markdownToParagraphs(narrativa))
+
+      // 2. Aggiungi subito la narrativa generale / iniziale (se presente)
+      const testoGenerale = narrativaSpezzata['generale'] || ''
+      if (testoGenerale) {
+        blocchi.push(...markdownToParagraphs(testoGenerale))
+        blocchi.push(emptyLine(60))
       }
+
+      // 3. Aggiungi le tabelle secondarie ciascuna seguita immediatamente dalla sua narrativa
+      if (inDinamica.template.gruppiSecondari && inDinamica.risultato.punteggiSecondari) {
+        for (const gruppo of inDinamica.template.gruppiSecondari) {
+          const secValidi = gruppo.campi.filter(c => inDinamica!.risultato.punteggiSecondari![c.key] !== undefined && inDinamica!.risultato.punteggiSecondari![c.key] !== '')
+          if (secValidi.length > 0) {
+            blocchi.push(emptyLine(60))
+            const tabellaSecondaria = makeSecondaryTestTable(gruppo.label, secValidi, inDinamica.risultato.punteggiSecondari as Record<string, string | number>)
+            blocchi.push(tabellaSecondaria)
+            blocchi.push(emptyLine(60))
+            
+            // Cerchiamo se c'è della narrativa per questo gruppo specifico nella mappa degli spezzettati
+            const chiaviGruppo = [
+              gruppo.label.toLowerCase(),
+              gruppo.key.toLowerCase(),
+              gruppo.label.replace(/\(.*?\)/g, '').trim().toLowerCase() // es: "scale sindromiche (cbcl)" -> "scale sindromiche"
+            ]
+            
+            let testoGruppo = ''
+            for (const chiave of chiaviGruppo) {
+              // Cerca corrispondenza esatta o parziale
+              const chiaveTrovata = Object.keys(narrativaSpezzata).find(k => k === chiave || k.includes(chiave) || chiave.includes(k))
+              if (chiaveTrovata) {
+                testoGruppo = narrativaSpezzata[chiaveTrovata]
+                break
+              }
+            }
+            
+            if (testoGruppo) {
+              blocchi.push(...markdownToParagraphs(testoGruppo))
+              blocchi.push(emptyLine(60))
+            }
+          }
+        }
+      }
+
       dinamicaNarrativaLines = []
       inDinamica = null
     }
@@ -542,7 +623,7 @@ export async function esportaDocx({ testo, data, nomeStudio, anagrafica, profess
         if (cognitivo.includi_nota_range) {
           blocchi.push(new Paragraph({
             spacing: { after: 120 },
-            children: [new TextRun({ text: notaRangeWisc(), font: FONT, size: SIZE_SMALL, italics: true })],
+            children: [new TextRun({ text: MOCK_WISC_IV_TEMPLATE.notaRange || '', font: FONT, size: SIZE_SMALL, italics: true })],
           }))
         }
       }
@@ -564,7 +645,7 @@ export async function esportaDocx({ testo, data, nomeStudio, anagrafica, profess
         if (nepsy.includi_nota_range) {
           blocchi.push(new Paragraph({
             spacing: { after: 120 },
-            children: [new TextRun({ text: notaRangeNepsy(), font: FONT, size: SIZE_SMALL, italics: true })],
+            children: [new TextRun({ text: MOCK_NEPSY_II_TEMPLATE.notaRange || '', font: FONT, size: SIZE_SMALL, italics: true })],
           }))
         }
       }
@@ -596,9 +677,14 @@ export async function esportaDocx({ testo, data, nomeStudio, anagrafica, profess
       flushDinamica()
       inDinamica = sezioniDinamiche.get(line.slice(3).trim())!
       i++
-      // Salta righe tabella Markdown (ricostruita nativamente in flushDinamica)
-      // e la nota range in corsivo, stessa logica di cognitivo/nepsy.
-      while (i < lines.length && lines[i].match(/^\s*(\|.*\||\*[A-Z])/)) i++
+      // Salta righe tabella Markdown, vecchie tabelle/grezzi secondari (es: **Scale Sindromiche**), righe vuote iniziali,
+      // e la nota range in corsivo, per evitare di duplicare la parte tabellare e iniziare subito con la narrativa.
+      while (i < lines.length && (
+        lines[i].match(/^\s*(\|.*\||\*[A-Z]|\*\*)/) || 
+        lines[i].trim() === ''
+      )) {
+        i++
+      }
       if (i < lines.length && lines[i].trim() && !lines[i].startsWith('#')) {
         dinamicaNarrativaLines.push(lines[i])
         i++
@@ -674,7 +760,10 @@ export async function esportaDocx({ testo, data, nomeStudio, anagrafica, profess
       }
       const isRigaTabella = /^\s*\|.*\|\s*$/.test(line)
       const isNotaRange = /^\s*\*[A-Z][\w-]*(-II)?:\s.*\*\s*$/.test(line)
-      if (line.trim() && !isRigaTabella && !isNotaRange) dinamicaNarrativaLines.push(line)
+      const isTitoloGruppoSecondario = /^\s*\*\*.*\*\*\s*$/.test(line)
+      if (line.trim() && !isRigaTabella && !isNotaRange && !isTitoloGruppoSecondario) {
+        dinamicaNarrativaLines.push(line)
+      }
       i++
       continue
     }

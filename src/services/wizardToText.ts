@@ -298,12 +298,69 @@ function rimuoviTabelleDuplicateDalDocumento(documento: string): string {
     .replace(/\n{3,}/g, '\n\n')
 }
 
+// ── Pulizia del testo e rimozione di duplicati intestazioni della sezione ──
+// Rete di sicurezza per ripulire intestazioni di sezione duplicate generate
+// dall'AI che a volte ripete `# Conclusioni` o `## CONCLUSIONI` all'interno
+// del blocco di testo narrativo fornito.
+export function pulisciSezioneDaIntestazioni(testo: string, titoloSezione: string): string {
+  if (!testo) return testo
+  const righe = testo.split('\n')
+  const titoloClean = titoloSezione.trim().toLowerCase()
+  
+  const filtered = righe.filter(riga => {
+    const raw = riga.trim().toLowerCase()
+    // Controlla se la riga è un header markdown (es. #, ##, ###) che contiene il nome del titolo o simile
+    if (raw.startsWith('#')) {
+      const pulito = raw.replace(/^#+\s*/, '')
+      if (pulito === titoloClean || pulito.includes(titoloClean) || titoloClean.includes(pulito)) {
+        return false // rimuovi l'intestazione duplicata
+      }
+    }
+    return true
+  })
+  
+  return filtered.join('\n').trim()
+}
+
+// ── Rimozione di formule di rilascio duplicate ──
+// Evita che nel documento finale compaiano duplicati di frasi fisse come
+// "Si rilascia ai genitori..." o "Si rilascia alla famiglia per gli usi consentiti...".
+export function rimuoviFormuleRilascioDuplicate(tabellaOMarkdown: string): string {
+  if (!tabellaOMarkdown) return tabellaOMarkdown
+  
+  const righe = tabellaOMarkdown.split('\n')
+  const formulePattern = [
+    /si rilascia/i,
+    /per gli usi consentiti/i,
+    /legge 170/i
+  ]
+  
+  let formulaTrovata = false
+  const filtered = righe.filter(riga => {
+    const isFormula = formulePattern.some(p => p.test(riga))
+    if (isFormula) {
+      if (formulaTrovata) {
+        // Abbiamo già questa formula, eliminiamo la duplicazione
+        return false
+      }
+      formulaTrovata = true
+    }
+    return true
+  })
+  
+  return filtered.join('\n').trim()
+}
+
 export function assemblaDocumentoMarkdown(wizard, narrativaPerSezione = {}, templates: TestTemplate[] = []) {
   const sez = wizard.sezioni_attive || []
-  const templatesById = new Map(templates.map(t => [t.id, t]))
+  const templatesById = new Map<string, TestTemplate>([
+    ['wisc-iv', MOCK_WISC_IV_TEMPLATE],
+    ['nepsy-ii', MOCK_NEPSY_II_TEMPLATE],
+    ...templates.map(t => [t.id, t] as [string, TestTemplate])
+  ])
   let out = '# Relazione di Valutazione Neuropsicologica\n\n'
   out += '## Dati e motivo dell\'invio\n'
-  const narrativaIntestazione = rimuoviTabelleMarkdown(narrativaPerSezione['intestazione'] || '')
+  const narrativaIntestazione = pulisciSezioneDaIntestazioni(rimuoviTabelleMarkdown(narrativaPerSezione['intestazione'] || ''), 'dati e motivo')
   if (narrativaIntestazione) {
     out += narrativaIntestazione + '\n'
   } else {
@@ -318,7 +375,7 @@ export function assemblaDocumentoMarkdown(wizard, narrativaPerSezione = {}, temp
     // fallita per questa sezione), ricade sulla composizione deterministica
     // da vociToTesto — meno elegante ma sempre disponibile, non lascia mai
     // la sezione vuota.
-    const narrativaAnamnesi = rimuoviTabelleMarkdown(narrativaPerSezione['anamnesi'] || '')
+    const narrativaAnamnesi = pulisciSezioneDaIntestazioni(rimuoviTabelleMarkdown(narrativaPerSezione['anamnesi'] || ''), 'anamnesi')
     if (narrativaAnamnesi) {
       out += narrativaAnamnesi + '\n'
     } else if (wizard.anamnesi) {
@@ -332,56 +389,12 @@ export function assemblaDocumentoMarkdown(wizard, narrativaPerSezione = {}, temp
 
   if (sez.includes('osservazione')) {
     out += '\n## Osservazione comportamentale\n'
-    const narrativaOss = rimuoviTabelleMarkdown(narrativaPerSezione['osservazione'] || '')
+    const narrativaOss = pulisciSezioneDaIntestazioni(rimuoviTabelleMarkdown(narrativaPerSezione['osservazione'] || ''), 'osservazione')
     if (narrativaOss) {
       out += narrativaOss + '\n'
     } else {
       const oss = osservazioneToTesto(wizard.osservazione)
       out += (oss || '') + '\n'
-    }
-  }
-
-  if (sez.includes('cognitivo') || sez.includes('wisc-iv')) {
-    out += '\n'
-    const ris: RisultatoTest = {
-      somministrato: true,
-      punteggi: wizard.cognitivo?.punteggi || {},
-      punteggiSecondari: wizard.cognitivo?.subtest_pp || {},
-      interpretabilita: wizard.cognitivo?.interpretabilita || {},
-      includiNotaRange: wizard.cognitivo?.includi_nota_range !== false,
-      etaValutazione: wizard.cognitivo?.eta_valutazione,
-      strumentiUtilizzati: wizard.cognitivo?.strumenti_utilizzati,
-      noteCliniche: wizard.cognitivo?.note_cliniche
-    }
-    const engineText = generaSezioneTest(MOCK_WISC_IV_TEMPLATE, ris)
-    if (engineText) out += engineText + '\n'
-    
-    const narrativaC = rimuoviTabelleMarkdown(narrativaPerSezione['cognitivo'] || narrativaPerSezione['wisc-iv'] || '')
-    if (narrativaC) {
-      out += '\n' + narrativaC + '\n'
-    } else if (!engineText) {
-      if (wizard.cognitivo?.eta_valutazione) out += `Età al momento della valutazione: ${wizard.cognitivo.eta_valutazione}.\n`
-      if (wizard.cognitivo?.strumenti_utilizzati) out += `Strumenti utilizzati: ${wizard.cognitivo.strumenti_utilizzati}\n`
-    }
-  }
-
-  if (sez.includes('nepsy') || sez.includes('nepsy-ii')) {
-    out += '\n'
-    const ris: RisultatoTest = {
-      somministrato: true,
-      punteggi: wizard.nepsy?.punteggi || {},
-      includiNotaRange: wizard.nepsy?.includi_nota_range !== false,
-      strumentiUtilizzati: wizard.nepsy?.strumenti_utilizzati,
-      noteCliniche: wizard.nepsy?.note_cliniche
-    }
-    const engineText = generaSezioneTest(MOCK_NEPSY_II_TEMPLATE, ris)
-    if (engineText) out += engineText + '\n'
-    
-    const narrativaN = rimuoviTabelleMarkdown(narrativaPerSezione['nepsy'] || narrativaPerSezione['nepsy-ii'] || '')
-    if (narrativaN) {
-      out += '\n' + narrativaN + '\n'
-    } else if (!engineText && wizard.nepsy?.strumenti_utilizzati) {
-      out += `Strumenti utilizzati: ${wizard.nepsy.strumenti_utilizzati}\n`
     }
   }
 
@@ -403,7 +416,9 @@ export function assemblaDocumentoMarkdown(wizard, narrativaPerSezione = {}, temp
     }
     out += generaTabella(template, risultato)
 
-    const narrativaDinamica = rimuoviTabelleMarkdown(narrativaPerSezione[sezId] || '')
+    let narrativaDinamica = pulisciSezioneDaIntestazioni(rimuoviTabelleMarkdown(narrativaPerSezione[sezId] || ''), titolo)
+    narrativaDinamica = pulisciSezioneDaIntestazioni(narrativaDinamica, template.nome)
+    
     if (narrativaDinamica) {
       out += narrativaDinamica + '\n\n'
     } else {
@@ -423,7 +438,7 @@ export function assemblaDocumentoMarkdown(wizard, narrativaPerSezione = {}, temp
     // Testo narrativo di Gemini (se presente) integra ora anche le note
     // di lettura/scrittura/matematica, tessute in prosa — non vengono più
     // riappese come frasi isolate in coda (vedi geminiService.ts).
-    const narrativaApp = rimuoviTabelleMarkdown(narrativaPerSezione['apprendimenti'] || '')
+    const narrativaApp = pulisciSezioneDaIntestazioni(rimuoviTabelleMarkdown(narrativaPerSezione['apprendimenti'] || ''), 'apprendimenti')
     if (narrativaApp) {
       out += narrativaApp + '\n'
     } else {
@@ -436,7 +451,7 @@ export function assemblaDocumentoMarkdown(wizard, narrativaPerSezione = {}, temp
     out += '\n## Questionari\n'
     if (wizard.questionari?.tipo) out += `${wizard.questionari.tipo}\n\n`
     if (wizard.questionari?.punteggi_grezzi) out += `${wizard.questionari.punteggi_grezzi}\n\n`
-    const narrativaQ = rimuoviTabelleMarkdown(narrativaPerSezione['questionari'] || '')
+    const narrativaQ = pulisciSezioneDaIntestazioni(rimuoviTabelleMarkdown(narrativaPerSezione['questionari'] || ''), 'questionari')
     if (narrativaQ) out += narrativaQ + '\n'
     if (wizard.questionari?.note_cliniche) out += wizard.questionari.note_cliniche + '\n'
   }
@@ -446,9 +461,9 @@ export function assemblaDocumentoMarkdown(wizard, narrativaPerSezione = {}, temp
     // Il testo narrativo di Gemini (sintesi articolata del quadro
     // complessivo, vedi generaNarrativaSezioni) viene anteposto al
     // template fisso di diagnosi/consigli — prima era generato ma mai
-    // usato, il che contribuiva a relazioni percepite come "scarne"
+    // usato, il che contribuiva a relazioni percepite como "scarne"
     // anche quando Gemini aveva prodotto un'analisi ricca.
-    const narrativaConcl = rimuoviTabelleMarkdown(narrativaPerSezione['conclusioni'] || '')
+    const narrativaConcl = pulisciSezioneDaIntestazioni(rimuoviTabelleMarkdown(narrativaPerSezione['conclusioni'] || ''), 'conclusioni')
     if (narrativaConcl) {
       // Gemini ha prodotto una narrativa strutturata che integra già
       // diagnosi, consigli, strumenti e misure — non duplicarli.
@@ -468,29 +483,77 @@ export function assemblaDocumentoMarkdown(wizard, narrativaPerSezione = {}, temp
     out += '\nSi rilascia alla famiglia per gli usi consentiti dalla Legge 170/2010.\n'
   }
 
-  return rimuoviTabelleDuplicateDalDocumento(out.trim())
+  // Rimuovi eventuali formule di rilascio duplicate (ad es. se Gemini le include in narrativa e le abbiamo già fisse)
+  const documentoPulito = rimuoviFormuleRilascioDuplicate(out.trim())
+  return rimuoviTabelleDuplicateDalDocumento(documentoPulito)
 }
 
-// ── Sostituzione del segnaposto {{NOME}} con il nome reale ──
-// Gemini non vede mai il nome del paziente (vedi generaRelazione in
-// geminiService.ts, che scarta esplicitamente wizard.anagrafica prima
-// di costruire qualunque prompt). Scrive invece il segnaposto letterale
-// "{{NOME}}" ovunque userebbe il nome, con la stessa naturalezza
-// stilistica del template originale osservato (dove il nome compare
-// più volte nel corpo — anamnesi, osservazione, conclusioni — non
-// solo nell'apertura). Questa funzione va chiamata SOLO lato client,
-// DOPO aver ricevuto il testo generato, in un punto che ha accesso
-// all'anagrafica reale (RisultatoGenerazione.tsx) — mai dentro
-// geminiService.ts, che non deve mai maneggiare il nome.
-//
-// Sostituzione a token esatto (non regex su frasi grammaticali come
-// "il/la paziente"): più robusta perché non richiede indovinare la
-// forma grammaticale corretta in ogni contesto — è Gemini stesso a
-// scegliere l'articolo/costruzione della frase attorno al segnaposto,
-// esattamente come farebbe con un nome vero.
-export function sostituisciNomePlaceholder(testo: string, anagrafica?: { nome?: string; cognome?: string } | null): string {
+// ── Sostituzione dei segnaposto con dati reali o formule calcolate ──
+// Questa funzione va chiamata SOLO lato client, DOPO aver ricevuto il testo generato,
+// in un punto che ha accesso all'anagrafica reale (RisultatoGenerazione.tsx).
+// Oltre al nome, sostituisce altri bracketed token e normalizza date/scuola se necessario.
+export function sostituisciNomePlaceholder(testo: string, anagrafica?: { nome?: string; cognome?: string; data_nascita?: string; scuola_classe?: string } | null): string {
   if (!testo) return testo
-  const nome = anagrafica?.nome?.trim()
-  if (!nome) return testo // nessuna anagrafica disponibile: lascia il segnaposto visibile piuttosto che inventare un nome
-  return testo.replaceAll('{{NOME}}', nome)
+  
+  let out = testo
+  
+  if (anagrafica) {
+    const nome = anagrafica.nome?.trim() || ''
+    const cognome = anagrafica.cognome?.trim() || ''
+    const dataNascitaVal = anagrafica.data_nascita?.trim() || ''
+    const scuolaClasseVal = anagrafica.scuola_classe?.trim() || ''
+    
+    // 1. Sostituzione {{NOME}} standard
+    if (nome) {
+      out = out.replaceAll('{{NOME}}', nome)
+    }
+    
+    // 2. Sostituzioni bracketed addizionali per date di nascita, anno scolastico e contestuali se Gemini li ha scritti in alto o nel testo
+    const tokenMappa: Record<string, string> = {
+      '[NOME]': nome,
+      '[COGNOME]': cognome,
+      '[PAZIENTE]': nome,
+      '[DATA]': new Date().toLocaleDateString('it-IT'),
+      '[ANNO SCOLASTICO]': calcolaAnnoScolastico(new Date()),
+    }
+    
+    if (dataNascitaVal) {
+      tokenMappa['[DATA DI NASCITA]'] = formattaDataIt(dataNascitaVal)
+      tokenMappa['[DATA_NASCITA]'] = formattaDataIt(dataNascitaVal)
+    }
+    if (scuolaClasseVal) {
+      tokenMappa['[SCUOLA_CLASSE]'] = scuolaClasseVal
+      tokenMappa['[SCUOLA CLASSE]'] = scuolaClasseVal
+      tokenMappa['[CLASSE]'] = scuolaClasseVal
+    }
+    
+    for (const [token, val] of Object.entries(tokenMappa)) {
+      if (val) {
+        out = out.replaceAll(token, val)
+      }
+    }
+  }
+  
+  return out
+}
+
+function formattaDataIt(dataStr: string): string {
+  if (!dataStr) return ''
+  try {
+    const d = new Date(dataStr)
+    if (isNaN(d.getTime())) return dataStr
+    return d.toLocaleDateString('it-IT')
+  } catch {
+    return dataStr
+  }
+}
+
+function calcolaAnnoScolastico(dataRef: Date): string {
+  const mese = dataRef.getMonth() // 0-indexed (0 = Gennaio)
+  const anno = dataRef.getFullYear()
+  if (mese >= 8) { // Settembre o dopo
+    return `${anno}/${anno + 1}`
+  } else {
+    return `${anno - 1}/${anno}`
+  }
 }
