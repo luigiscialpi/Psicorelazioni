@@ -71,8 +71,8 @@ Non tutte le relazioni includono tutte le sezioni (una rivalutazione può non av
 | Modulo 2 — Profilo di stile | ✅ Stabile e robusto | Prompt di analisi aggiornato per riconoscere indici WISC, tabelle NEPSY, formule normative fisse. Affidabilità Gemini (fallback modelli, retry, limiti payload) e logica incrementale deterministica aggiunte (sedicesima e diciassettesima correzione). Architettura Split-Prompt Chaining per evitare troncamento output (ventiquattresima correzione): due chiamate parallele (stile sezioni 1-6 + test clinici sezione 7). Continuazione intelligente consapevole della Sezione 7 con tracking del finishReason quando MAX_TOKENS viene raggiunto (ventnovesima correzione) |
 | Modulo 2b — Gestione Test Dinamici | ✅ Implementato | CRUD completo per template personalizzabili di test clinici (campi principali, subtest, scale di punteggio, note range). Modifica, disattivazione/riattivazione, eliminazione con conferma gender-aware. Suggerimenti AI da archivio e da Profilo di Stile con estrazione on-demand e persistenza in database (venticinquesima e ventisettesima correzione) |
 | Modulo 3 — Wizard | ✅ Calibrato sulla struttura reale | Selettore di sezioni dinamico + step dedicati per anamnesi, osservazione, cognitivo, NEPSY, apprendimenti, questionari, conclusioni. Campi "punteggi" come testo libero per le tabelle incollate. Allineamento bidirezionale col Profilo di Stile e accordion punti ponderati per subtest WISC-IV (diciottesima e ventesima correzione). Genere del paziente obbligatorio per concordanza grammaticale (ventitreesima correzione) |
-| Modulo 4 — Generazione + editor | 🟡 Parziale | Generazione e editor testuale aggiornati al nuovo formato; manca ancora "rigenera sezione" e l'anteprima formattata. Campi di contorno (intestazione, età/strumenti, note lettura/scrittura/matematica) ora tessuti nella narrativa di Gemini invece di restare testo grezzo (ventunesima correzione) |
-| Modulo 5 — Export DOCX | ✅ Implementato | Template fedele allo screenshot: Times New Roman, margini 2.5cm, intestazione professionale, titolo centrato sottolineato, numero pagina X/Y, tabelle WISC con intestazione grigia e bordi |
+| Modulo 4 — Generazione + editor | ✅ Completo | Generazione, editor e rigenerazione sezioni a runtime completati. Risolti bug critici di runtime: (1) perdita dei marcatori di genere per de-anonimizzazione precoce (ora il genere viene preservato nel payload privato inviato all'AI), (2) omissione dei template testuali e questionari dinamici (es. CBCL) durante il montaggio del Markdown combinato. Rafforzato il system prompt con regole di interclastamento per spezzettare l'output verbale dei test sotto ciascuna sotto-tabella |
+| Modulo 5 — Export DOCX | ✅ Implementato | Template fedele allo screenshot. Corretto bug critico dei duplicati delle tabelle e implementata la separazione fisica tra tabelle principali e secondarie (Scale Sindromiche, DSM) nel file Word con interclastamento della relativa narrativa prodotta dall'AI |
 | Modulo 5 — Archivio | ✅ Implementato | Ricerca full-text, filtro per tipo, apertura dettaglio, riapertura per modifica quando `wizard_snapshot` è presente. Dettaglio ora con rendering Markdown reale (tabelle/liste/blockquote) invece di testo piatto (quattordicesima correzione). Aggiunta la possibilità di eliminare definitivamente una relazione dall'archivio con conferma (ventottesima correzione) |
 
 ### Decisione tecnica: `useReducer` al posto di `useState`
@@ -1023,7 +1023,9 @@ I dati inviati alla Gemini API gratuita (Google AI Studio) potrebbero essere usa
 
 ### Versione 1.0 — Priorità 2
 - [x] Export DOCX con template (Times New Roman, margini 2.5cm, intestazione, pagine X/Y, tabelle Word reali)
-- [ ] Rigenera sezione nell'editor
+- [x] Rigenera sezione nell'editor
+- [x] Anteprima formattata della relazione (HTML renderizzato, non solo textarea)
+- [x] Spaccatura delle tabelle secondarie (Scale Sindromiche e DSM) e narrativa "interclastata" (interleaved) sotto ciascuna sotto-tabella nel DOCX esportato
 - [x] Archivio con ricerca full-text e filtri
 - [x] Anonimizzazione locale + anteprima obbligatoria prima dell'invio a Gemini per l'analisi dello stile (fix di privacy critico)
 - [x] Validazione per step nel wizard (non più accumulata solo alla fine), con indicatore visivo di step incompleti nella barra di progresso
@@ -1054,8 +1056,6 @@ I dati inviati alla Gemini API gratuita (Google AI Studio) potrebbero essere usa
 - [x] Dashboard: sezione bozze in corso limitata a 6 elementi con scorrimento
 
 ### Versione 1.1 — Priorità 3
-- [ ] Rigenera sezione nell'editor
-- [ ] Anteprima formattata della relazione (HTML renderizzato, non solo textarea)
 - [ ] Statistiche dashboard
 - [ ] Export multiplo ZIP
 - [ ] Feedback qualità generazione e miglioramento progressivo del profilo
