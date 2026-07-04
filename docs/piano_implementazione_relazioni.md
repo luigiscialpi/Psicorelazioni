@@ -68,12 +68,12 @@ Non tutte le relazioni includono tutte le sezioni (una rivalutazione può non av
 | Setup progetto | ✅ Completo | React + Vite, design system, font |
 | Modulo 1 — Auth + Import (DOCX/PDF/DOC) | ✅ Completo | Mammoth.js (DOCX) + pdf.js (PDF) funzionanti e testati; `.doc` guidato verso conversione manuale a `.docx`. Rafforzato con fallback Pandoc WASM → docx-preview/Turndown → Mammoth e ricostruzione PDF migliorata (quindicesima correzione) |
 | Livello dati astratto | ✅ Completo | `dataService.js`, `geminiService.js` |
-| Modulo 2 — Profilo di stile | ✅ Calibrato sulla struttura reale | Prompt di analisi aggiornato per riconoscere indici WISC, tabelle NEPSY, formule normative fisse. Affidabilità Gemini (fallback modelli, retry, limiti payload) e logica incrementale deterministica aggiunte (sedicesima e diciassettesima correzione). Architettura Split-Prompt Chaining per evitare troncamento output (ventiquattresima correzione): due chiamate parallele (stile sezioni 1-6 + test clinici sezione 7) |
-| Modulo 2b — Gestione Test Dinamici | ✅ Implementato | CRUD completo per template personalizzabili di test clinici (campi principali, subtest, scale di punteggio, note range). Modifica, disattivazione/riattivazione, eliminazione con conferma gender-aware. Suggerimenti AI da archivio e da Profilo di Stile con estrazione on-demand (venticinquesima correzione) |
+| Modulo 2 — Profilo di stile | ✅ Stabile e robusto | Prompt di analisi aggiornato per riconoscere indici WISC, tabelle NEPSY, formule normative fisse. Affidabilità Gemini (fallback modelli, retry, limiti payload) e logica incrementale deterministica aggiunte (sedicesima e diciassettesima correzione). Architettura Split-Prompt Chaining per evitare troncamento output (ventiquattresima correzione): due chiamate parallele (stile sezioni 1-6 + test clinici sezione 7). Continuazione intelligente consapevole della Sezione 7 con tracking del finishReason quando MAX_TOKENS viene raggiunto (ventnovesima correzione) |
+| Modulo 2b — Gestione Test Dinamici | ✅ Implementato | CRUD completo per template personalizzabili di test clinici (campi principali, subtest, scale di punteggio, note range). Modifica, disattivazione/riattivazione, eliminazione con conferma gender-aware. Suggerimenti AI da archivio e da Profilo di Stile con estrazione on-demand e persistenza in database (venticinquesima e ventisettesima correzione) |
 | Modulo 3 — Wizard | ✅ Calibrato sulla struttura reale | Selettore di sezioni dinamico + step dedicati per anamnesi, osservazione, cognitivo, NEPSY, apprendimenti, questionari, conclusioni. Campi "punteggi" come testo libero per le tabelle incollate. Allineamento bidirezionale col Profilo di Stile e accordion punti ponderati per subtest WISC-IV (diciottesima e ventesima correzione). Genere del paziente obbligatorio per concordanza grammaticale (ventitreesima correzione) |
 | Modulo 4 — Generazione + editor | 🟡 Parziale | Generazione e editor testuale aggiornati al nuovo formato; manca ancora "rigenera sezione" e l'anteprima formattata. Campi di contorno (intestazione, età/strumenti, note lettura/scrittura/matematica) ora tessuti nella narrativa di Gemini invece di restare testo grezzo (ventunesima correzione) |
 | Modulo 5 — Export DOCX | ✅ Implementato | Template fedele allo screenshot: Times New Roman, margini 2.5cm, intestazione professionale, titolo centrato sottolineato, numero pagina X/Y, tabelle WISC con intestazione grigia e bordi |
-| Modulo 5 — Archivio | ✅ Implementato | Ricerca full-text, filtro per tipo, apertura dettaglio, riapertura per modifica quando `wizard_snapshot` è presente. Dettaglio ora con rendering Markdown reale (tabelle/liste/blockquote) invece di testo piatto (quattordicesima correzione) |
+| Modulo 5 — Archivio | ✅ Implementato | Ricerca full-text, filtro per tipo, apertura dettaglio, riapertura per modifica quando `wizard_snapshot` è presente. Dettaglio ora con rendering Markdown reale (tabelle/liste/blockquote) invece di testo piatto (quattordicesima correzione). Aggiunta la possibilità di eliminare definitivamente una relazione dall'archivio con conferma (ventottesima correzione) |
 
 ### Decisione tecnica: `useReducer` al posto di `useState`
 
@@ -356,6 +356,61 @@ Durante i test clinici è emerso che Gemini non identificava autonomamente la re
 **Correzione**:
 1. **Analisi dello Stile**: Aggiornati i prompt di `analizzaStile` e `aggiornaProfiloIncrementale` in `geminiService.ts` per istruire esplicitamente Gemini a rilevare e documentare nel Profilo di Stile l'ordine logico di esposizione dell'analisi clinica dei test (global-first).
 2. **Generazione della Relazione**: Aggiornato il `systemPrompt` di `generaNarrativaSezioni` in `geminiService.ts` inserendo una regola tassativa che obbliga il modello a strutturare la narrativa dei test partendo sempre dal risultato globale/totale per poi scendere nel dettaglio dei singoli parametri secondari ("ORDINE DI ANALISI NEI TEST: esponi sempre prima il risultato globale/finale...").
+
+### Ventisettesima correzione: Persistenza dei template rilevati nel Profilo di Stile
+
+I template suggeriti rilevati da Gemini dal Profilo di Stile in precedenza persistevano soltanto in memoria temporanea (React state), andando persi al refresh della pagina Gestione Test.
+
+**Soluzione**:
+- Estesa la tabella `profilo_stile` su Supabase aggiungendo la colonna `template_rilevati JSONB DEFAULT '[]'`.
+- Implementate funzioni helper nel data layer (`getTemplateRilevati`, `saveTemplateRilevati`, `clearTemplateRilevati`) con gestione mock in-memory equivalente.
+- UI aggiornata in `GestioneTest.tsx` per persistere i suggerimenti calcolati, caricarli all'apertura in un accordion collassabile ed eliminare progressivamente ogni singolo elemento man mano che viene utilizzato per creare un test reale.
+- Previsto il clear automatico dei suggerimenti nel DB non appena il Profilo di Stile viene rigenerato da zero o modificato manualmente, per prevenire disallineamenti di stile.
+
+### Ventottesima correzione: Eliminazione delle relazioni dall'Archivio
+
+Mancava la possibilità per l'utente di rimuovere relazioni non più necessarie o generate per errore dall'Archivio.
+
+**Soluzione**:
+- Aggiunta la funzione `deleteRelazione(id)` nel data layer `relazioniData.ts` con integrazione DELETE su Supabase.
+- Aggiornato lo stato dell'archivio (`archivioState.ts`) per gestire il toggle di eliminazione e i flussi asincroni correlati.
+- Inserito un pulsante di eliminazione diretta (icona cestino) su ciascuna card dell'Archivio (configurato con `stopPropagation` per non interferire con il click di apertura dettaglio) ed all'interno del dettaglio della relazione aperta.
+- Implementato un dialog di conferma modale che avverte l'utente dell'irreversibilità dell'operazione.
+
+### Ventnovesima correzione: Continuazione intelligente della Sezione 7 quando MAX_TOKENS viene raggiunto
+
+Nonostante la suddivisione della generazione in due chiamate (Ventiquattresima correzione — Split-Prompt Chaining), durante i test con corpus estesi la **Sezione 7 (Analisi dei Test Clinici)** raggiungeva ancora il limite di 8192 token di output e veniva troncata con `finishReason: MAX_TOKENS`. Questo accadeva perché la ricchezza dei test clinici identificati nel corpus rendeva l'output naturalmente superiore al limite fisico del modello.
+
+Il primo tentativo di continuazione automatica (applicare genericamente "continua da dove hai smesso") falliva perché:
+- Gemini non sapeva con precisione da quale test ricominciare
+- Il testo concatenato ingenuamente si duplicava o conteneva incoerenze
+- La continuazione spesso ricominciava da test già presenti, creando una sezione 7 malformata
+
+**Soluzione adottata — Continuazione Consapevole**:
+1. **Tracking del `finishReason` reale**: suddivisione di `callGemini` in due funzioni:
+   - `callGemini(...)`: wrapper pubblico per la compatibilità con il resto del codice
+   - `callGeminiWithFinishReason(...)`: funzione interna che retorna sia il testo sia il `finishReason` (`STOP`, `MAX_TOKENS`, ecc.)
+   
+2. **Rilevamento consapevole del troncamento**: in `analizzaStile()`, il risultato della seconda chiamata (Sezione 7) viene salvato come `{ text, finishReason }` e controllato:
+   ```javascript
+   if (resultTest.finishReason === 'MAX_TOKENS') {
+     // Il testo è stato troncato, prova a completarlo
+   }
+   ```
+   
+3. **Continuazione con contesto pieno**: la nuova funzione `continuaSezione(systemPrompt, sezioneParziale, sezioneName, options)` riceve:
+   - Il **testo parziale della sezione 7** come contesto (non il prompt generico)
+   - Lo stesso `systemPrompt` della sezione 7, così Gemini mantiene la stessa persona e istruzioni
+   - Un prompt di continuazione esplicito che espone il parziale in un code block e chiede: "La generazione è stata interrotta. Completa proseguendo ESATTAMENTE da dove hai smesso, senza ripetere alcun testo già presente. Se è già completa, rispondi 'COMPLETA'."
+   
+4. **Ripulitura dei markdown fence**: la continuazione potrebbe involontariamente includere fence (`` ``` ``) che rovinerebbero il Markdown finale. Aggiunti regex di pulizia:
+   ```javascript
+   text = text.replace(/^```\n?/, '').replace(/\n?```$/, '').trim()
+   ```
+   
+5. **Fallback intelligente**: se la continuazione non restituisce nulla o riporta "COMPLETA", il profilo viene usato così com'è (parziale) invece di errore fatale — degradazione controllata.
+
+**Risultato**: con il corpus di test reale, la Sezione 7 si genera ora in modo stabile e completo anche quando la prima chiamata viene troncata. La concatenazione mantiene coerenza semantica e non duplica contenuti.
 
 ---
 
