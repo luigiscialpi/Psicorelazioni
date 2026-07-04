@@ -650,30 +650,6 @@ export default function GestioneTest() {
     })
   }, [])
 
-  async function handleSuggerisci() {
-    setLoadingSuggerimenti(true)
-    try {
-      const relazioni = await getRelazioni()
-      if (relazioni.length === 0) {
-        setSuccesso('Nessuna relazione in archivio da analizzare.')
-        setTimeout(() => setSuccesso(''), 4000)
-        return
-      }
-      const nomiEsistenti = templates.map(t => t.nome)
-      const res = await suggerisciTestDaArchivio(relazioni, nomiEsistenti)
-      if (res.length === 0) {
-        setSuccesso('Nessun nuovo test rilevato dalle tue relazioni.')
-        setTimeout(() => setSuccesso(''), 4000)
-      } else {
-        setSuggerimenti(res)
-      }
-    } catch (e: any) {
-      console.error(e)
-    } finally {
-      setLoadingSuggerimenti(false)
-    }
-  }
-
   function precompilaDaSuggerimento(nome: string) {
     setFormInitial({ ...INIT_FORM, nome })
     setShowForm(true)
@@ -826,7 +802,9 @@ export default function GestioneTest() {
       <div className="topbar">
         <div>
           <div className="topbar-title">Gestione Test</div>
-          <div className="topbar-sub">Template per test neuropsicologici strutturati</div>
+          <div className="topbar-sub">
+            Template per test neuropsicologici strutturati
+          </div>
         </div>
       </div>
 
@@ -834,51 +812,129 @@ export default function GestioneTest() {
         {USE_MOCK && (
           <div className="alert alert-warn" style={{ marginBottom: 16 }}>
             <FlaskConical size={15} style={{ flexShrink: 0 }} />
-            <span>Modalità demo — i template creati qui sono salvati solo in memoria e si azzerano al refresh.</span>
+            <span>
+              Modalità demo — i template creati qui sono salvati solo in memoria
+              e si azzerano al refresh.
+            </span>
           </div>
         )}
 
         {successo && (
-          <div style={{ marginBottom: 16, padding: '10px 14px', background: '#ecfdf5', border: '1px solid #6ee7b7', borderRadius: 'var(--radius)', color: '#065f46', fontSize: 13, display: 'flex', alignItems: 'center', gap: 8 }}>
+          <div
+            style={{
+              marginBottom: 16,
+              padding: "10px 14px",
+              background: "#ecfdf5",
+              border: "1px solid #6ee7b7",
+              borderRadius: "var(--radius)",
+              color: "#065f46",
+              fontSize: 13,
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+            }}
+          >
             <Check size={14} /> {successo}
           </div>
         )}
 
         {/* Info */}
         <div className="card" style={{ marginBottom: 16 }}>
-          <h3 style={{ fontFamily: 'var(--font-serif)', fontSize: 16, fontWeight: 600, marginBottom: 6, color: 'var(--accent-dk)' }}>
+          <h3
+            style={{
+              fontFamily: "var(--font-serif)",
+              fontSize: 16,
+              fontWeight: 600,
+              marginBottom: 6,
+              color: "var(--accent-dk)",
+            }}
+          >
             Template configurabili
           </h3>
-          <p style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.6, margin: 0 }}>
-            I template <strong>predefiniti</strong> (WISC-IV, NEPSY-II) non possono essere eliminati né rinominati, ma possono essere disattivati se non utilizzati.
-            I template <strong>personalizzati</strong> creati qui compariono nel wizard e generano tabelle e narrative automatiche nella relazione.
-            La qualità narrativa dipende dalla completezza delle frasi descrittive inserite per ciascun campo.
+          <p
+            style={{
+              fontSize: 13,
+              color: "var(--text-muted)",
+              lineHeight: 1.6,
+              margin: 0,
+            }}
+          >
+            I template <strong>predefiniti</strong> (WISC-IV, NEPSY-II) non
+            possono essere eliminati né rinominati, ma possono essere
+            disattivati se non utilizzati. I template{" "}
+            <strong>personalizzati</strong> creati qui compariono nel wizard e
+            generano tabelle e narrative automatiche nella relazione. La qualità
+            narrativa dipende dalla completezza delle frasi descrittive inserite
+            per ciascun campo.
           </p>
         </div>
 
         {/* Lista template attivi */}
         {loading ? (
-          <div className="card" style={{ textAlign: 'center', padding: '32px 0' }}>
-            <span className="spinner" style={{ width: 22, height: 22, margin: '0 auto 8px', display: 'block' }} />
-            <p style={{ color: 'var(--text-muted)', fontSize: 13 }}>Caricamento template…</p>
+          <div
+            className="card"
+            style={{ textAlign: "center", padding: "32px 0" }}
+          >
+            <span
+              className="spinner"
+              style={{
+                width: 22,
+                height: 22,
+                margin: "0 auto 8px",
+                display: "block",
+              }}
+            />
+            <p style={{ color: "var(--text-muted)", fontSize: 13 }}>
+              Caricamento template…
+            </p>
           </div>
         ) : (
           <div className="card" style={{ marginBottom: 16 }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
-              <h3 style={{ fontFamily: 'var(--font-serif)', fontSize: 15, fontWeight: 600, color: 'var(--accent-dk)', margin: 0 }}>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                marginBottom: 14,
+              }}
+            >
+              <h3
+                style={{
+                  fontFamily: "var(--font-serif)",
+                  fontSize: 15,
+                  fontWeight: 600,
+                  color: "var(--accent-dk)",
+                  margin: 0,
+                }}
+              >
                 Template attivi ({attivi.length})
               </h3>
               {!showForm && (
-                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                  <button className="btn btn-secondary btn-sm" onClick={handleEstraiDaProfilo} disabled={loadingProfilo} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    {loadingProfilo ? <span className="spinner" style={{ width: 14, height: 14 }} /> : <Sparkles size={14} color="var(--accent)" />}
-                    {loadingProfilo ? 'Estrazione...' : 'Estrai da Profilo'}
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <button
+                    className="btn btn-secondary btn-sm"
+                    onClick={handleEstraiDaProfilo}
+                    disabled={loadingProfilo}
+                    style={{ display: "flex", alignItems: "center", gap: 6 }}
+                  >
+                    {loadingProfilo ? (
+                      <span
+                        className="spinner"
+                        style={{ width: 14, height: 14 }}
+                      />
+                    ) : (
+                      <Sparkles size={14} color="var(--accent)" />
+                    )}
+                    {loadingProfilo ? "Estrazione..." : "Estrai da Profilo"}
                   </button>
-                  <button className="btn btn-secondary btn-sm" onClick={handleSuggerisci} disabled={loadingSuggerimenti} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    {loadingSuggerimenti ? <span className="spinner" style={{ width: 14, height: 14 }} /> : <Sparkles size={14} color="var(--accent)" />}
-                    {loadingSuggerimenti ? 'Analisi...' : 'Suggerisci dall\'archivio'}
-                  </button>
-                  <button className="btn btn-primary btn-sm" onClick={() => { setFormInitial(undefined); setShowForm(true); }} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <button
+                    className="btn btn-primary btn-sm"
+                    onClick={() => {
+                      setFormInitial(undefined);
+                      setShowForm(true);
+                    }}
+                    style={{ display: "flex", alignItems: "center", gap: 6 }}
+                  >
                     <Plus size={14} /> Nuovo template
                   </button>
                 </div>
@@ -886,66 +942,171 @@ export default function GestioneTest() {
             </div>
 
             {erroreProfilo && (
-              <div style={{ marginBottom: 16, padding: '10px 14px', background: 'var(--danger-lt, #fee2e2)', border: '1px solid #f5c6c2', borderRadius: 'var(--radius)', color: 'var(--danger)', fontSize: 12.5, display: 'flex', alignItems: 'center', gap: 8 }}>
+              <div
+                style={{
+                  marginBottom: 16,
+                  padding: "10px 14px",
+                  background: "var(--danger-lt, #fee2e2)",
+                  border: "1px solid #f5c6c2",
+                  borderRadius: "var(--radius)",
+                  color: "var(--danger)",
+                  fontSize: 12.5,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                }}
+              >
                 <AlertTriangle size={14} /> {erroreProfilo}
               </div>
             )}
 
             {suggerimentiProfilo.length > 0 && !showForm && (
-              <div style={{ marginBottom: 16, border: '1px solid var(--accent)', borderRadius: 'var(--radius)', overflow: 'hidden' }}>
+              <div
+                style={{
+                  marginBottom: 16,
+                  border: "1px solid var(--accent)",
+                  borderRadius: "var(--radius)",
+                  overflow: "hidden",
+                }}
+              >
                 {/* Header accordion */}
                 <button
                   type="button"
-                  onClick={() => setAccordionAperto(v => !v)}
+                  onClick={() => setAccordionAperto((v) => !v)}
                   style={{
-                    width: '100%', display: 'flex', alignItems: 'center', gap: 8,
-                    padding: '10px 14px', background: 'var(--accent-lt)',
-                    border: 'none', cursor: 'pointer', textAlign: 'left',
+                    width: "100%",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    padding: "10px 14px",
+                    background: "var(--accent-lt)",
+                    border: "none",
+                    cursor: "pointer",
+                    textAlign: "left",
                   }}
                 >
                   <Sparkles size={14} color="var(--accent)" />
-                  <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--accent-dk)', flex: 1 }}>
-                    Template rilevati nel tuo Profilo di Stile ({suggerimentiProfilo.length})
+                  <span
+                    style={{
+                      fontSize: 13,
+                      fontWeight: 600,
+                      color: "var(--accent-dk)",
+                      flex: 1,
+                    }}
+                  >
+                    Template rilevati nel tuo Profilo di Stile (
+                    {suggerimentiProfilo.length})
                   </span>
-                  <span style={{ fontSize: 11, color: 'var(--text-muted)', marginRight: 6 }}>clicca per creare</span>
-                  {accordionAperto ? <ChevronUp size={14} color="var(--accent)" /> : <ChevronDown size={14} color="var(--accent)" />}
+                  <span
+                    style={{
+                      fontSize: 11,
+                      color: "var(--text-muted)",
+                      marginRight: 6,
+                    }}
+                  >
+                    clicca per creare
+                  </span>
+                  {accordionAperto ? (
+                    <ChevronUp size={14} color="var(--accent)" />
+                  ) : (
+                    <ChevronDown size={14} color="var(--accent)" />
+                  )}
                 </button>
 
                 {/* Corpo accordion */}
                 {accordionAperto && (
-                  <div style={{ padding: '12px 14px', background: 'var(--bg-panel)' }}>
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginBottom: 10 }}>
-                      {suggerimentiProfilo.map(t => {
-                        const isExtracting = loadingEstraiTest === t.nome
+                  <div
+                    style={{
+                      padding: "12px 14px",
+                      background: "var(--bg-panel)",
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: "flex",
+                        flexWrap: "wrap",
+                        gap: 10,
+                        marginBottom: 10,
+                      }}
+                    >
+                      {suggerimentiProfilo.map((t) => {
+                        const isExtracting = loadingEstraiTest === t.nome;
                         return (
-                          <button key={t.nome} type="button" onClick={() => precompilaDaProfilo(t.nome)} disabled={!!loadingEstraiTest} style={{
-                            background: 'var(--bg-panel)', border: '1px solid var(--accent)', borderRadius: 10,
-                            padding: '8px 14px', fontSize: 12, color: 'var(--text)', cursor: isExtracting ? 'default' : 'pointer', display: 'flex', alignItems: 'center', gap: 8,
-                            textAlign: 'left', boxShadow: '0 2px 4px rgba(0,0,0,0.05)', transition: 'all 0.15s',
-                            opacity: loadingEstraiTest && !isExtracting ? 0.6 : 1
-                          }}>
+                          <button
+                            key={t.nome}
+                            type="button"
+                            onClick={() => precompilaDaProfilo(t.nome)}
+                            disabled={!!loadingEstraiTest}
+                            style={{
+                              background: "var(--bg-panel)",
+                              border: "1px solid var(--accent)",
+                              borderRadius: 10,
+                              padding: "8px 14px",
+                              fontSize: 12,
+                              color: "var(--text)",
+                              cursor: isExtracting ? "default" : "pointer",
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 8,
+                              textAlign: "left",
+                              boxShadow: "0 2px 4px rgba(0,0,0,0.05)",
+                              transition: "all 0.15s",
+                              opacity:
+                                loadingEstraiTest && !isExtracting ? 0.6 : 1,
+                            }}
+                          >
                             {isExtracting ? (
-                              <span className="spinner" style={{ width: 14, height: 14, flexShrink: 0 }} />
+                              <span
+                                className="spinner"
+                                style={{ width: 14, height: 14, flexShrink: 0 }}
+                              />
                             ) : (
-                              <Plus size={16} color="var(--accent)" style={{ flexShrink: 0 }} />
+                              <Plus
+                                size={16}
+                                color="var(--accent)"
+                                style={{ flexShrink: 0 }}
+                              />
                             )}
                             <div>
-                              <div style={{ fontWeight: 600, color: 'var(--accent-dk)' }}>{t.nome}</div>
-                              <div style={{ fontSize: 10.5, color: 'var(--text-muted)', textTransform: 'capitalize' }}>
+                              <div
+                                style={{
+                                  fontWeight: 600,
+                                  color: "var(--accent-dk)",
+                                }}
+                              >
+                                {t.nome}
+                              </div>
+                              <div
+                                style={{
+                                  fontSize: 10.5,
+                                  color: "var(--text-muted)",
+                                  textTransform: "capitalize",
+                                }}
+                              >
                                 {t.categoria} · Clicca per estrarre struttura
                               </div>
                             </div>
                           </button>
-                        )
+                        );
                       })}
                     </div>
                     <button
                       type="button"
-                      onClick={async () => { await clearTemplateRilevati(); setSuggerimentiProfilo([]) }}
+                      onClick={async () => {
+                        await clearTemplateRilevati();
+                        setSuggerimentiProfilo([]);
+                      }}
                       style={{
-                        fontSize: 11.5, color: 'var(--text-muted)', background: 'none',
-                        border: '1px dashed var(--border)', borderRadius: 6,
-                        padding: '3px 10px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4,
+                        fontSize: 11.5,
+                        color: "var(--text-muted)",
+                        background: "none",
+                        border: "1px dashed var(--border)",
+                        borderRadius: 6,
+                        padding: "3px 10px",
+                        cursor: "pointer",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 4,
                       }}
                     >
                       <X size={12} /> Svuota suggerimenti
@@ -956,16 +1117,48 @@ export default function GestioneTest() {
             )}
 
             {suggerimenti.length > 0 && !showForm && (
-              <div style={{ marginBottom: 16, padding: '12px 14px', background: 'var(--accent-lt)', border: '1px solid var(--accent)', borderRadius: 'var(--radius)' }}>
-                <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--accent-dk)', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <Sparkles size={14} /> Test rilevati nelle tue relazioni (bozze)
+              <div
+                style={{
+                  marginBottom: 16,
+                  padding: "12px 14px",
+                  background: "var(--accent-lt)",
+                  border: "1px solid var(--accent)",
+                  borderRadius: "var(--radius)",
+                }}
+              >
+                <div
+                  style={{
+                    fontSize: 13,
+                    fontWeight: 600,
+                    color: "var(--accent-dk)",
+                    marginBottom: 8,
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                  }}
+                >
+                  <Sparkles size={14} /> Test rilevati nelle tue relazioni
+                  (bozze)
                 </div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                  {suggerimenti.map(s => (
-                    <button key={s} type="button" onClick={() => precompilaDaSuggerimento(s)} style={{
-                      background: 'var(--bg-panel)', border: '1px solid var(--accent)', borderRadius: 14,
-                      padding: '4px 10px', fontSize: 12, color: 'var(--text)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4
-                    }}>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                  {suggerimenti.map((s) => (
+                    <button
+                      key={s}
+                      type="button"
+                      onClick={() => precompilaDaSuggerimento(s)}
+                      style={{
+                        background: "var(--bg-panel)",
+                        border: "1px solid var(--accent)",
+                        borderRadius: 14,
+                        padding: "4px 10px",
+                        fontSize: 12,
+                        color: "var(--text)",
+                        cursor: "pointer",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 4,
+                      }}
+                    >
                       <Plus size={12} color="var(--accent)" /> {s}
                     </button>
                   ))}
@@ -975,20 +1168,41 @@ export default function GestioneTest() {
 
             {/* Form creazione / modifica */}
             {showForm && (
-              <div style={{ border: '1px solid var(--accent)', borderRadius: 'var(--radius)', padding: '18px 16px', marginBottom: 16, background: 'var(--accent-lt)' }}>
-                <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--accent-dk)', marginBottom: 14 }}>
-                  {editingTemplateId ? `Modifica template` : 'Nuovo template di test'}
+              <div
+                style={{
+                  border: "1px solid var(--accent)",
+                  borderRadius: "var(--radius)",
+                  padding: "18px 16px",
+                  marginBottom: 16,
+                  background: "var(--accent-lt)",
+                }}
+              >
+                <div
+                  style={{
+                    fontSize: 14,
+                    fontWeight: 600,
+                    color: "var(--accent-dk)",
+                    marginBottom: 14,
+                  }}
+                >
+                  {editingTemplateId
+                    ? `Modifica template`
+                    : "Nuovo template di test"}
                 </div>
                 <FormTemplate
                   initial={formInitial}
                   onSave={handleSave}
-                  onCancel={() => { setShowForm(false); setEditingTemplateId(null); setFormInitial(undefined) }}
+                  onCancel={() => {
+                    setShowForm(false);
+                    setEditingTemplateId(null);
+                    setFormInitial(undefined);
+                  }}
                 />
               </div>
             )}
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-              {attivi.map(t => (
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {attivi.map((t) => (
                 <TemplateCard
                   key={t.id}
                   template={t}
@@ -997,22 +1211,43 @@ export default function GestioneTest() {
                       nome: t.nome,
                       categoria: t.categoria,
                       scalaDefault: t.scalaDefault,
-                      campiPrincipali: (t.campiPrincipali || []).map(c => ({ key: c.key, label: c.label, descr: c.descr || '' })),
-                      gruppiSecondari: (t.gruppiSecondari || []).map(g => ({ key: g.key, label: g.label, campi: (g.campi || []).map(c => ({ key: c.key, label: c.label })) })),
-                      notaRange: t.notaRange || '',
+                      campiPrincipali: (t.campiPrincipali || []).map((c) => ({
+                        key: c.key,
+                        label: c.label,
+                        descr: c.descr || "",
+                      })),
+                      gruppiSecondari: (t.gruppiSecondari || []).map((g) => ({
+                        key: g.key,
+                        label: g.label,
+                        campi: (g.campi || []).map((c) => ({
+                          key: c.key,
+                          label: c.label,
+                        })),
+                      })),
+                      notaRange: t.notaRange || "",
                       richiedeEtaValutazione: t.richiedeEtaValutazione,
-                      richiedeStrumentiUtilizzati: t.richiedeStrumentiUtilizzati,
-                    }
-                    setEditingTemplateId(t.id)
-                    setFormInitial(f)
-                    setShowForm(true)
+                      richiedeStrumentiUtilizzati:
+                        t.richiedeStrumentiUtilizzati,
+                    };
+                    setEditingTemplateId(t.id);
+                    setFormInitial(f);
+                    setShowForm(true);
                   }}
                   onDisattiva={() => setConfirmDisattiva(t.id)}
-                  onDelete={!t.builtIn ? () => setConfirmDelete(t.id) : undefined}
+                  onDelete={
+                    !t.builtIn ? () => setConfirmDelete(t.id) : undefined
+                  }
                 />
               ))}
               {attivi.length === 0 && (
-                <p style={{ color: 'var(--text-muted)', fontSize: 13, textAlign: 'center', padding: '20px 0' }}>
+                <p
+                  style={{
+                    color: "var(--text-muted)",
+                    fontSize: 13,
+                    textAlign: "center",
+                    padding: "20px 0",
+                  }}
+                >
                   Nessun template attivo.
                 </p>
               )}
@@ -1023,16 +1258,26 @@ export default function GestioneTest() {
         {/* Template disattivati */}
         {disattivati.length > 0 && (
           <div className="card">
-            <h3 style={{ fontFamily: 'var(--font-serif)', fontSize: 14, fontWeight: 600, color: 'var(--text-muted)', marginBottom: 12 }}>
+            <h3
+              style={{
+                fontFamily: "var(--font-serif)",
+                fontSize: 14,
+                fontWeight: 600,
+                color: "var(--text-muted)",
+                marginBottom: 12,
+              }}
+            >
               Template disattivati ({disattivati.length})
             </h3>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {disattivati.map(t => (
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {disattivati.map((t) => (
                 <TemplateCard
                   key={t.id}
                   template={t}
                   onRiattiva={() => handleRiattiva(t.id)}
-                  onDelete={!t.builtIn ? () => setConfirmDelete(t.id) : undefined}
+                  onDelete={
+                    !t.builtIn ? () => setConfirmDelete(t.id) : undefined
+                  }
                 />
               ))}
             </div>
@@ -1041,54 +1286,156 @@ export default function GestioneTest() {
 
         {/* Confirm dialog disattivazione */}
         {confirmDisattiva && (
-          <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
-            <div style={{ background: 'var(--bg-panel)', borderRadius: 12, padding: '28px 32px', maxWidth: 400, width: '90%', boxShadow: '0 20px 60px rgba(0,0,0,0.3)' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+          <div
+            style={{
+              position: "fixed",
+              inset: 0,
+              background: "rgba(0,0,0,0.4)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              zIndex: 1000,
+            }}
+          >
+            <div
+              style={{
+                background: "var(--bg-panel)",
+                borderRadius: 12,
+                padding: "28px 32px",
+                maxWidth: 400,
+                width: "90%",
+                boxShadow: "0 20px 60px rgba(0,0,0,0.3)",
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 10,
+                  marginBottom: 12,
+                }}
+              >
                 <AlertTriangle size={20} color="var(--danger)" />
-                <span style={{ fontSize: 15, fontWeight: 600 }}>Disattiva template</span>
+                <span style={{ fontSize: 15, fontWeight: 600 }}>
+                  Disattiva template
+                </span>
               </div>
-              <p style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.6, marginBottom: 20 }}>
-                Il template verrà disattivato e non apparirà più nel wizard per le nuove relazioni.
-                Le relazioni già generate non vengono modificate.
+              <p
+                style={{
+                  fontSize: 13,
+                  color: "var(--text-muted)",
+                  lineHeight: 1.6,
+                  marginBottom: 20,
+                }}
+              >
+                Il template verrà disattivato e non apparirà più nel wizard per
+                le nuove relazioni. Le relazioni già generate non vengono
+                modificate.
               </p>
-              <div style={{ display: 'flex', gap: 10 }}>
-                <button className="btn btn-primary" style={{ background: 'var(--danger)', borderColor: 'var(--danger)' }} onClick={() => handleDisattiva(confirmDisattiva)}>
+              <div style={{ display: "flex", gap: 10 }}>
+                <button
+                  className="btn btn-primary"
+                  style={{
+                    background: "var(--danger)",
+                    borderColor: "var(--danger)",
+                  }}
+                  onClick={() => handleDisattiva(confirmDisattiva)}
+                >
                   Disattiva
                 </button>
-                <button className="btn btn-secondary" onClick={() => setConfirmDisattiva(null)}>Annulla</button>
+                <button
+                  className="btn btn-secondary"
+                  onClick={() => setConfirmDisattiva(null)}
+                >
+                  Annulla
+                </button>
               </div>
             </div>
           </div>
         )}
 
         {/* Confirm dialog eliminazione */}
-        {confirmDelete && (() => {
-          const genere = String(profilo?.genere || '').trim().toLowerCase();
-          const sicuroMsg = genere === 'uomo'
-            ? 'Sei sicuro di voler eliminare questo template?'
-            : (genere === 'donna' ? 'Sei sicura di voler eliminare questo template?' : 'Sei sicurə di voler eliminare questo template?');
-          
-          return (
-            <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
-              <div style={{ background: 'var(--bg-panel)', borderRadius: 12, padding: '28px 32px', maxWidth: 400, width: '90%', boxShadow: '0 20px 60px rgba(0,0,0,0.3)' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
-                  <AlertTriangle size={20} color="var(--danger)" />
-                  <span style={{ fontSize: 15, fontWeight: 600 }}>Elimina template</span>
-                </div>
-                <p style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.6, marginBottom: 20 }}>
-                  {sicuroMsg} Questa azione è irreversibile e rimuoverà definitivamente il template dal database.
-                </p>
-                <div style={{ display: 'flex', gap: 10 }}>
-                  <button className="btn btn-primary" style={{ background: 'var(--danger)', borderColor: 'var(--danger)' }} onClick={() => handleDelete(confirmDelete)}>
-                    Elimina
-                  </button>
-                  <button className="btn btn-secondary" onClick={() => setConfirmDelete(null)}>Annulla</button>
+        {confirmDelete &&
+          (() => {
+            const genere = String(profilo?.genere || "")
+              .trim()
+              .toLowerCase();
+            const sicuroMsg =
+              genere === "uomo"
+                ? "Sei sicuro di voler eliminare questo template?"
+                : genere === "donna"
+                  ? "Sei sicura di voler eliminare questo template?"
+                  : "Sei sicurə di voler eliminare questo template?";
+
+            return (
+              <div
+                style={{
+                  position: "fixed",
+                  inset: 0,
+                  background: "rgba(0,0,0,0.4)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  zIndex: 1000,
+                }}
+              >
+                <div
+                  style={{
+                    background: "var(--bg-panel)",
+                    borderRadius: 12,
+                    padding: "28px 32px",
+                    maxWidth: 400,
+                    width: "90%",
+                    boxShadow: "0 20px 60px rgba(0,0,0,0.3)",
+                  }}
+                >
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 10,
+                      marginBottom: 12,
+                    }}
+                  >
+                    <AlertTriangle size={20} color="var(--danger)" />
+                    <span style={{ fontSize: 15, fontWeight: 600 }}>
+                      Elimina template
+                    </span>
+                  </div>
+                  <p
+                    style={{
+                      fontSize: 13,
+                      color: "var(--text-muted)",
+                      lineHeight: 1.6,
+                      marginBottom: 20,
+                    }}
+                  >
+                    {sicuroMsg} Questa azione è irreversibile e rimuoverà
+                    definitivamente il template dal database.
+                  </p>
+                  <div style={{ display: "flex", gap: 10 }}>
+                    <button
+                      className="btn btn-primary"
+                      style={{
+                        background: "var(--danger)",
+                        borderColor: "var(--danger)",
+                      }}
+                      onClick={() => handleDelete(confirmDelete)}
+                    >
+                      Elimina
+                    </button>
+                    <button
+                      className="btn btn-secondary"
+                      onClick={() => setConfirmDelete(null)}
+                    >
+                      Annulla
+                    </button>
+                  </div>
                 </div>
               </div>
-            </div>
-          );
-        })()}
+            );
+          })()}
       </div>
     </>
-  )
+  );
 }
