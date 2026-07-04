@@ -45,10 +45,16 @@ export type Relazione = {
 export type RelazioneInput = Omit<Relazione, 'id' | 'created_at'>
 export type RelazionePatch = Partial<RelazioneInput>
 
+export type TemplateRilevatoItem = {
+  nome: string
+  categoria: string
+}
+
 export type ProfiloStileRecord = {
   documento_stile: string | null
   updated_at: string | null
   num_relazioni_analizzate: number
+  template_rilevati?: TemplateRilevatoItem[]
 }
 
 export type ProfiloProfessionista = {

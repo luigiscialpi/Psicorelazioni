@@ -1,6 +1,6 @@
 import { supabase } from '../core/supabase'
 import { MOCK_PROFILO_STILE } from './mockData'
-import type { ProfiloProfessionista, ProfiloStileRecord } from '../core/types'
+import type { ProfiloProfessionista, ProfiloStileRecord, TemplateRilevatoItem } from '../core/types'
 import { USE_MOCK } from '../core/config'
 
 const PROFESSIONISTA_LS_KEY = 'psicorelazioni_professionista_v1'
@@ -24,6 +24,7 @@ function saveProfessionistaLocal(value: ProfiloProfessionista | null) {
 
 let mockProfilo: string | null = MOCK_PROFILO_STILE
 let mockProfessionista: ProfiloProfessionista | null = null
+let mockTemplateRilevati: TemplateRilevatoItem[] = []
 
 export async function getProfiloStile(): Promise<string | null> {
   if (USE_MOCK) return mockProfilo || null
@@ -42,13 +43,42 @@ export async function getProfiloStileCompleto(): Promise<ProfiloStileRecord> {
 }
 
 export async function saveProfiloStile(testo: string, numRelazioni: number): Promise<void> {
-  if (USE_MOCK) { mockProfilo = testo; return }
+  // Ogni volta che il profilo cambia (rigenera o modifica manuale),
+  // azzeriamo i template rilevati: non sono più coerenti col profilo attuale.
+  if (USE_MOCK) { mockProfilo = testo; mockTemplateRilevati = []; return }
   await supabase.from('profilo_stile').upsert({
     id: 1,
     documento_stile: testo,
     num_relazioni_analizzate: numRelazioni,
     updated_at: new Date().toISOString(),
     versione: 1,
+    template_rilevati: [],
+  })
+}
+
+export async function getTemplateRilevati(): Promise<TemplateRilevatoItem[]> {
+  if (USE_MOCK) return mockTemplateRilevati
+  const { data } = await supabase
+    .from('profilo_stile')
+    .select('template_rilevati')
+    .eq('id', 1)
+    .single()
+  return (data?.template_rilevati as TemplateRilevatoItem[] | null) ?? []
+}
+
+export async function saveTemplateRilevati(items: TemplateRilevatoItem[]): Promise<void> {
+  if (USE_MOCK) { mockTemplateRilevati = items; return }
+  await supabase.from('profilo_stile').upsert({
+    id: 1,
+    template_rilevati: items,
+  })
+}
+
+export async function clearTemplateRilevati(): Promise<void> {
+  if (USE_MOCK) { mockTemplateRilevati = []; return }
+  await supabase.from('profilo_stile').upsert({
+    id: 1,
+    template_rilevati: [],
   })
 }
 

@@ -50,7 +50,10 @@ CREATE TABLE IF NOT EXISTS profilo_stile (
   documento_stile          TEXT,
   versione                 INTEGER DEFAULT 1,
   num_relazioni_analizzate INTEGER DEFAULT 0,
-  note_manuali             TEXT
+  note_manuali             TEXT,
+  template_rilevati        JSONB DEFAULT '[]'         -- suggerimenti rilevati da Gemini dal profilo;
+                                                      -- azzerati automaticamente quando il profilo
+                                                      -- viene rigenerato o modificato manualmente
 );
 
 -- 4. Tabella sessioni_wizard
@@ -81,6 +84,7 @@ CREATE TABLE IF NOT EXISTS professionista (
 
 -- Migrazione compatibile per istanze già esistenti
 ALTER TABLE professionista ADD COLUMN IF NOT EXISTS genere TEXT;
+ALTER TABLE profilo_stile  ADD COLUMN IF NOT EXISTS template_rilevati JSONB DEFAULT '[]';
 
 -- ============================================================
 -- Row Level Security: solo l'utente autenticato vede i suoi dati

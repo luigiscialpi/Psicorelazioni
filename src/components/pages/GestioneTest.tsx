@@ -6,8 +6,8 @@ import {
 import { validaSoglieCustom } from '../../services/testTemplateEngine'
 import { suggerisciTestDaArchivio, rilevaNomiTestDaProfilo, generaTemplateTest } from '../../services/geminiService'
 import { getRelazioni } from '../../data/relazioniData'
-import { getProfiloProfessionista, getProfiloStile } from '../../data/profiloData'
-import type { ProfiloProfessionista } from '../../core/types'
+import { getProfiloProfessionista, getProfiloStile, getTemplateRilevati, saveTemplateRilevati, clearTemplateRilevati } from '../../data/profiloData'
+import type { ProfiloProfessionista, TemplateRilevatoItem } from '../../core/types'
 import type { TestTemplate, CampoTest, GruppoTest, SogliaCustom, ScalaPunteggio } from '../../core/testTemplate'
 import { USE_MOCK } from '../../core/config'
 
@@ -631,18 +631,21 @@ export default function GestioneTest() {
   const [loadingSuggerimenti, setLoadingSuggerimenti] = useState(false)
 
   // Stati per suggerimenti da Profilo di Stile
-  const [suggerimentiProfilo, setSuggerimentiProfilo] = useState<any[]>([])
+  const [suggerimentiProfilo, setSuggerimentiProfilo] = useState<TemplateRilevatoItem[]>([])
   const [loadingProfilo, setLoadingProfilo] = useState(false)
   const [erroreProfilo, setErroreProfilo] = useState('')
   const [loadingEstraiTest, setLoadingEstraiTest] = useState<string | null>(null)
+  const [accordionAperto, setAccordionAperto] = useState(true)
 
   useEffect(() => {
     Promise.all([
       getTestTemplates(),
-      getProfiloProfessionista()
-    ]).then(([t, prof]) => {
+      getProfiloProfessionista(),
+      getTemplateRilevati(),
+    ]).then(([t, prof, rilevati]) => {
       setTemplates(t)
       setProfilo(prof)
+      setSuggerimentiProfilo(rilevati)
       setLoading(false)
     })
   }, [])
@@ -692,8 +695,14 @@ export default function GestioneTest() {
       if (res.length === 0) {
         setSuccesso('Nessun nuovo test template rilevato nel tuo Profilo di Stile.')
         setTimeout(() => setSuccesso(''), 4000)
+        // Azzera anche quelli salvati, così la UI è coerente
+        await clearTemplateRilevati()
+        setSuggerimentiProfilo([])
       } else {
+        // Rimpiazza sempre (non additivo)
+        await saveTemplateRilevati(res)
         setSuggerimentiProfilo(res)
+        setAccordionAperto(true)
       }
     } catch (e: any) {
       console.error(e)
@@ -729,7 +738,10 @@ export default function GestioneTest() {
         richiedeStrumentiUtilizzati: t.richiedeStrumentiUtilizzati ?? false,
       })
       setShowForm(true)
-      setSuggerimentiProfilo(s => s.filter(x => x.nome !== nome))
+      // Rimuovi questo item dai suggerimenti salvati
+      const aggiornati = suggerimentiProfilo.filter(x => x.nome !== nome)
+      setSuggerimentiProfilo(aggiornati)
+      await saveTemplateRilevati(aggiornati)
     } catch (e: any) {
       console.error(e)
       setErroreProfilo('Errore durante la generazione del template: ' + e.message)
@@ -880,35 +892,66 @@ export default function GestioneTest() {
             )}
 
             {suggerimentiProfilo.length > 0 && !showForm && (
-              <div style={{ marginBottom: 16, padding: '12px 14px', background: 'var(--accent-lt)', border: '1px solid var(--accent)', borderRadius: 'var(--radius)' }}>
-                <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--accent-dk)', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <Sparkles size={14} /> Template rilevati nel tuo Profilo di Stile (clicca per creare)
-                </div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
-                  {suggerimentiProfilo.map(t => {
-                    const isExtracting = loadingEstraiTest === t.nome
-                    return (
-                      <button key={t.nome} type="button" onClick={() => precompilaDaProfilo(t.nome)} disabled={!!loadingEstraiTest} style={{
-                        background: 'var(--bg-panel)', border: '1px solid var(--accent)', borderRadius: 10,
-                        padding: '8px 14px', fontSize: 12, color: 'var(--text)', cursor: isExtracting ? 'default' : 'pointer', display: 'flex', alignItems: 'center', gap: 8,
-                        textAlign: 'left', boxShadow: '0 2px 4px rgba(0,0,0,0.05)', transition: 'all 0.15s',
-                        opacity: loadingEstraiTest && !isExtracting ? 0.6 : 1
-                      }}>
-                        {isExtracting ? (
-                          <span className="spinner" style={{ width: 14, height: 14, flexShrink: 0 }} />
-                        ) : (
-                          <Plus size={16} color="var(--accent)" style={{ flexShrink: 0 }} />
-                        )}
-                        <div>
-                          <div style={{ fontWeight: 600, color: 'var(--accent-dk)' }}>{t.nome}</div>
-                          <div style={{ fontSize: 10.5, color: 'var(--text-muted)', textTransform: 'capitalize' }}>
-                            {t.categoria} · Clicca per estrarre struttura
-                          </div>
-                        </div>
-                      </button>
-                    )
-                  })}
-                </div>
+              <div style={{ marginBottom: 16, border: '1px solid var(--accent)', borderRadius: 'var(--radius)', overflow: 'hidden' }}>
+                {/* Header accordion */}
+                <button
+                  type="button"
+                  onClick={() => setAccordionAperto(v => !v)}
+                  style={{
+                    width: '100%', display: 'flex', alignItems: 'center', gap: 8,
+                    padding: '10px 14px', background: 'var(--accent-lt)',
+                    border: 'none', cursor: 'pointer', textAlign: 'left',
+                  }}
+                >
+                  <Sparkles size={14} color="var(--accent)" />
+                  <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--accent-dk)', flex: 1 }}>
+                    Template rilevati nel tuo Profilo di Stile ({suggerimentiProfilo.length})
+                  </span>
+                  <span style={{ fontSize: 11, color: 'var(--text-muted)', marginRight: 6 }}>clicca per creare</span>
+                  {accordionAperto ? <ChevronUp size={14} color="var(--accent)" /> : <ChevronDown size={14} color="var(--accent)" />}
+                </button>
+
+                {/* Corpo accordion */}
+                {accordionAperto && (
+                  <div style={{ padding: '12px 14px', background: 'var(--bg-panel)' }}>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginBottom: 10 }}>
+                      {suggerimentiProfilo.map(t => {
+                        const isExtracting = loadingEstraiTest === t.nome
+                        return (
+                          <button key={t.nome} type="button" onClick={() => precompilaDaProfilo(t.nome)} disabled={!!loadingEstraiTest} style={{
+                            background: 'var(--bg-panel)', border: '1px solid var(--accent)', borderRadius: 10,
+                            padding: '8px 14px', fontSize: 12, color: 'var(--text)', cursor: isExtracting ? 'default' : 'pointer', display: 'flex', alignItems: 'center', gap: 8,
+                            textAlign: 'left', boxShadow: '0 2px 4px rgba(0,0,0,0.05)', transition: 'all 0.15s',
+                            opacity: loadingEstraiTest && !isExtracting ? 0.6 : 1
+                          }}>
+                            {isExtracting ? (
+                              <span className="spinner" style={{ width: 14, height: 14, flexShrink: 0 }} />
+                            ) : (
+                              <Plus size={16} color="var(--accent)" style={{ flexShrink: 0 }} />
+                            )}
+                            <div>
+                              <div style={{ fontWeight: 600, color: 'var(--accent-dk)' }}>{t.nome}</div>
+                              <div style={{ fontSize: 10.5, color: 'var(--text-muted)', textTransform: 'capitalize' }}>
+                                {t.categoria} · Clicca per estrarre struttura
+                              </div>
+                            </div>
+                          </button>
+                        )
+                      })}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={async () => { await clearTemplateRilevati(); setSuggerimentiProfilo([]) }}
+                      style={{
+                        fontSize: 11.5, color: 'var(--text-muted)', background: 'none',
+                        border: '1px dashed var(--border)', borderRadius: 6,
+                        padding: '3px 10px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4,
+                      }}
+                    >
+                      <X size={12} /> Svuota suggerimenti
+                    </button>
+                  </div>
+                )}
               </div>
             )}
 
