@@ -217,25 +217,10 @@ function splitHeaderLines(nomeStudio?: string, professionista?: ProfiloProfessio
     const nome = String(professionista.nome_completo || '').trim()
     const titolo = String(professionista.titolo || '').trim()
     const specializzazione = String(professionista.specializzazione || '').trim()
-    const indirizzo = String(professionista.indirizzo || '').trim()
-    const citta = String(professionista.citta || '').trim()
-    const telefono = String(professionista.telefono || '').trim()
-    const email = String(professionista.email || '').trim()
-    const piva = String(professionista.partita_iva || '').trim()
-    const cf = String(professionista.codice_fiscale || '').trim()
 
     if (nome) lines.push(nome)
     if (titolo) lines.push(titolo)
     if (specializzazione) lines.push(specializzazione)
-
-    const location = [indirizzo, citta].filter(Boolean).join(', ')
-    if (location) lines.push(location)
-
-    const contatti = [telefono ? `Cell. ${telefono}` : '', email].filter(Boolean).join('  •  ')
-    if (contatti) lines.push(contatti)
-
-    const fisc = [piva ? `P.IVA ${piva}` : '', cf ? `CF ${cf}` : ''].filter(Boolean).join('  •  ')
-    if (fisc) lines.push(fisc)
 
     if (lines.length) return lines
   }
@@ -275,9 +260,15 @@ function firmaProfessionistaParagraphs(professionista?: ProfiloProfessionista | 
   if (!professionista) return []
   const nome = String(professionista.nome_completo || '').trim()
   const titolo = String(professionista.titolo || '').trim()
-  if (!nome && !titolo) return []
+  const specializzazione = String(professionista.specializzazione || '').trim()
+  const indirizzo = String(professionista.indirizzo || '').trim()
+  const citta = String(professionista.citta || '').trim()
+  const telefono = String(professionista.telefono || '').trim()
+  const email = String(professionista.email || '').trim()
+  const piva = String(professionista.partita_iva || '').trim()
+  const cf = String(professionista.codice_fiscale || '').trim()
 
-  const lines = [
+  const lines: Paragraph[] = [
     new Paragraph({ spacing: { before: 260, after: 60 }, children: [new TextRun({ text: 'Firma', font: FONT, size: SIZE_BODY, bold: true })] }),
   ]
 
@@ -286,6 +277,24 @@ function firmaProfessionistaParagraphs(professionista?: ProfiloProfessionista | 
   }
   if (titolo) {
     lines.push(new Paragraph({ spacing: { after: 40 }, children: [new TextRun({ text: titolo, font: FONT, size: SIZE_BODY })] }))
+  }
+  if (specializzazione) {
+    lines.push(new Paragraph({ spacing: { after: 40 }, children: [new TextRun({ text: specializzazione, font: FONT, size: SIZE_BODY })] }))
+  }
+
+  const location = [indirizzo, citta].filter(Boolean).join(', ')
+  if (location) {
+    lines.push(new Paragraph({ spacing: { after: 40 }, children: [new TextRun({ text: location, font: FONT, size: SIZE_BODY })] }))
+  }
+
+  const contatti = [telefono ? `Cell. ${telefono}` : '', email].filter(Boolean).join('  •  ')
+  if (contatti) {
+    lines.push(new Paragraph({ spacing: { after: 40 }, children: [new TextRun({ text: contatti, font: FONT, size: SIZE_BODY })] }))
+  }
+
+  const fisc = [piva ? `P.IVA ${piva}` : '', cf ? `CF ${cf}` : ''].filter(Boolean).join('  •  ')
+  if (fisc) {
+    lines.push(new Paragraph({ spacing: { after: 40 }, children: [new TextRun({ text: fisc, font: FONT, size: SIZE_BODY })] }))
   }
 
   return lines
