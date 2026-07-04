@@ -11,8 +11,8 @@ import {
   OSSERVAZIONE_ADATTAMENTO_VOCI, OSSERVAZIONE_ATTEGGIAMENTO_VOCI,
 } from '../components/constants/anamnesiVoci'
 import { MOCK_WISC_IV_TEMPLATE, MOCK_NEPSY_II_TEMPLATE } from '../data/mockTemplates'
-import { generaSezioneTest, generaTabella, generaNarrativa } from './testTemplateEngine'
-import type { RisultatoTest } from '../core/testTemplate'
+import { generaSezioneTest, generaTabella, generaNarrativa, calcolaNarrativaGruppi } from './testTemplateEngine'
+import type { RisultatoTest, TestTemplate } from '../core/testTemplate'
 
 import {
   WISC_IV_CAMPI, NEPSY_II_DOMINI, fasciaWISC, fasciaScalare,
@@ -71,6 +71,21 @@ export function osservazioneToTesto(osservazione) {
 // immediatamente (a distanza di una riga vuota) una tabella appena
 // rimossa — non tocca note legittime che compaiono altrove nel testo.
 const PATTERN_NOTA_RANGE = /^\s*\*[A-Z][\w-]*(-II)?:\s.*\*\s*$/
+
+// ── Titolo di sezione per un template (dinamico o mock) ──────
+// Condiviso tra assemblaDocumentoMarkdown() (che scrive "## <titolo>" nel
+// markdown) ed exportDocx.ts (che deve riconoscere lo stesso titolo per
+// decidere se disegnare una tabella Word nativa invece di testo semplice).
+// Un'unica fonte di verità evita che le due stringhe divergano in futuro.
+export function titoloSezioneTest(template: { categoria: string; nome: string }): string {
+  const perCategoria: Record<string, string> = {
+    cognitivo: 'Valutazione cognitiva',
+    nepsy: 'Approfondimento neuropsicologico',
+    apprendimenti: 'Valutazione apprendimenti',
+    questionari: 'Questionari',
+  }
+  return perCategoria[template.categoria] || template.nome
+}
 
 export function rimuoviTabelleMarkdown(testo: string): string {
   if (!testo) return testo
@@ -283,8 +298,9 @@ function rimuoviTabelleDuplicateDalDocumento(documento: string): string {
     .replace(/\n{3,}/g, '\n\n')
 }
 
-export function assemblaDocumentoMarkdown(wizard, narrativaPerSezione = {}) {
+export function assemblaDocumentoMarkdown(wizard, narrativaPerSezione = {}, templates: TestTemplate[] = []) {
   const sez = wizard.sezioni_attive || []
+  const templatesById = new Map(templates.map(t => [t.id, t]))
   let out = '# Relazione di Valutazione Neuropsicologica\n\n'
   out += '## Dati e motivo dell\'invio\n'
   const narrativaIntestazione = rimuoviTabelleMarkdown(narrativaPerSezione['intestazione'] || '')
@@ -325,7 +341,7 @@ export function assemblaDocumentoMarkdown(wizard, narrativaPerSezione = {}) {
     }
   }
 
-  if (sez.includes('cognitivo')) {
+  if (sez.includes('cognitivo') || sez.includes('wisc-iv')) {
     out += '\n'
     const ris: RisultatoTest = {
       somministrato: true,
@@ -340,7 +356,7 @@ export function assemblaDocumentoMarkdown(wizard, narrativaPerSezione = {}) {
     const engineText = generaSezioneTest(MOCK_WISC_IV_TEMPLATE, ris)
     if (engineText) out += engineText + '\n'
     
-    const narrativaC = rimuoviTabelleMarkdown(narrativaPerSezione['cognitivo'] || '')
+    const narrativaC = rimuoviTabelleMarkdown(narrativaPerSezione['cognitivo'] || narrativaPerSezione['wisc-iv'] || '')
     if (narrativaC) {
       out += '\n' + narrativaC + '\n'
     } else if (!engineText) {
@@ -349,7 +365,7 @@ export function assemblaDocumentoMarkdown(wizard, narrativaPerSezione = {}) {
     }
   }
 
-  if (sez.includes('nepsy')) {
+  if (sez.includes('nepsy') || sez.includes('nepsy-ii')) {
     out += '\n'
     const ris: RisultatoTest = {
       somministrato: true,
@@ -361,11 +377,42 @@ export function assemblaDocumentoMarkdown(wizard, narrativaPerSezione = {}) {
     const engineText = generaSezioneTest(MOCK_NEPSY_II_TEMPLATE, ris)
     if (engineText) out += engineText + '\n'
     
-    const narrativaN = rimuoviTabelleMarkdown(narrativaPerSezione['nepsy'] || '')
+    const narrativaN = rimuoviTabelleMarkdown(narrativaPerSezione['nepsy'] || narrativaPerSezione['nepsy-ii'] || '')
     if (narrativaN) {
       out += '\n' + narrativaN + '\n'
     } else if (!engineText && wizard.nepsy?.strumenti_utilizzati) {
       out += `Strumenti utilizzati: ${wizard.nepsy.strumenti_utilizzati}\n`
+    }
+  }
+
+  // ── Template dinamici (id = UUID, creati in Gestione Test) ──
+  // Stessa logica di cognitivo/nepsy ma per test/questionari custom:
+  // tabella + narrativa costruite sui punteggi REALI in wizard.test_risultati,
+  // mai lasciando che la sezione mostri solo il vecchio campo libero
+  // (quello resta gestito più sotto in 'questionari' solo come fallback
+  // per relazioni compilate prima dell'introduzione dei template dinamici).
+  for (const sezId of sez) {
+    const template = templatesById.get(sezId)
+    const risultato: RisultatoTest | undefined = wizard.test_risultati?.[sezId]
+    if (!template || !risultato?.somministrato) continue
+
+    const titolo = titoloSezioneTest(template)
+    out += `\n## ${titolo}\n`
+    if (template.richiedeStrumentiUtilizzati && risultato.strumentiUtilizzati) {
+      out += `Strumenti utilizzati: ${risultato.strumentiUtilizzati}.\n\n`
+    }
+    out += generaTabella(template, risultato)
+
+    const narrativaDinamica = rimuoviTabelleMarkdown(narrativaPerSezione[sezId] || '')
+    if (narrativaDinamica) {
+      out += narrativaDinamica + '\n\n'
+    } else {
+      out += generaNarrativa(template, risultato)
+      out += calcolaNarrativaGruppi(template, risultato)
+    }
+
+    if (risultato.includiNotaRange !== false && template.notaRange) {
+      out += `${template.notaRange}\n\n`
     }
   }
 
@@ -402,16 +449,22 @@ export function assemblaDocumentoMarkdown(wizard, narrativaPerSezione = {}) {
     // usato, il che contribuiva a relazioni percepite come "scarne"
     // anche quando Gemini aveva prodotto un'analisi ricca.
     const narrativaConcl = rimuoviTabelleMarkdown(narrativaPerSezione['conclusioni'] || '')
-    if (narrativaConcl) out += narrativaConcl + '\n\n'
-    if (wizard.conclusioni?.diagnosi) {
-      out += `Alla luce di quanto emerso dalla valutazione, si rileva ${wizard.conclusioni.diagnosi}`
-      if (wizard.conclusioni?.codice_icd) out += ` (${wizard.conclusioni.codice_icd})`
-      out += '.\n\n'
+    if (narrativaConcl) {
+      // Gemini ha prodotto una narrativa strutturata che integra già
+      // diagnosi, consigli, strumenti e misure — non duplicarli.
+      out += narrativaConcl + '\n\n'
+    } else {
+      // Fallback: nessuna narrativa Gemini, esponi i campi grezzi
+      if (wizard.conclusioni?.diagnosi) {
+        out += `Alla luce di quanto emerso dalla valutazione, si rileva ${wizard.conclusioni.diagnosi}`
+        if (wizard.conclusioni?.codice_icd) out += ` (${wizard.conclusioni.codice_icd})`
+        out += '.\n\n'
+      }
+      if (wizard.conclusioni?.consigli_paziente) out += `Consigli: ${wizard.conclusioni.consigli_paziente}\n`
+      if (wizard.conclusioni?.consigli_scuola) out += `Indicazioni per la scuola: ${wizard.conclusioni.consigli_scuola}\n`
+      if (wizard.conclusioni?.strumenti_compensativi) out += `Strumenti compensativi: ${wizard.conclusioni.strumenti_compensativi}\n`
+      if (wizard.conclusioni?.misure_dispensative) out += `Misure dispensative: ${wizard.conclusioni.misure_dispensative}\n`
     }
-    if (wizard.conclusioni?.consigli_paziente) out += `Consigli: ${wizard.conclusioni.consigli_paziente}\n`
-    if (wizard.conclusioni?.consigli_scuola) out += `Indicazioni per la scuola: ${wizard.conclusioni.consigli_scuola}\n`
-    if (wizard.conclusioni?.strumenti_compensativi) out += `Strumenti compensativi: ${wizard.conclusioni.strumenti_compensativi}\n`
-    if (wizard.conclusioni?.misure_dispensative) out += `Misure dispensative: ${wizard.conclusioni.misure_dispensative}\n`
     out += '\nSi rilascia alla famiglia per gli usi consentiti dalla Legge 170/2010.\n'
   }
 

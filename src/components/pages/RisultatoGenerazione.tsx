@@ -8,6 +8,7 @@ import { USE_MOCK } from '../../core/config'
 import { generaRelazione, USE_MOCK_AI } from '../../services/geminiService'
 import { sostituisciNomePlaceholder } from '../../services/wizardToText'
 import { esportaDocx, scaricaDocx } from '../../services/exportDocx'
+import { getTestTemplatesAttivi } from '../../data/testTemplatesData'
 
 function reducer(state, action) {
   switch (action.type) {
@@ -67,7 +68,13 @@ export default function RisultatoGenerazione() {
     try {
       const profilo = await getProfiloStile()
       const esempi  = await getRelazioniSimilari(wizardData.tipo, [])
-      const testoGrezzo = await generaRelazione(profilo || '', wizardData, esempi)
+      // Template dei test dinamici (es. questionari custom come CBCL creati
+      // in Gestione Test): senza questi, generaRelazione() non ha modo di
+      // sapere quali campi/soglie corrispondono agli id in
+      // wizardData.test_risultati, e la sezione corrispondente ricadrebbe
+      // sul solo testo libero legacy — vedi la nota in geminiService.ts.
+      const templates = await getTestTemplatesAttivi()
+      const testoGrezzo = await generaRelazione(profilo || '', wizardData, esempi, templates)
       // Sostituisce {{NOME}} col nome reale — Gemini non lo ha mai visto,
       // il nome entra nel testo solo qui, lato client (vedi wizardToText.ts).
       const testo = sostituisciNomePlaceholder(testoGrezzo, wizardData.anagrafica)
@@ -136,12 +143,15 @@ export default function RisultatoGenerazione() {
     dispatch({ type: 'EXPORTING' })
     try {
       const professionista = await getProfiloProfessionista()
+      const templates = await getTestTemplatesAttivi()
       const blob    = await esportaDocx({
         testo: state.testo,
         anagrafica: wizardData.anagrafica,
         professionista,
         cognitivo: wizardData.cognitivo,
         nepsy: wizardData.nepsy,
+        templates,
+        testRisultati: wizardData.test_risultati,
       })
       const cognome = (wizardData.anagrafica?.cognome || 'paziente').replace(/\s+/g, '_')
       const oggi    = new Date().toISOString().slice(0, 10)

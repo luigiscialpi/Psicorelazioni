@@ -24,7 +24,7 @@ import { fasciaWISC, fasciaScalare, WISC_IV_CAMPI, NEPSY_II_DOMINI } from '../co
 import { MOCK_WISC_IV_TEMPLATE, MOCK_NEPSY_II_TEMPLATE } from '../data/mockTemplates'
 import type { TestTemplate, RisultatoTest, ScalaPunteggio } from '../core/testTemplate'
 import { calcolaFascia, getScalaApplicabile } from './testTemplateEngine'
-import { notaRangeWisc, notaRangeNepsy } from './wizardToText'
+import { notaRangeWisc, notaRangeNepsy, titoloSezioneTest } from './wizardToText'
 
 // ── Tipi per input strutturato ──────────────────────────────
 type ScoreMap = Record<string, string | number | boolean | null | undefined>
@@ -53,6 +53,13 @@ type ExportDocxInput = {
   professionista?: ProfiloProfessionista | null
   cognitivo?: CognitivoBlock
   nepsy?: NepsyBlock
+  // Test/questionari dinamici (id = UUID, creati in Gestione Test) con i
+  // rispettivi risultati compilati nel wizard — es. un CBCL. Senza questi
+  // due campi il DOCX finale mostrerebbe solo il titolo di sezione e la
+  // tabella come testo monospace grezzo, invece di una tabella Word vera
+  // come per WISC-IV/NEPSY-II.
+  templates?: TestTemplate[]
+  testRisultati?: Record<string, RisultatoTest>
 }
 
 // ── Costanti layout — valori reali estratti dal template ────
@@ -308,7 +315,7 @@ function makeFooter(): Footer {
 // solo lato client al momento dell'export.
 function anagraficaParagraph(anagrafica?: AnagraficaPaziente | null): Paragraph | null {
   if (!anagrafica) return null
-  const { nome, cognome, data_nascita, scuola_classe } = anagrafica
+  const { nome, cognome, data_nascita, scuola_classe, genere } = anagrafica
   const nomeCompleto = [nome, cognome].filter(Boolean).join(' ')
   if (!nomeCompleto && !data_nascita && !scuola_classe) return null
 
@@ -316,9 +323,15 @@ function anagraficaParagraph(anagrafica?: AnagraficaPaziente | null): Paragraph 
     ? new Date(data_nascita).toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit', year: 'numeric' })
     : null
 
+  // Risolve "nato/nata" in base al genere quando noto, invece di lasciare
+  // sempre la forma ambigua con la barra — coerente con l'istruzione di
+  // concordanza grammaticale già data a Gemini per il resto del testo
+  // (vedi istruzioneGenere in geminiService.ts).
+  const natoForma = genere === 'femmina' ? 'nata' : genere === 'maschio' ? 'nato' : 'nato/a'
+
   const parti: string[] = []
   if (nomeCompleto) parti.push(nomeCompleto)
-  if (dataFmt)      parti.push(`nato/a il ${dataFmt}`)
+  if (dataFmt)      parti.push(`${natoForma} il ${dataFmt}`)
   if (scuola_classe) parti.push(scuola_classe)
 
   return new Paragraph({
@@ -427,7 +440,7 @@ function makeTestTable(template: TestTemplate, risultato: RisultatoTest): Table 
           }),
           ...secValidi.map(c => {
             const p = risultato.punteggiSecondari![c.key]
-            const scala = getScalaApplicabile(c, gruppo as any) // Eredita dal gruppo
+            const scala = c.scala || gruppo.scalaDefault || template.scalaDefault
             const fascia = calcolaFascia(p, scala) ?? '-'
             
             return new TableRow({
@@ -470,17 +483,52 @@ function makeTestTable(template: TestTemplate, risultato: RisultatoTest): Table 
   return new Table({ width: { size: CONTENT_W, type: WidthType.DXA }, columnWidths: colWidths, rows })
 }
 
-export async function esportaDocx({ testo, data, nomeStudio, anagrafica, professionista, cognitivo, nepsy }: ExportDocxInput): Promise<Blob> {
+export async function esportaDocx({ testo, data, nomeStudio, anagrafica, professionista, cognitivo, nepsy, templates, testRisultati }: ExportDocxInput): Promise<Blob> {
   const oggi = data || new Date().toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit', year: 'numeric' })
   const testoPulito = deAnonimizzaTesto(testo, anagrafica)
+
+  // Sezioni dei template dinamici (CBCL e simili) indicizzate per titolo —
+  // lo stesso titolo che assemblaDocumentoMarkdown() ha scritto come "## "
+  // nel markdown, così da riconoscerle nel parsing sotto e disegnare una
+  // tabella Word vera invece di lasciare la tabella Markdown come testo
+  // monospace grezzo.
+  const sezioniDinamiche = new Map<string, { template: TestTemplate; risultato: RisultatoTest }>()
+  for (const template of templates || []) {
+    const risultato = testRisultati?.[template.id]
+    if (risultato?.somministrato) {
+      sezioniDinamiche.set(titoloSezioneTest(template), { template, risultato })
+    }
+  }
 
   const blocchi: Array<Paragraph | Table> = []
   const lines = testoPulito.split('\n')
   let i = 0
   let inCognitivo = false
   let inNepsy = false
+  let inDinamica: { template: TestTemplate; risultato: RisultatoTest } | null = null
   let cognitivoNarrativaLines: string[] = []
   let nepsyNarrativaLines: string[] = []
+  let dinamicaNarrativaLines: string[] = []
+
+  const flushDinamica = () => {
+    if (inDinamica) {
+      const narrativa = dinamicaNarrativaLines.join('\n').trim()
+      if (Object.keys(inDinamica.risultato.punteggi || {}).length > 0) {
+        blocchi.push(makeTestTable(inDinamica.template, inDinamica.risultato))
+        if (inDinamica.risultato.includiNotaRange !== false && inDinamica.template.notaRange) {
+          blocchi.push(new Paragraph({
+            spacing: { after: 120 },
+            children: [new TextRun({ text: inDinamica.template.notaRange, font: FONT, size: SIZE_SMALL, italics: true })],
+          }))
+        }
+      }
+      if (narrativa) {
+        blocchi.push(...markdownToParagraphs(narrativa))
+      }
+      dinamicaNarrativaLines = []
+      inDinamica = null
+    }
+  }
 
   const flushCognitivo = () => {
     if (inCognitivo) {
@@ -542,8 +590,25 @@ export async function esportaDocx({ testo, data, nomeStudio, anagrafica, profess
       continue
     }
 
+    if (line.startsWith('## ') && sezioniDinamiche.has(line.slice(3).trim())) {
+      flushCognitivo()
+      flushNepsy()
+      flushDinamica()
+      inDinamica = sezioniDinamiche.get(line.slice(3).trim())!
+      i++
+      // Salta righe tabella Markdown (ricostruita nativamente in flushDinamica)
+      // e la nota range in corsivo, stessa logica di cognitivo/nepsy.
+      while (i < lines.length && lines[i].match(/^\s*(\|.*\||\*[A-Z])/)) i++
+      if (i < lines.length && lines[i].trim() && !lines[i].startsWith('#')) {
+        dinamicaNarrativaLines.push(lines[i])
+        i++
+      }
+      continue
+    }
+
     if (line.startsWith('## Valutazione cognitiva')) {
       flushNepsy()
+      flushDinamica()
       inCognitivo = true
       i++
       // Salta: righe di tabella Markdown (già presenti nel testo, ricostruita
@@ -562,6 +627,7 @@ export async function esportaDocx({ testo, data, nomeStudio, anagrafica, profess
 
     if (line.startsWith('## Approfondimento neuropsicologico')) {
       flushCognitivo()
+      flushDinamica()
       inNepsy = true
       i++
       // Stessa correzione della sezione cognitivo: salta anche le righe
@@ -601,6 +667,18 @@ export async function esportaDocx({ testo, data, nomeStudio, anagrafica, profess
       continue
     }
 
+    if (inDinamica) {
+      if (line.startsWith('## ')) {
+        flushDinamica()
+        continue
+      }
+      const isRigaTabella = /^\s*\|.*\|\s*$/.test(line)
+      const isNotaRange = /^\s*\*[A-Z][\w-]*(-II)?:\s.*\*\s*$/.test(line)
+      if (line.trim() && !isRigaTabella && !isNotaRange) dinamicaNarrativaLines.push(line)
+      i++
+      continue
+    }
+
     if (line.startsWith('## ')) {
       const title = line.slice(3).trim()
       blocchi.push(para(title, { bold: true, underline: true, center: true, size: SIZE_HEADER, spaceBefore: 200, spaceAfter: 140 }))
@@ -635,6 +713,7 @@ export async function esportaDocx({ testo, data, nomeStudio, anagrafica, profess
 
   flushCognitivo()
   flushNepsy()
+  flushDinamica()
 
   const paraAnagrafica = anagraficaParagraph(anagrafica)
 

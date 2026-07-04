@@ -11,7 +11,7 @@ import {
 } from './wizardToText'
 import { buildGeminiPayload, calcolaNarrativaGruppi } from './testTemplateEngine'
 import { MOCK_WISC_IV_TEMPLATE, MOCK_NEPSY_II_TEMPLATE } from '../data/mockTemplates'
-import type { RisultatoTest } from '../core/testTemplate'
+import type { RisultatoTest, TestTemplate } from '../core/testTemplate'
 import { getPazienteById } from '../data/pazientiData'
 import { anonimizzaTesto } from './anonimizza'
 import {
@@ -101,6 +101,7 @@ type WizardPayload = UnknownRecord & {
     punteggi_grezzi?: string
     note_cliniche?: string
   }
+  test_risultati?: Record<string, RisultatoTest>
   conclusioni?: UnknownRecord & {
     diagnosi?: string
     codice_icd?: string
@@ -569,10 +570,21 @@ export async function generaNarrativaSezioni(
   profiloStile: string,
   wizard: WizardPayload,
   esempi: Relazione[] = [],
-  isMock = false
+  isMock = false,
+  templates: TestTemplate[] = []
 ): Promise<Record<string, string>> {
   const sez = wizard.sezioni_attive || []
   const out: Record<string, string> = {}
+  // Template dinamici (id = UUID) presenti tra le sezioni attive e con un
+  // risultato compilato in wizard.test_risultati — es. un questionario CBCL
+  // creato con la Gestione Test. Vanno trattati come cognitivo/nepsy: mai
+  // lasciarli fuori dal payload per Gemini, altrimenti l'AI riceve solo il
+  // testo libero legacy (questionari.punteggi_grezzi) e "inventa" nomi di
+  // sottoscale e giudizi di significatività clinica non ancorati ai dati.
+  const templatesById = new Map(templates.map(t => [t.id, t]))
+  const templatesDinamiciAttivi = sez
+    .map(id => templatesById.get(id))
+    .filter((t): t is TestTemplate => Boolean(t) && Boolean(wizard.test_risultati?.[t!.id]?.somministrato))
 
   if (isMock || USE_MOCK_AI) {
     await new Promise<void>(resolve => setTimeout(resolve, 1200))
@@ -580,7 +592,7 @@ export async function generaNarrativaSezioni(
       const chiInvia = [wizard.nome_inviante, wizard.tipo_invio].filter(Boolean).join(', ') || '[inviante]'
       out['intestazione'] = `Il/la paziente {{NOME}} viene inviato/a da ${chiInvia} per ${wizard.motivo_invio || 'valutazione neuropsicologica'}.`
     }
-    if (sez.includes('cognitivo') && wizard.cognitivo?.punteggi) {
+    if ((sez.includes('cognitivo') || sez.includes('wisc-iv')) && wizard.cognitivo?.punteggi) {
       const ris: RisultatoTest = {
         somministrato: true, punteggi: wizard.cognitivo.punteggi,
         punteggiSecondari: wizard.cognitivo.subtest_pp || {},
@@ -592,7 +604,13 @@ export async function generaNarrativaSezioni(
       // For mock output, we just generate something simple.
       out['cognitivo'] = [premessa, 'I risultati del test cognitivo sono riportati nella tabella corrispondente.'].filter(Boolean).join(' ')
     }
-    if (sez.includes('nepsy') && wizard.nepsy?.punteggi) {
+    for (const template of templatesDinamiciAttivi) {
+      const ris = wizard.test_risultati![template.id]
+      const premessa = template.richiedeStrumentiUtilizzati && ris.strumentiUtilizzati
+        ? `Strumenti utilizzati: ${ris.strumentiUtilizzati}.` : ''
+      out[template.id] = [premessa, `I risultati di ${template.nome} sono riportati nella tabella corrispondente.`].filter(Boolean).join(' ')
+    }
+    if ((sez.includes('nepsy') || sez.includes('nepsy-ii')) && wizard.nepsy?.punteggi) {
       const premessa = wizard.nepsy?.strumenti_utilizzati ? `Strumenti utilizzati: ${wizard.nepsy.strumenti_utilizzati}.` : ''
       out['nepsy'] = [premessa, 'I risultati dell\'approfondimento neuropsicologico sono riportati nella tabella corrispondente.'].filter(Boolean).join(' ')
     }
@@ -649,7 +667,7 @@ Per la sezione "intestazione": genera UNA sola frase iniziale che dichiara chi i
 Per la sezione "cognitivo": prima di descrivere gli indici, se sono forniti età al momento della valutazione e/o strumenti utilizzati, aprine la narrazione con una breve frase che li riporta in modo discorsivo (es. "La valutazione è stata condotta all'età di 8 anni, mediante la somministrazione della scala WISC-IV.") — non elencarli come campo/valore separato.
 Per la sezione "nepsy": stessa logica per gli strumenti utilizzati, integrati in una frase discorsiva a inizio sezione, non come riga a sé.
 Per la sezione "apprendimenti": integra le note su lettura, scrittura e matematica fornite nella narrazione in prosa, non riportarle come frasi isolate o elenco.
-Non usare mai nomi reali o dati identificativi: ovunque scriveresti il nome del/la paziente, usa esattamente il segnaposto {{NOME}} (con le doppie graffe, senza spazi interni). Non usare "il/la paziente" o altre perifrasi impersonali al posto del segnaposto: scrivi le frasi come le scriveresti con un nome vero, sostituendo solo il nome con {{NOME}} (es. "{{NOME}} accetta e porta a termine le attività proposte" invece di "il/la paziente accetta..."). Questo segnaposto verra sostituito automaticamente con il nome reale dopo la generazione.
+Non usare mai nomi reali o dati identificativi: ovunque scriveresti il nome del/la paziente, usa esattamente il segnaposto {{NOME}} (con le doppie graffe, senza spazi interni). Non usare "il/la paziente" o altre perifrasi impersonali al posto del segnaposto: scrivi le frasi come le scriveresti con un nome vero, sostituendo solo il nome con {{NOME}} (es. "{{NOME}} accetta e porta a termine le attività proposte" invece di "il/la paziente accetta..."). Questo segnaposto verrà sostituito automaticamente con il nome reale dopo la generazione.
 ORDINE DI ANALISI NEI TEST: Per la narrativa di qualsiasi test clinico (es. cognitivo, nepsy, questionari, ecc.), esponi sempre prima il risultato globale/finale (es. QIT/IAG/ICC per la WISC-IV, o il punteggio totale del test) e solo successivamente procedi con l'analisi dettagliata dei singoli indici o subtest secondari. Questo ordine dal generale al particolare è tassativo.
 CONCORDANZA GRAMMATICALE: ${istruzioneGenere}
 ${istruzioneLunghezza ? `\nLIVELLO DI DETTAGLIO RICHIESTO: ${istruzioneLunghezza}\n` : ''}
@@ -750,7 +768,7 @@ Fatti osservati (da esporre in prosa fluida, non come elenco): ${[...vociAdatt, 
 Note aggiuntive: ${anon(osservazione.note) || 'Nessuna'}`)
   }
 
-  if (sez.includes('cognitivo') && wizard.cognitivo?.punteggi) {
+  if ((sez.includes('cognitivo') || sez.includes('wisc-iv')) && wizard.cognitivo?.punteggi) {
     const ris: RisultatoTest = {
       somministrato: true,
       punteggi: wizard.cognitivo?.punteggi || {},
@@ -763,7 +781,7 @@ Note aggiuntive: ${anon(osservazione.note) || 'Nessuna'}`)
     }
     userData.push(buildGeminiPayload(MOCK_WISC_IV_TEMPLATE, ris))
   }
-  if (sez.includes('nepsy') && wizard.nepsy?.punteggi) {
+  if ((sez.includes('nepsy') || sez.includes('nepsy-ii')) && wizard.nepsy?.punteggi) {
     const ris: RisultatoTest = {
       somministrato: true,
       punteggi: wizard.nepsy?.punteggi || {},
@@ -772,6 +790,10 @@ Note aggiuntive: ${anon(osservazione.note) || 'Nessuna'}`)
       noteCliniche: wizard.nepsy?.note_cliniche
     }
     userData.push(buildGeminiPayload(MOCK_NEPSY_II_TEMPLATE, ris))
+  }
+  for (const template of templatesDinamiciAttivi) {
+    const ris = wizard.test_risultati![template.id]
+    userData.push(buildGeminiPayload(template, ris))
   }
   if (sez.includes('apprendimenti') && wizard.apprendimenti) {
     userData.push(`=== SEZIONE: apprendimenti ===
@@ -806,7 +828,7 @@ ${userData.join('\n\n')}`
   const maxTokens = wizard.lunghezza === 'dettagliata' ? 6144 : 4096
   const risposta = await callGemini(systemPrompt, userPrompt, { maxOutputTokens: maxTokens, temperature: 0.7 })
 
-  const sezioneRegex = /=== SEZIONE: (\w+) ===\n([\s\S]*?)(?=\n=== SEZIONE:|\n*$)/g
+  const sezioneRegex = /=== SEZIONE: ([\w-]+) ===\n([\s\S]*?)(?=\n=== SEZIONE:|\n*$)/g
   const matches = risposta.matchAll(sezioneRegex)
   let numSezioniTrovate = 0
   for (const match of matches) {
@@ -826,17 +848,23 @@ ${userData.join('\n\n')}`
 // a Gemini. Quei dati vengono ricomposti nel documento finale solo
 // lato client, in RisultatoGenerazione.tsx + exportDocx.ts, mai visti
 // dall'AI.
-export async function generaRelazione(profiloStile: string, wizardCompleto: WizardPayload, esempi: Relazione[] = []): Promise<string> {
-  const { anagrafica: _anagrafica, ...wizard } = wizardCompleto
+export async function generaRelazione(profiloStile: string, wizardCompleto: WizardPayload, esempi: Relazione[] = [], templates: TestTemplate[] = []): Promise<string> {
+  const { anagrafica, ...resto } = wizardCompleto
+  // Il genere NON è un dato identificativo (a differenza di nome/cognome/data
+  // di nascita/scuola, che restano fuori) e serve a Gemini per la concordanza
+  // grammaticale corretta (vedi istruzioneGenere sopra). Va preservato,
+  // altrimenti generePaziente legge sempre '' e il testo esce con le forme
+  // ambigue "o/a" anche quando il genere è stato specificato nel wizard.
+  const wizard = { ...resto, anagrafica: { genere: (anagrafica as UnknownRecord | undefined)?.genere as string | undefined } }
 
   if (USE_MOCK_AI) {
     await new Promise<void>(resolve => setTimeout(resolve, 2200))
-    const narrativa = await generaNarrativaSezioni('', wizard, [], true)
-    return assemblaDocumentoMarkdown(wizard, narrativa)
+    const narrativa = await generaNarrativaSezioni('', wizard, [], true, templates)
+    return assemblaDocumentoMarkdown(wizard, narrativa, templates)
   }
 
-  const narrativa = await generaNarrativaSezioni(profiloStile, wizard, esempi, false)
-  return assemblaDocumentoMarkdown(wizard, narrativa)
+  const narrativa = await generaNarrativaSezioni(profiloStile, wizard, esempi, false, templates)
+  return assemblaDocumentoMarkdown(wizard, narrativa, templates)
 }
 
 // ── RIGENERA SEZIONE ───────────────────────────────────────

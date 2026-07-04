@@ -412,6 +412,54 @@ Il primo tentativo di continuazione automatica (applicare genericamente "continu
 
 **Risultato**: con il corpus di test reale, la Sezione 7 si genera ora in modo stabile e completo anche quando la prima chiamata viene troncata. La concatenazione mantiene coerenza semantica e non duplica contenuti.
 
+### Trentesima correzione: Risoluzione del bug di validazione per step WISC-IV e NEPSY-II nel wizard
+
+La validazione degli step del wizard (introdotta nella Settima correzione) per WISC-IV (`wisc-iv`) e NEPSY-II (`nepsy-ii`) bloccava erroneamente il proseguimento del wizard con un errore di punteggio mancante, anche quando l'utente aveva inserito i dati.
+
+**Causa e Soluzione**:
+- La funzione `validateStep` cercava i case `'cognitivo'` e `'nepsy'` anziché i corretti step ID `'wisc-iv'` e `'nepsy-ii'`. Di conseguenza, finiva nel ramo `default` che effettuava il controllo su `data.test_risultati` (il quale per questi due test storici è vuoto, in quanto i punteggi reali sono salvati rispettivamente in `data.cognitivo` e `data.nepsy`).
+- Risolto aggiungendo i case `'wisc-iv'` e `'nepsy-ii'` come alias per i rispettivi rami di validazione, garantendo la corretta lettura dei dati inseriti e sbloccando la navigazione.
+
+### Trentunesima correzione: Risoluzione del crash 'scala is undefined' all'esportazione DOCX
+
+Durante l'esportazione in DOCX, la compilazione di test con gruppi secondari (es. subtest WISC-IV) causava il crash dell'applicazione con l'errore `can't access property "tipo", scala is undefined`.
+
+**Causa e Soluzione**:
+- In `exportDocx.ts`, la tabella per i gruppi secondari calcolava la scala dei subtest invocando `getScalaApplicabile(c, gruppo as any)`. Poiché per molti gruppi secondari la proprietà `scalaDefault` non è definita nello schema `GruppoTest` (essendo opzionale), la funzione ritornava `undefined`. Passando una scala indefinita a `calcolaFascia`, l'accesso a `scala.tipo` causava il crash.
+- Risolto implementando un fallback esplicito e completo per la determinazione della scala: `c.scala || gruppo.scalaDefault || template.scalaDefault`. Essendo la `scalaDefault` del `TestTemplate` principale obbligatoria per schema, la scala del subtest non è mai indefinita, risolvendo definitivamente il crash.
+
+### Trentaduesima correzione — critica: sezioni WISC-IV e NEPSY-II ignorate nella generazione e nell'assemblaggio
+
+Stessa causa radice della Trentesima correzione (validazione), ma con impatto molto più grave: non un blocco dell'interfaccia, ma **l'intera sezione mancante nel documento generato**. L'utente compilava i punteggi NEPSY-II nel wizard e otteneva una relazione senza alcuna sezione neuropsicologica.
+
+**Causa**: il codice di assemblaggio Markdown (`assemblaDocumentoMarkdown` in `wizardToText.ts`) e di generazione narrativa (`generaNarrativaSezioni` in `geminiService.ts`) controllano `sez.includes('cognitivo')` e `sez.includes('nepsy')` per decidere se includere le rispettive sezioni nel documento. Ma `sezioni_attive` — popolato a partire dagli ID dei template registrati in `mockTemplates.ts` — contiene `'wisc-iv'` e `'nepsy-ii'`, non i vecchi identificatori legacy. Di conseguenza, il controllo `includes` fallisce sempre silenziosamente: nessun errore, nessun warning, semplicemente la sezione non viene generata.
+
+**Punti corretti** (6 in totale, tutti con l'aggiunta di `|| sez.includes('wisc-iv')` / `|| sez.includes('nepsy-ii')`):
+- `wizardToText.ts`: 2 controlli in `assemblaDocumentoMarkdown` (assemblaggio tabella + narrativa per cognitivo e nepsy)
+- `geminiService.ts`: 4 controlli in `generaNarrativaSezioni` (2 nel ramo mock, 2 nel payload reale per Gemini)
+
+**Nota**: questo bug affligge anche la WISC-IV per lo stesso motivo (`'cognitivo'` vs `'wisc-iv'`), anche se finora non era stato osservato perché `'wisc-iv'` è incluso per default in `INIT.sezioni_attive` e il flusso di test principale non lo deselezionava e riselezionava — ma sarebbe stato altrettanto silenziosamente ignorato.
+
+### Trentatreesima correzione — critica: narrativa Gemini presente ma non inserita nel documento
+
+Direttamente correlata alla Trentaduesima correzione. Anche dopo aver corretto i gate che impedivano l'invio dei dati NEPSY/WISC a Gemini, la narrativa generata da Gemini non compariva nel documento finale.
+
+**Causa**: `buildGeminiPayload` (in `testTemplateEngine.ts`) usa `template.id` come identificatore di sezione nel payload (`=== SEZIONE: nepsy-ii ===`). Gemini risponde con lo stesso identificatore, e il parser regex estrae la narrativa con chiave `'nepsy-ii'`. Ma `assemblaDocumentoMarkdown` in `wizardToText.ts` cercava la narrativa con la chiave legacy `narrativaPerSezione['nepsy']` — non trovando nulla, la narrativa veniva scartata silenziosamente.
+
+**Risoluzione**: aggiunto fallback di lookup in `wizardToText.ts` per entrambe le sezioni:
+- `narrativaPerSezione['cognitivo'] || narrativaPerSezione['wisc-iv']`
+- `narrativaPerSezione['nepsy'] || narrativaPerSezione['nepsy-ii']`
+
+Questo copre sia il percorso mock (che usa le chiavi legacy `'cognitivo'`/`'nepsy'`) sia il percorso reale Gemini (che usa gli ID template `'wisc-iv'`/`'nepsy-ii'`).
+
+### Trentaquattresima correzione — duplicazione dei campi conclusioni nel documento finale
+
+La sezione Conclusioni nel documento generato conteneva prima la narrativa prodotta da Gemini (che integra correttamente diagnosi, consigli, strumenti e misure nel testo discorsivo), e poi una ripetizione grezza degli stessi campi in formato campo/valore (es. `Alla luce di quanto emerso dalla valutazione, si rileva adhd.`, `Consigli: babysitter`, `Strumenti compensativi: pause`).
+
+**Causa**: in `assemblaDocumentoMarkdown` (`wizardToText.ts`), il blocco template-fisso con i campi delle conclusioni veniva **sempre** aggiunto dopo la narrativa Gemini, senza verificare se quest'ultima fosse già presente. Il blocco era originariamente un fallback per quando Gemini non produceva narrativa, ma non era mai stato condizionato alla sua assenza.
+
+**Risoluzione**: il blocco template-fisso ora è racchiuso in un `else`, attivandosi solo quando la narrativa Gemini è vuota. Quando Gemini produce una narrativa, solo questa viene inserita (più la formula di chiusura standard).
+
 ---
 
 ## 1. Panoramica del progetto

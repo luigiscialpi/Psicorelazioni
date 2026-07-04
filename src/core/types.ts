@@ -15,6 +15,10 @@ export type AnagraficaPaziente = {
   cognome?: string | null
   data_nascita?: string | null
   scuola_classe?: string | null
+  // Non identificativo di per sé (a differenza degli altri campi), ma
+  // necessario qui per risolvere correttamente "nato/nata" nel paragrafo
+  // di apertura del DOCX — vedi anagraficaParagraph() in exportDocx.ts.
+  genere?: string | null
 }
 
 export type Paziente = AnagraficaPaziente & {

@@ -152,7 +152,8 @@ function validateStep(stepId, data, templates: TestTemplate[] = []) {
       if (!String(data.motivo_invio || '').trim()) mancanti.push('Motivo dell\'invio')
       break
 
-    case 'cognitivo': {
+    case 'cognitivo':
+    case 'wisc-iv': {
       // Retrocompatibilità con sessioni legacy che usano ancora wizard.cognitivo
       const punteggi = data.cognitivo?.punteggi || data.test_risultati?.['wisc-iv']?.punteggi || {}
       const almenoUno = Object.values(punteggi).some(v => String(v ?? '').trim() !== '')
@@ -160,7 +161,8 @@ function validateStep(stepId, data, templates: TestTemplate[] = []) {
       break
     }
 
-    case 'nepsy': {
+    case 'nepsy':
+    case 'nepsy-ii': {
       // Retrocompatibilità
       const punteggi = data.nepsy?.punteggi || data.test_risultati?.['nepsy-ii']?.punteggi || {}
       const almenoUno = Object.values(punteggi).some(v => String(v ?? '').trim() !== '')
