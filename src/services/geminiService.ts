@@ -212,6 +212,11 @@ function costruisciCorpus(relazioni: Relazione[], labelPrefix = 'RELAZIONE'): Co
 }
 
 async function callGemini(systemPrompt: string, userPrompt: string, options: GeminiCallOptions = {}): Promise<string> {
+  const result = await callGeminiWithFinishReason(systemPrompt, userPrompt, options)
+  return result.text
+}
+
+async function callGeminiWithFinishReason(systemPrompt: string, userPrompt: string, options: GeminiCallOptions = {}): Promise<{ text: string; finishReason?: string }> {
   const {
     maxOutputTokens = 4096,
     temperature = 0.7,
@@ -252,17 +257,14 @@ async function callGemini(systemPrompt: string, userPrompt: string, options: Gem
       if (res.ok) {
         const candidate = data?.candidates?.[0]
         const text = candidate?.content?.parts?.[0]?.text || ''
+        const finishReason = candidate?.finishReason
 
-        if (candidate?.finishReason === 'MAX_TOKENS') {
+        if (finishReason === 'MAX_TOKENS') {
           console.warn(`Gemini response truncated [${modelName}] per limite token output.`)
-          const trimmed = text.trim()
-          if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
-            return text
-          }
-          return text + '\n\n*(Nota: Il testo del profilo è stato parzialmente troncato per limiti di spazio)*'
+          return { text, finishReason: 'MAX_TOKENS' }
         }
 
-        return text
+        return { text, finishReason }
       }
 
       const dettaglio = estraiMessaggioErroreGemini(data) || raw || 'Errore sconosciuto'
@@ -289,6 +291,72 @@ async function callGemini(systemPrompt: string, userPrompt: string, options: Gem
   }
 
   throw lastErr || new Error('Gemini API error: richiesta non completata')
+}
+
+// Continuazione specifica per una sezione troncata
+async function continuaSezione(
+  systemPrompt: string,
+  sezioneParziale: string,
+  sezioneName: string,
+  options: GeminiCallOptions = {}
+): Promise<string> {
+  const { maxOutputTokens = 4096, temperature = 0.7, thinkingBudget = 0 } = options
+
+  const continuationPrompt = `Questo è ciò che hai generato finora della ${sezioneName}:
+
+\`\`\`
+${sezioneParziale}
+\`\`\`
+
+La generazione è stata interrotta a causa di limiti di token. Completa la ${sezioneName} proseguendo ESATTAMENTE da dove ti sei fermato, senza ripetere alcun testo già presente sopra. Se la sezione è già completa, rispondi solo con "COMPLETA". Altrimenti, continua il testo.`
+
+  const body = {
+    system_instruction: { parts: [{ text: systemPrompt }] },
+    contents: [{ role: 'user', parts: [{ text: continuationPrompt }] }],
+    generationConfig: {
+      temperature,
+      maxOutputTokens,
+      thinkingConfig: { thinkingBudget },
+    },
+  }
+
+  for (let modelIndex = 0; modelIndex < MODEL_CANDIDATES.length; modelIndex++) {
+    const modelName = MODEL_CANDIDATES[modelIndex]
+    const endpoint = buildEndpoint(modelName)
+
+    try {
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+
+      let data: GeminiResponse | null = null
+      try {
+        data = await res.json() as GeminiResponse
+      } catch {
+        continue
+      }
+
+      if (res.ok) {
+        let text = data?.candidates?.[0]?.content?.parts?.[0]?.text || ''
+        
+        if (text === 'COMPLETA' || text.trim() === 'COMPLETA') {
+          // Sezione già completa, non aggiungere nulla
+          return ''
+        }
+
+        // Ripulisci markdown fence accidentali
+        text = text.replace(/^```\n?/, '').replace(/\n?```$/, '').trim()
+        
+        return text
+      }
+    } catch {
+      continue
+    }
+  }
+
+  return '' // Se continua fallisce, ritorna vuoto
 }
 
 async function anonimizzaRelazioniPerAnalisi(relazioni: Relazione[]): Promise<Relazione[]> {
@@ -441,7 +509,7 @@ Rispondi SOLO con il documento Markdown delle sezioni 1-6, senza introduzioni.`
     }
   )
 
-  // Call 2: Estrazione della struttura dei Test Clinici (Sezione 7)
+  // Call 2: Estrazione della struttura dei Test Clinici (Sezione 7) - con verifica troncamento
   const promptTestSystem = `Sei un assistente clinico specializzato nella catalogazione e analisi dei test neuropsicologici e psicometrici citati in relazioni cliniche.
 Analizza il corpus di relazioni fornite e produci un documento in formato Markdown che descrive dettagliatamente tutti i test clinici o batterie individuate nelle relazioni (escludendo WISC-IV e NEPSY-II).
 Il documento deve rispettare ESATTAMENTE questa struttura, senza testo extra:
@@ -461,7 +529,7 @@ Per ciascun test o batteria individuato, crea una sottosezione:
 Sii estremamente preciso ed esaustivo nell'estrarre le colonne, i subtest e le note di range.
 Rispondi SOLO con la sezione 7 in formato Markdown, senza introduzioni.`
 
-  const testoTest = await callGemini(
+  const resultTest = await callGeminiWithFinishReason(
     promptTestSystem,
     `Analizza queste ${usate} relazioni di valutazione neuropsicologica ed estrai l'analisi dei test clinici (sezione 7).\n\n${corpus}`,
     {
@@ -471,7 +539,23 @@ Rispondi SOLO con la sezione 7 in formato Markdown, senza introduzioni.`
     }
   )
 
-  const testo = `${testoStile.trim()}\n\n${testoTest.trim()}`
+  let testoTestCompleto = resultTest.text
+
+  // Se la sezione 7 è stata troncata, prova a completarla
+  if (resultTest.finishReason === 'MAX_TOKENS') {
+    console.log('Sezione 7 troncata (MAX_TOKENS) — tentativo di continuazione...')
+    const continuazione = await continuaSezione(
+      promptTestSystem,
+      resultTest.text,
+      'Sezione 7 - Analisi dei Test Clinici',
+      { maxOutputTokens: 8192, temperature: 0.2, thinkingBudget: 0 }
+    )
+    if (continuazione) {
+      testoTestCompleto = `${resultTest.text}\n\n${continuazione}`
+    }
+  }
+
+  const testo = `${testoStile.trim()}\n\n${testoTestCompleto.trim()}`
   return { testo, relazioniUsate: usate, relazioniTotali: totali, charsCorpus }
 }
 
