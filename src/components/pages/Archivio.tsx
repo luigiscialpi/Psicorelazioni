@@ -1,9 +1,9 @@
 import { useReducer, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Search, FileText, Calendar, Tag, Edit3, X, User } from 'lucide-react'
+import { Search, FileText, Calendar, Tag, Edit3, X, User, Trash2, AlertTriangle } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { getRelazioni } from '../../data/relazioniData'
+import { getRelazioni, deleteRelazione } from '../../data/relazioniData'
 import { getPazienteById } from '../../data/pazientiData'
 import { ARCHIVIO_INIT, archivioReducer } from '../state/archivioState'
 import type { Relazione } from '../../core/types'
@@ -18,7 +18,7 @@ function formatData(iso?: string | null) {
 export default function Archivio() {
   const navigate = useNavigate()
   const [state, dispatch] = useReducer(archivioReducer, ARCHIVIO_INIT)
-  const { relazioni, loading, query, filtroTipo, aperta, pazienteAperta } = state
+  const { relazioni, loading, query, filtroTipo, aperta, pazienteAperta, confirmDelete } = state
 
   useEffect(() => { load() }, [])
 
@@ -37,8 +37,6 @@ export default function Archivio() {
       alert('Questa relazione non ha uno snapshot del wizard salvato (probabilmente importata da DOCX) — non può essere riaperta per la modifica, ma puoi comunque consultarla.')
       return
     }
-    // Ricompone i dati per il wizard: snapshot delle risposte + anagrafica
-    // recuperata separatamente da `pazienti` + riferimenti per l'update
     navigate(`/modifica?relazioneId=${encodeURIComponent(relazione.id)}`)
   }
 
@@ -67,6 +65,12 @@ export default function Archivio() {
         testoPreesistente: relazione.testo_markdown
       }
     })
+  }
+
+  async function handleEliminaConfermato() {
+    if (!confirmDelete) return
+    await deleteRelazione(confirmDelete)
+    dispatch({ type: 'ELIMINA', id: confirmDelete })
   }
 
   const filtrate = relazioni.filter((r: Relazione) => {
@@ -130,11 +134,29 @@ export default function Archivio() {
                       <span>{r.tipo === 'importata' ? 'Importata' : 'Generata'}</span>
                     </div>
                   </div>
-                  {r.wizard_snapshot && (
-                    <span style={{ fontSize: 10.5, color: 'var(--accent-dk)', background: 'var(--accent-lt)', padding: '3px 8px', borderRadius: 20, flexShrink: 0 }}>
-                      Modificabile
-                    </span>
-                  )}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                    {r.wizard_snapshot && (
+                      <span style={{ fontSize: 10.5, color: 'var(--accent-dk)', background: 'var(--accent-lt)', padding: '3px 8px', borderRadius: 20 }}>
+                        Modificabile
+                      </span>
+                    )}
+                    {/* Pulsante elimina diretto sulla card */}
+                    <button
+                      type="button"
+                      onClick={e => { e.stopPropagation(); dispatch({ type: 'ASK_DELETE', id: r.id }) }}
+                      title="Elimina relazione"
+                      style={{
+                        background: 'none', border: '1px solid var(--border)', borderRadius: 6,
+                        padding: '4px 7px', cursor: 'pointer', color: 'var(--text-muted)',
+                        display: 'flex', alignItems: 'center',
+                        transition: 'border-color 0.15s, color 0.15s',
+                      }}
+                      onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--danger)'; (e.currentTarget as HTMLButtonElement).style.color = 'var(--danger)' }}
+                      onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--border)'; (e.currentTarget as HTMLButtonElement).style.color = 'var(--text-muted)' }}
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
                 </div>
               </div>
             ))}
@@ -166,7 +188,7 @@ export default function Archivio() {
                 </ReactMarkdown>
               </div>
 
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
                 {aperta.wizard_snapshot && (
                   <button className="btn btn-primary btn-sm" onClick={() => handleModifica(aperta)}>
                     <Edit3 size={13} /> Modifica con Wizard
@@ -178,6 +200,14 @@ export default function Archivio() {
                 <button className="btn btn-secondary btn-sm" onClick={() => dispatch({ type: 'CHIUDI' })}>
                   Chiudi
                 </button>
+                {/* Elimina nel pannello dettaglio */}
+                <button
+                  className="btn btn-sm"
+                  style={{ marginLeft: 'auto', background: 'none', border: '1px solid var(--danger)', color: 'var(--danger)' }}
+                  onClick={() => dispatch({ type: 'ASK_DELETE', id: aperta.id })}
+                >
+                  <Trash2 size={13} /> Elimina
+                </button>
               </div>
 
               {!aperta.wizard_snapshot && (
@@ -185,6 +215,39 @@ export default function Archivio() {
                   Questa relazione non ha dati del wizard salvati (probabilmente importata da un DOCX esistente). Puoi comunque modificarne il testo direttamente ed esportare un nuovo DOCX.
                 </p>
               )}
+            </div>
+          </div>
+        )}
+
+        {/* Dialog di conferma eliminazione */}
+        {confirmDelete && (
+          <div style={{
+            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: 20,
+          }}>
+            <div style={{
+              background: 'var(--bg-panel)', borderRadius: 12, padding: '28px 32px',
+              maxWidth: 420, width: '100%', boxShadow: '0 20px 60px rgba(0,0,0,0.3)',
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+                <AlertTriangle size={20} color="var(--danger)" />
+                <span style={{ fontSize: 15, fontWeight: 600 }}>Elimina relazione</span>
+              </div>
+              <p style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.6, marginBottom: 24 }}>
+                Questa azione è <strong>irreversibile</strong>. La relazione verrà eliminata definitivamente dal database e non potrà essere recuperata.
+              </p>
+              <div style={{ display: 'flex', gap: 10 }}>
+                <button
+                  className="btn btn-primary"
+                  style={{ background: 'var(--danger)', borderColor: 'var(--danger)' }}
+                  onClick={handleEliminaConfermato}
+                >
+                  <Trash2 size={14} /> Elimina definitivamente
+                </button>
+                <button className="btn btn-secondary" onClick={() => dispatch({ type: 'CANCEL_DELETE' })}>
+                  Annulla
+                </button>
+              </div>
             </div>
           </div>
         )}

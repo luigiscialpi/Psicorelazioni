@@ -7,6 +7,7 @@ export type ArchivioState = {
   filtroTipo: string
   aperta: Relazione | null
   pazienteAperta: Paziente | null
+  confirmDelete: string | null  // id della relazione da eliminare
 }
 
 export type ArchivioAction =
@@ -15,6 +16,9 @@ export type ArchivioAction =
   | { type: 'FILTRO_TIPO'; value: string }
   | { type: 'APRI'; relazione: Relazione; paziente: Paziente | null }
   | { type: 'CHIUDI' }
+  | { type: 'ASK_DELETE'; id: string }
+  | { type: 'CANCEL_DELETE' }
+  | { type: 'ELIMINA'; id: string }
 
 export const ARCHIVIO_INIT: ArchivioState = {
   relazioni: [],
@@ -23,6 +27,7 @@ export const ARCHIVIO_INIT: ArchivioState = {
   filtroTipo: '',
   aperta: null,
   pazienteAperta: null,
+  confirmDelete: null,
 }
 
 export function archivioReducer(state: ArchivioState, action: ArchivioAction): ArchivioState {
@@ -36,7 +41,19 @@ export function archivioReducer(state: ArchivioState, action: ArchivioAction): A
     case 'APRI':
       return { ...state, aperta: action.relazione, pazienteAperta: action.paziente }
     case 'CHIUDI':
-      return { ...state, aperta: null, pazienteAperta: null }
+      return { ...state, aperta: null, pazienteAperta: null, confirmDelete: null }
+    case 'ASK_DELETE':
+      return { ...state, confirmDelete: action.id }
+    case 'CANCEL_DELETE':
+      return { ...state, confirmDelete: null }
+    case 'ELIMINA':
+      return {
+        ...state,
+        relazioni: state.relazioni.filter(r => r.id !== action.id),
+        aperta: null,
+        pazienteAperta: null,
+        confirmDelete: null,
+      }
     default:
       return state
   }

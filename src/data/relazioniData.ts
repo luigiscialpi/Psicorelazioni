@@ -48,3 +48,11 @@ export async function getRelazioneById(id: Id): Promise<Relazione | null> {
   const { data } = await supabase.from('relazioni').select('*').eq('id', id).single()
   return data as Relazione | null
 }
+
+export async function deleteRelazione(id: Id): Promise<void> {
+  if (USE_MOCK) {
+    mockRelazioni = mockRelazioni.filter(r => r.id !== id)
+    return
+  }
+  await supabase.from('relazioni').delete().eq('id', id)
+}
