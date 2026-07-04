@@ -7,7 +7,7 @@
 // ============================================================
 
 import {
-  wiscToMarkdownTable, nepsyToMarkdownTable, 
+  wiscToMarkdownTable, nepsyToMarkdownTable, assemblaDocumentoMarkdown,
 } from './wizardToText'
 import { buildGeminiPayload, calcolaNarrativaGruppi } from './testTemplateEngine'
 import { MOCK_WISC_IV_TEMPLATE, MOCK_NEPSY_II_TEMPLATE } from '../data/mockTemplates'
@@ -428,6 +428,7 @@ Ultimo aggiornamento: YYYY-MM-DD | Relazioni analizzate: N | Versione: 1
 ## 6. Lunghezza e ritmo
 
 Sii estremamente dettagliato ed esaustivo nell'analisi dello stile di scrittura delle relazioni. Fornisci regole ed esempi pratici tratti dalle relazioni per ciascuna sezione.
+In particolare, per ciascun test clinico nella 'Struttura standard', analizza e documenta se l'analisi narrativa segue la regola di esporre prima il risultato globale/finale (es. QIT, IAG, ICC per la WISC-IV, o il punteggio totale del test) e solo successivamente i singoli indici o subtest secondari, documentando questo pattern in modo esplicito.
 Rispondi SOLO con il documento Markdown delle sezioni 1-6, senza introduzioni.`
 
   const testoStile = await callGemini(
@@ -564,7 +565,8 @@ Per la sezione "intestazione": genera UNA sola frase iniziale che dichiara chi i
 Per la sezione "cognitivo": prima di descrivere gli indici, se sono forniti età al momento della valutazione e/o strumenti utilizzati, aprine la narrazione con una breve frase che li riporta in modo discorsivo (es. "La valutazione è stata condotta all'età di 8 anni, mediante la somministrazione della scala WISC-IV.") — non elencarli come campo/valore separato.
 Per la sezione "nepsy": stessa logica per gli strumenti utilizzati, integrati in una frase discorsiva a inizio sezione, non come riga a sé.
 Per la sezione "apprendimenti": integra le note su lettura, scrittura e matematica fornite nella narrazione in prosa, non riportarle come frasi isolate o elenco.
-Non usare mai nomi reali o dati identificativi: ovunque scriveresti il nome del/la paziente, usa esattamente il segnaposto {{NOME}} (con le doppie graffe, senza spazi interni). Non usare "il/la paziente" o altre perifrasi impersonali al posto del segnaposto: scrivi le frasi come le scriveresti con un nome vero, sostituendo solo il nome con {{NOME}} (es. "{{NOME}} accetta e porta a termine le attività proposte" invece di "il/la paziente accetta..."). Questo segnaposto verrà sostituito automaticamente con il nome reale dopo la generazione.
+Non usare mai nomi reali o dati identificativi: ovunque scriveresti il nome del/la paziente, usa esattamente il segnaposto {{NOME}} (con le doppie graffe, senza spazi interni). Non usare "il/la paziente" o altre perifrasi impersonali al posto del segnaposto: scrivi le frasi come le scriveresti con un nome vero, sostituendo solo il nome con {{NOME}} (es. "{{NOME}} accetta e porta a termine le attività proposte" invece di "il/la paziente accetta..."). Questo segnaposto verra sostituito automaticamente con il nome reale dopo la generazione.
+ORDINE DI ANALISI NEI TEST: Per la narrativa di qualsiasi test clinico (es. cognitivo, nepsy, questionari, ecc.), esponi sempre prima il risultato globale/finale (es. QIT/IAG/ICC per la WISC-IV, o il punteggio totale del test) e solo successivamente procedi con l'analisi dettagliata dei singoli indici o subtest secondari. Questo ordine dal generale al particolare è tassativo.
 CONCORDANZA GRAMMATICALE: ${istruzioneGenere}
 ${istruzioneLunghezza ? `\nLIVELLO DI DETTAGLIO RICHIESTO: ${istruzioneLunghezza}\n` : ''}
 Rispondi SOLO con il testo narrativo per ogni sezione, separato da intestazioni "=== SEZIONE: nome ===".
@@ -819,6 +821,7 @@ Hai già un Profilo di Stile esistente (sezioni da 1 a 6). Vengono aggiunte nuov
 Il tuo compito è AGGIORNARE il profilo integrando eventuali pattern nuovi o correggendo quelli già presenti.
 NON riscrivere il profilo da zero: parti da quello esistente e modifica solo ciò che cambia nelle sezioni da 1 a 6.
 Sii estremamente dettagliato ed esaustivo nell'analisi.
+In particolare, verifica e documenta se l'analisi narrativa dei test clinici segue la regola di esporre prima il risultato globale/finale e solo successivamente i singoli indici o subtest secondari.
 Se le nuove relazioni confermano il profilo senza aggiungere nulla di nuovo, rispondi con il profilo invariato.
 Aggiorna la riga "Ultimo aggiornamento" e "Relazioni analizzate" in cima al documento.
 Rispondi SOLO con il documento Markdown aggiornato (sezioni 1-6), senza introduzioni.`,

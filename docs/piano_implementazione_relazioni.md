@@ -349,6 +349,14 @@ Soluzione adottata — decomposizione in due funzioni mirate:
 
 Questa decomposizione elimina completamente il problema di troncamento e offre un'esperienza utente migliore: l'utente vede subito i nomi dei test disponibili e sceglie quale approfondire, invece di attendere 30+ secondi per una singola chiamata massiva.
 
+### Ventiseiesima correzione: Ordine di analisi dei test (Risultato Globale -> Dettaglio Indici)
+
+Durante i test clinici è emerso che Gemini non identificava autonomamente la regola di priorità nella stesura dell'analisi dei test, che prevede di esporre prima il risultato complessivo/globale (es. il QIT per la WISC-IV, o il punteggio finale e fascia per gli altri test) e solo successivamente procedere con l'analisi dettagliata dei singoli indici o subtest secondari.
+
+**Correzione**:
+1. **Analisi dello Stile**: Aggiornati i prompt di `analizzaStile` e `aggiornaProfiloIncrementale` in `geminiService.ts` per istruire esplicitamente Gemini a rilevare e documentare nel Profilo di Stile l'ordine logico di esposizione dell'analisi clinica dei test (global-first).
+2. **Generazione della Relazione**: Aggiornato il `systemPrompt` di `generaNarrativaSezioni` in `geminiService.ts` inserendo una regola tassativa che obbliga il modello a strutturare la narrativa dei test partendo sempre dal risultato globale/totale per poi scendere nel dettaglio dei singoli parametri secondari ("ORDINE DI ANALISI NEI TEST: esponi sempre prima il risultato globale/finale...").
+
 ---
 
 ## 1. Panoramica del progetto
