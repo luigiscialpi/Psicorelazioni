@@ -215,10 +215,11 @@ function splitHeaderLines(nomeStudio?: string, professionista?: ProfiloProfessio
   if (professionista && (professionista.nome_completo || professionista.titolo || professionista.specializzazione)) {
     const lines: string[] = []
     const nome = String(professionista.nome_completo || '').trim()
+    const prefisso = professionista.genere === "donna" ? "Dr.ssa" : "Dr.";
     const titolo = String(professionista.titolo || '').trim()
     const specializzazione = String(professionista.specializzazione || '').trim()
 
-    if (nome) lines.push(nome)
+    if (nome) lines.push(`${prefisso} ${nome}`);
     if (titolo) lines.push(titolo)
     if (specializzazione) lines.push(specializzazione)
 
@@ -239,65 +240,96 @@ function makeHeader(nomeStudio?: string, professionista?: ProfiloProfessionista 
         spacing: { after: 40 },
         // Nel template reale il nome è a 14pt (sz=28), non 12pt —
         // valore confermato via XML, non stimato dallo screenshot.
-        children: [new TextRun({ text: nome, font: FONT, size: 28, bold: false })],
+        children: [
+          new TextRun({
+            text: nome,
+            font: "Corsiva Hebrew",
+            size: 28,
+            bold: false,
+          }),
+        ],
       }),
-      ...resto.map(r =>
-        new Paragraph({
-          spacing: { after: 40 },
-          // Qualifica e specializzazione sono a 10pt (sz=20) nel
-          // template reale, leggermente più piccole del corpo (11pt).
-          children: [new TextRun({ text: r, font: FONT, size: 20 })],
-        })
+      ...resto.map(
+        (r) =>
+          new Paragraph({
+            spacing: { after: 40 },
+            // Qualifica e specializzazione sono a 10pt (sz=20) nel
+            // template reale, leggermente più piccole del corpo (11pt).
+            children: [new TextRun({ text: r, font: FONT, size: 20 })],
+          }),
       ),
       // Nessuna linea separatrice: il template reale ha tutti i bordi
       // del paragrafo intestazione esplicitamente a "nil" nell'XML —
       // l'intestazione è solo testo, senza riga sotto.
     ],
-  })
+  });
 }
 
-function firmaProfessionistaParagraphs(professionista?: ProfiloProfessionista | null): Paragraph[] {
-  if (!professionista) return []
-  const nome = String(professionista.nome_completo || '').trim()
-  const titolo = String(professionista.titolo || '').trim()
-  const specializzazione = String(professionista.specializzazione || '').trim()
-  const indirizzo = String(professionista.indirizzo || '').trim()
-  const citta = String(professionista.citta || '').trim()
-  const telefono = String(professionista.telefono || '').trim()
-  const email = String(professionista.email || '').trim()
-  const piva = String(professionista.partita_iva || '').trim()
-  const cf = String(professionista.codice_fiscale || '').trim()
+function rightParagraph(text: string, bold = false): Paragraph {
+  return new Paragraph({
+    alignment: AlignmentType.RIGHT,
+    spacing: { after: 40 },
+    children: [
+      new TextRun({
+        text,
+        font: FONT,
+        size: SIZE_BODY,
+        bold,
+      }),
+    ],
+  });
+}
+
+function firmaProfessionistaParagraphs(
+  professionista?: ProfiloProfessionista | null,
+): Paragraph[] {
+  if (!professionista) return [];
+
+  const nome = String(professionista.nome_completo || "").trim();
+  const titolo = String(professionista.titolo || "").trim();
+  const indirizzo = String(professionista.indirizzo || "").trim();
+  const citta = String(professionista.citta || "").trim();
+  const telefono = String(professionista.telefono || "").trim();
+  const email = String(professionista.email || "").trim();
+  const piva = String(professionista.partita_iva || "").trim();
+  const cf = String(professionista.codice_fiscale || "").trim();
 
   const lines: Paragraph[] = [
-    new Paragraph({ spacing: { before: 260, after: 60 }, children: [new TextRun({ text: 'Firma', font: FONT, size: SIZE_BODY, bold: true })] }),
-  ]
+    new Paragraph({
+      spacing: { before: 260, after: 60 },
+      alignment: AlignmentType.RIGHT,
+      children: [],
+    }),
+  ];
 
   if (nome) {
-    lines.push(new Paragraph({ spacing: { after: 40 }, children: [new TextRun({ text: nome, font: FONT, size: SIZE_BODY, bold: true })] }))
+    lines.push(rightParagraph(nome, true));
   }
+
   if (titolo) {
-    lines.push(new Paragraph({ spacing: { after: 40 }, children: [new TextRun({ text: titolo, font: FONT, size: SIZE_BODY })] }))
-  }
-  if (specializzazione) {
-    lines.push(new Paragraph({ spacing: { after: 40 }, children: [new TextRun({ text: specializzazione, font: FONT, size: SIZE_BODY })] }))
+    lines.push(rightParagraph(titolo));
   }
 
-  const location = [indirizzo, citta].filter(Boolean).join(', ')
+  const location = [indirizzo, citta].filter(Boolean).join(", ");
   if (location) {
-    lines.push(new Paragraph({ spacing: { after: 40 }, children: [new TextRun({ text: location, font: FONT, size: SIZE_BODY })] }))
+    lines.push(rightParagraph(location));
   }
 
-  const contatti = [telefono ? `Cell. ${telefono}` : '', email].filter(Boolean).join('  •  ')
+  const contatti = [telefono ? `Cell. ${telefono}` : "", email]
+    .filter(Boolean)
+    .join("  •  ");
   if (contatti) {
-    lines.push(new Paragraph({ spacing: { after: 40 }, children: [new TextRun({ text: contatti, font: FONT, size: SIZE_BODY })] }))
+    lines.push(rightParagraph(contatti));
   }
 
-  const fisc = [piva ? `P.IVA ${piva}` : '', cf ? `CF ${cf}` : ''].filter(Boolean).join('  •  ')
+  const fisc = [piva ? `P.IVA ${piva}` : "", cf ? `CF ${cf}` : ""]
+    .filter(Boolean)
+    .join("  •  ");
   if (fisc) {
-    lines.push(new Paragraph({ spacing: { after: 40 }, children: [new TextRun({ text: fisc, font: FONT, size: SIZE_BODY })] }))
+    lines.push(rightParagraph(fisc));
   }
 
-  return lines
+  return lines;
 }
 
 // ── Footer con numero pagina ───────────────────────────────
