@@ -1,5 +1,6 @@
-import { useEffect, useReducer, Suspense, lazy } from 'react'
-import { Routes, Route, Navigate, Outlet } from 'react-router-dom'
+import { useEffect, useReducer, useState, Suspense, lazy } from 'react'
+import { Routes, Route, Navigate, Outlet, useLocation } from 'react-router-dom'
+import { Menu } from 'lucide-react'
 import { supabase } from '../../core/supabase'
 import { USE_MOCK } from '../../core/config'
 import Sidebar from '../layout/Sidebar'
@@ -27,9 +28,32 @@ function ProtectedRoute({ session }) {
 }
 
 function AppLayout() {
+  const [sidebarOpen, setSidebarOpen] = useState(false)
+  const location = useLocation()
+
+  // Chiude il drawer mobile ogni volta che si cambia pagina
+  useEffect(() => {
+    setSidebarOpen(false)
+  }, [location.pathname])
+
+  // Evita lo scroll del contenuto sotto quando il drawer è aperto
+  useEffect(() => {
+    document.body.style.overflow = sidebarOpen ? 'hidden' : ''
+    return () => { document.body.style.overflow = '' }
+  }, [sidebarOpen])
+
   return (
     <div className="app-shell">
-      <Sidebar mockMode={USE_MOCK} />
+      <Sidebar mockMode={USE_MOCK} open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
+      {sidebarOpen && <div className="sidebar-backdrop" onClick={() => setSidebarOpen(false)} />}
+      <button
+        type="button"
+        className="mobile-menu-btn"
+        onClick={() => setSidebarOpen(true)}
+        aria-label="Apri menu di navigazione"
+      >
+        <Menu size={20} />
+      </button>
       <main className="main-content">
         <Outlet />
       </main>

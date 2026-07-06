@@ -1,4 +1,4 @@
-import { LayoutDashboard, Upload, FileText, Clock, BookOpen, Settings, UserRound, LogOut, FlaskConical } from 'lucide-react'
+import { LayoutDashboard, Upload, FileText, Clock, BookOpen, Settings, UserRound, LogOut, FlaskConical, X } from 'lucide-react'
 import { NavLink, useLocation } from 'react-router-dom'
 import { supabase } from '../../core/supabase'
 
@@ -13,7 +13,7 @@ const NAV = [
   { id: 'professionista', path: '/professionista', label: 'Scheda professionista', icon: UserRound },
 ]
 
-export default function Sidebar({ mockMode }) {
+export default function Sidebar({ mockMode, open, onClose }) {
   const location = useLocation()
 
   function isNavItemActive(path) {
@@ -27,10 +27,20 @@ export default function Sidebar({ mockMode }) {
   }
 
   return (
-    <aside className="sidebar">
-      <div className="sidebar-logo">
-        <h1>PsicoRelazioni</h1>
-        <p>Strumento clinico</p>
+    <aside className={`sidebar ${open ? 'mobile-open' : ''}`}>
+      <div className="sidebar-logo" style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+        <div>
+          <h1>PsicoRelazioni</h1>
+          <p>Strumento clinico</p>
+        </div>
+        <button
+          type="button"
+          className="sidebar-close-btn"
+          onClick={onClose}
+          aria-label="Chiudi menu"
+        >
+          <X size={18} />
+        </button>
       </div>
 
       {mockMode && (
