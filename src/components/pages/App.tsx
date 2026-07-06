@@ -106,7 +106,7 @@ export default function App() {
             <Route path="/archivio" element={<Archivio />} />
             <Route path="/nuova" element={<WizardNuovaRelazione />} />
             <Route path="/modifica" element={<WizardNuovaRelazione />} />
-            <Route path="/risultato" element={<RisultatoGenerazione />} />
+            <Route path="/risultato/:relazioneId?" element={<RisultatoGenerazione />} />
             <Route path="/gestione-test" element={<GestioneTest />} />
             <Route path="/" element={<Navigate to="/dashboard" replace />} />
             <Route path="*" element={<Navigate to="/dashboard" replace />} />

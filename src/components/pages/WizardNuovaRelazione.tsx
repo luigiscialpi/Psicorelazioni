@@ -1066,21 +1066,25 @@ export default function WizardNuovaRelazione() {
                 Avanti <ChevronRight size={15} />
               </button>
             ) : (
-              <button
-                className="btn btn-primary"
-                onClick={() => navigate('/risultato', {
-                  state: {
-                    wizardData: {
-                      ...data,
-                      _sessionId: sessionIdRef.current,
-                      _sourceRoute: `${location.pathname}${location.search || ''}`,
-                    },
-                  },
-                })}
-                disabled={!canGenerate()}
-              >
-                <Save size={15} /> Genera relazione
-              </button>
+                <button
+                  className="btn btn-primary"
+                  onClick={() => {
+                    const relazioneId = (data as any)?._relazioneId
+                    const targetPath = relazioneId ? `/risultato/${encodeURIComponent(relazioneId)}` : '/risultato'
+                    navigate(targetPath, {
+                      state: {
+                        wizardData: {
+                          ...data,
+                          _sessionId: sessionIdRef.current,
+                          _sourceRoute: `${location.pathname}${location.search || ''}`,
+                        },
+                      },
+                    })
+                  }}
+                  disabled={!canGenerate()}
+                >
+                  <Save size={15} /> Genera relazione
+                </button>
             )}
           </div>
 

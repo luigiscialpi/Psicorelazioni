@@ -47,7 +47,7 @@ export default function Archivio() {
       ...snap,
       sezioni_attive: snap.sezioni_attive || relazione.tag || []
     })
-    navigate('/risultato', {
+    navigate(`/risultato/${encodeURIComponent(relazione.id)}`, {
       state: {
         wizardData: {
           _relazioneId: relazione.id,
