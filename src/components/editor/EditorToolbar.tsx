@@ -123,8 +123,48 @@ function ToolbarColorPicker({
   )
 }
 
-export function EditorToolbar({ editor, mode, onModeChange }: { editor: Editor | null; mode: 'visual' | 'markdown'; onModeChange: (mode: 'visual' | 'markdown') => void }) {
-  if (!editor) return null
+export function EditorToolbar({ 
+  editor, 
+  editorReady, 
+  mode, 
+  onModeChange 
+}: { 
+  editor: Editor | null; 
+  editorReady: boolean; 
+  mode: 'visual' | 'markdown'; 
+  onModeChange: (mode: 'visual' | 'markdown') => void 
+}) {
+  
+  // 1. Blocco immediato se l'istanza passata è nulla
+  if (!editor || !editorReady) {
+    return <div className="editor-toolbar editor-toolbar-loading" />
+  }
+
+  // 2. Protezione avanzata per i metodi getter ed esecutori di Tiptap
+  let currentFont = FONTS[0].value
+  let currentColor = TEXT_COLORS[0].value
+  let currentHighlight = HIGHLIGHT_COLORS[0].value
+  let currentFontSize = FONT_SIZES[1].value
+  let canUndo = false
+  let canRedo = false
+
+  try {
+    // Estrazione sicura degli attributi racchiusa nel blocco try per intercettare i crash del Concurrent Rendering
+    if (editor.commands && mode === 'visual') {
+      currentFont = editor.getAttributes('fontFamily').family || FONTS[0].value
+      currentColor = editor.getAttributes('textStyle').color || TEXT_COLORS[0].value
+      currentHighlight = editor.getAttributes('highlight').color || HIGHLIGHT_COLORS[0].value
+      currentFontSize = editor.getAttributes('textStyle').fontSize || FONT_SIZES[1].value
+      
+      if (typeof editor.can === 'function') {
+        canUndo = editor.can().undo()
+        canRedo = editor.can().redo()
+      }
+    }
+  } catch (e) {
+    // Silenziamo i crash temporanei di Tiptap durante la transizione degli stati di React
+    console.warn("Tiptap non è ancora pronto a computare i comandi:", e)
+  }
 
   const setFontFamily = (family: string) => editor.chain().focus().setFontFamily(family).run()
   const setFontSize = (size: string) => {
@@ -138,9 +178,6 @@ export function EditorToolbar({ editor, mode, onModeChange }: { editor: Editor |
       editor.chain().focus().setHighlight({ color }).run()
     }
   }
-  const currentFont = editor.getAttributes('fontFamily').family || FONTS[0].value
-  const currentColor = editor.getAttributes('textStyle').color || TEXT_COLORS[0].value
-  const currentHighlight = editor.getAttributes('highlight').color || HIGHLIGHT_COLORS[0].value
 
   const insertTable = () => {
     editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()
@@ -149,10 +186,18 @@ export function EditorToolbar({ editor, mode, onModeChange }: { editor: Editor |
   return (
     <div className="editor-toolbar">
       <div className="toolbar-group toolbar-group-history">
-        <ToolbarButton onClick={() => editor.chain().focus().undo().run()} disabled={!editor.can().undo()} title="Annulla">
+        <ToolbarButton 
+          onClick={() => editor.chain().focus().undo().run()} 
+          disabled={!canUndo} 
+          title="Annulla"
+        >
           <Undo size={15} />
         </ToolbarButton>
-        <ToolbarButton onClick={() => editor.chain().focus().redo().run()} disabled={!editor.can().redo()} title="Ripeti">
+        <ToolbarButton 
+          onClick={() => editor.chain().focus().redo().run()} 
+          disabled={!canRedo} 
+          title="Ripeti"
+        >
           <Redo size={15} />
         </ToolbarButton>
       </div>
@@ -163,7 +208,7 @@ export function EditorToolbar({ editor, mode, onModeChange }: { editor: Editor |
 
           <div className="toolbar-group toolbar-group-font">
             <ToolbarSelect value={currentFont} onChange={setFontFamily} options={FONTS} title="Font" width={120} />
-            <ToolbarSelect value={editor.getAttributes('textStyle').fontSize || FONT_SIZES[1].value} onChange={setFontSize} options={FONT_SIZES} title="Dimensione" width={90} />
+            <ToolbarSelect value={currentFontSize} onChange={setFontSize} options={FONT_SIZES} title="Dimensione" width={90} />
           </div>
 
           <div className="toolbar-divider" />

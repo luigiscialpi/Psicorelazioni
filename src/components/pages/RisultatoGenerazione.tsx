@@ -1,4 +1,4 @@
-import { useReducer, useEffect, useCallback, useRef } from 'react'
+import { useReducer, useEffect, useCallback, useRef, Suspense, lazy } from 'react'
 import { Navigate, useLocation, useNavigate } from 'react-router-dom'
 import { FileDown, RotateCcw, Save, FlaskConical, RefreshCw, ShieldCheck } from 'lucide-react'
 import { getProfiloStile, getProfiloProfessionista } from '../../data/profiloData'
@@ -10,7 +10,7 @@ import { sostituisciNomePlaceholder } from '../../services/wizardToText'
 import { esportaDocx, scaricaDocx } from '../../services/exportDocx'
 import { getTestTemplatesAttivi } from '../../data/testTemplatesData'
 import { migraWizardSnapshotLegacy } from '../../services/testTemplateEngine'
-import { RichTextEditor } from '../../components/editor/RichTextEditor'
+const RichTextEditor = lazy(() => import('../../components/editor/RichTextEditor'))
 
 function reducer(state, action) {
   switch (action.type) {
@@ -247,10 +247,17 @@ export default function RisultatoGenerazione() {
               </div>
             </div>
 
-            <RichTextEditor
-              markdown={state.testo}
-              onChange={(testo) => dispatch({ type: 'EDIT', testo })}
-            />
+            <Suspense fallback={
+              <div className="card" style={{ textAlign: 'center', padding: '48px 24px' }}>
+                <span className="spinner" style={{ width: 28, height: 28, margin: '0 auto 14px', display: 'block' }} />
+                <p style={{ color: 'var(--text-muted)', fontSize: 13.5 }}>Caricamento editor…</p>
+              </div>
+            }>
+              <RichTextEditor
+                markdown={state.testo}
+                onChange={(testo) => dispatch({ type: 'EDIT', testo })}
+              />
+            </Suspense>
 
             <p style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: 8 }}>
               La sorgente dati rimane in Markdown, compatibile con il DOCX finale. Usa la toolbar per modificare il testo,
