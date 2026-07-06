@@ -10,6 +10,7 @@ import { sostituisciNomePlaceholder } from '../../services/wizardToText'
 import { esportaDocx, scaricaDocx } from '../../services/exportDocx'
 import { getTestTemplatesAttivi } from '../../data/testTemplatesData'
 import { migraWizardSnapshotLegacy } from '../../services/testTemplateEngine'
+import { RichTextEditor } from '../../components/editor/RichTextEditor'
 
 function reducer(state, action) {
   switch (action.type) {
@@ -246,15 +247,14 @@ export default function RisultatoGenerazione() {
               </div>
             </div>
 
-            <textarea
-              className="form-textarea"
-              value={state.testo}
-              onChange={e => dispatch({ type: 'EDIT', testo: e.target.value })}
-              style={{ minHeight: 520, fontFamily: 'var(--font-ui)', fontSize: 13.5, lineHeight: 1.8 }}
+            <RichTextEditor
+              markdown={state.testo}
+              onChange={(testo) => dispatch({ type: 'EDIT', testo })}
             />
 
             <p style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: 8 }}>
-              Il testo sopra è in Markdown — i titoli (##), il <strong>grassetto</strong> e le tabelle (|) vengono convertiti automaticamente nel DOCX finale.
+              La sorgente dati rimane in Markdown, compatibile con il DOCX finale. Usa la toolbar per modificare il testo,
+              oppure passa alla modalità Markdown per editare il sorgente diretto.
               {!wizardData?._isDirectEdit && isModifica && ' Puoi anche tornare al wizard per aggiungere sezioni (es. un test dimenticato) e rigenerare.'}
             </p>
           </div>
