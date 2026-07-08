@@ -117,9 +117,9 @@ const USE_MOCK_AI = !API_KEY || API_KEY === 'YOUR_GEMINI_KEY' || (typeof process
 // Fallback predefinito basato sui modelli testuali comunemente disponibili nel piano senza costi.
 // Nota: la disponibilita reale dipende sempre da progetto, quota e stato account in AI Studio.
 const DEFAULT_FREE_MODEL_FALLBACK = [
+  'gemini-3.5-flash',
   'gemini-2.5-flash',
   'gemini-2.5-flash-lite',
-  'gemini-3.5-flash',
   'gemini-3.1-flash-lite',
 ]
 
