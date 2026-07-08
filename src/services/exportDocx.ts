@@ -17,7 +17,7 @@
 import {
   Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell,
   Header, Footer, AlignmentType, BorderStyle, WidthType, ShadingType,
-  PageNumber, NumberFormat, UnderlineType,
+  PageNumber, NumberFormat, UnderlineType, LevelFormat,
 } from 'docx'
 import type { AnagraficaPaziente, ProfiloProfessionista } from '../core/types'
 import { fasciaWISC, fasciaScalare, WISC_IV_CAMPI, NEPSY_II_DOMINI } from '../components/constants/testDefinitions'
@@ -90,9 +90,10 @@ type ParagraphOptions = {
   spaceAfter?: number
 }
 
-type InlineRun = {
+export type InlineRun = {
   text: string
   bold: boolean
+  italics: boolean
 }
 
 function para(text: string, opts: ParagraphOptions = {}): Paragraph {
@@ -140,19 +141,96 @@ function deAnonimizzaTesto(md: string, anagrafica?: AnagraficaPaziente | null): 
   return out
 }
 
-// Parser inline per **grassetto**
-function parseInline(text: string): InlineRun[] {
-  const parts: InlineRun[] = []
-  const re    = /\*\*(.+?)\*\*/g
-  let last    = 0
+// Parser inline per **grassetto** e *corsivo*.
+// Il corsivo viene riconosciuto SOLO per coppie di asterischi bilanciate
+// sulla riga (stesso approccio non-greedy del grassetto): un asterisco
+// singolo isolato (es. una vecchia nota tipo "*WISC-IV: valori standard*"
+// non richiusa, o un asterisco usato letteralmente) resta testo semplice
+// invece di "accendere" il corsivo fino a fine riga — importante per non
+// alterare la resa di relazioni già archiviate prima di questa funzione.
+export function parseInline(text: string): InlineRun[] {
+  // Passo 1: isola i tratti in **grassetto**
+  const boldRe = /\*\*(.+?)\*\*/g
+  const segments: { text: string; bold: boolean }[] = []
+  let last = 0
   let m: RegExpExecArray | null
-  while ((m = re.exec(text)) !== null) {
-    if (m.index > last) parts.push({ text: text.slice(last, m.index), bold: false })
-    parts.push({ text: m[1], bold: true })
+  while ((m = boldRe.exec(text)) !== null) {
+    if (m.index > last) segments.push({ text: text.slice(last, m.index), bold: false })
+    segments.push({ text: m[1], bold: true })
     last = m.index + m[0].length
   }
-  if (last < text.length) parts.push({ text: text.slice(last), bold: false })
-  return parts.length ? parts : [{ text, bold: false }]
+  if (last < text.length) segments.push({ text: text.slice(last), bold: false })
+  if (!segments.length) segments.push({ text, bold: false })
+
+  // Passo 2: dentro ai soli segmenti non già in grassetto, isola il *corsivo*
+  const italicRe = /\*(.+?)\*/g
+  const parts: InlineRun[] = []
+  for (const seg of segments) {
+    if (seg.bold) {
+      parts.push({ text: seg.text, bold: true, italics: false })
+      continue
+    }
+    let segLast = 0
+    let found = false
+    let im: RegExpExecArray | null
+    italicRe.lastIndex = 0
+    while ((im = italicRe.exec(seg.text)) !== null) {
+      found = true
+      if (im.index > segLast) parts.push({ text: seg.text.slice(segLast, im.index), bold: false, italics: false })
+      parts.push({ text: im[1], bold: false, italics: true })
+      segLast = im.index + im[0].length
+    }
+    if (!found) parts.push({ text: seg.text, bold: false, italics: false })
+    else if (segLast < seg.text.length) parts.push({ text: seg.text.slice(segLast), bold: false, italics: false })
+  }
+
+  const nonEmpty = parts.filter(p => p.text.length > 0)
+  return nonEmpty.length ? nonEmpty : [{ text, bold: false, italics: false }]
+}
+
+// Rimuove marcatori ** / * letterali da un titolo (H1/H2 non passano da
+// parseInline: sono già in grassetto/sottolineato di loro, quindi un
+// eventuale **grassetto** applicato per errore dentro un titolo andrebbe
+// altrimenti stampato con gli asterischi visibili nel DOCX finale).
+export function stripInlineMarkers(text: string): string {
+  return text.replace(/\*\*(.+?)\*\*/g, '$1').replace(/\*(.+?)\*/g, '$1')
+}
+
+// Riconosce un elenco puntato ("- "/"* ") o numerato ("1. ") a inizio riga
+// (nessun supporto per livelli annidati, sufficiente per una relazione
+// clinica narrativa).
+export function parseListItem(line: string): { ordered: boolean; text: string } | null {
+  const bullet = line.match(/^\s*[-*]\s+(.+)$/)
+  if (bullet) return { ordered: false, text: bullet[1] }
+  const numbered = line.match(/^\s*\d+[.)]\s+(.+)$/)
+  if (numbered) return { ordered: true, text: numbered[1] }
+  return null
+}
+
+function listItemParagraph(text: string, ordered: boolean): Paragraph {
+  const runs = parseInline(text.trim())
+  return new Paragraph({
+    numbering: { reference: ordered ? 'numbered-list' : 'bullet-list', level: 0 },
+    spacing: { after: 60 },
+    children: runs.map(r => new TextRun({ text: r.text, font: FONT, size: SIZE_BODY, bold: r.bold, italics: r.italics })),
+  })
+}
+
+// Paragrafo di testo "normale": elenco puntato/numerato se la riga lo è,
+// altrimenti il consueto paragrafo giustificato con rientro prima riga.
+// Condiviso fra markdownToParagraphs() e il ciclo principale più sotto,
+// così le due pipeline restano sempre in sincrono su questo comportamento.
+function testoParagraph(line: string): Paragraph {
+  const item = parseListItem(line)
+  if (item) return listItemParagraph(item.text, item.ordered)
+
+  const runs = parseInline(line.trim())
+  return new Paragraph({
+    alignment: AlignmentType.JUSTIFIED,
+    indent: { firstLine: 720 },
+    spacing: { after: 120 },
+    children: runs.map(r => new TextRun({ text: r.text, font: FONT, size: SIZE_BODY, bold: r.bold, italics: r.italics })),
+  })
 }
 
 // ── Parser Markdown minimale → array di Paragraph ─────────
@@ -168,13 +246,13 @@ function markdownToParagraphs(md: string): Paragraph[] {
 
     // Titolo H1
     if (line.startsWith('# ')) {
-      result.push(para(line.slice(2).trim(), { bold: true, underline: true, center: true, size: SIZE_HEADER, spaceBefore: 240, spaceAfter: 180 }))
+      result.push(para(stripInlineMarkers(line.slice(2).trim()), { bold: true, underline: true, center: true, size: SIZE_HEADER, spaceBefore: 240, spaceAfter: 180 }))
       continue
     }
 
     // Titolo H2
     if (line.startsWith('## ')) {
-      result.push(para(line.slice(3).trim(), { bold: true, underline: true, center: true, spaceBefore: 200, spaceAfter: 140 }))
+      result.push(para(stripInlineMarkers(line.slice(3).trim()), { bold: true, underline: true, center: true, spaceBefore: 200, spaceAfter: 140 }))
       continue
     }
 
@@ -197,14 +275,8 @@ function markdownToParagraphs(md: string): Paragraph[] {
       continue
     }
 
-    // Testo normale con **grassetto** inline
-    const runs = parseInline(line.trim())
-    result.push(new Paragraph({
-      alignment: AlignmentType.JUSTIFIED,
-      indent: { firstLine: 720 },
-      spacing: { after: 120 },
-      children: runs.map(r => new TextRun({ text: r.text, font: FONT, size: SIZE_BODY, bold: r.bold })),
-    }))
+    // Testo normale: elenco puntato/numerato, oppure paragrafo con **grassetto**/*corsivo* inline
+    result.push(testoParagraph(line))
   }
 
   return result
@@ -712,6 +784,16 @@ export async function esportaDocx({ testo, data, nomeStudio, anagrafica, profess
       continue
     }
 
+    // Un H1 creato dall'utente nell'editor Visuale (diverso dal titolo fisso
+    // "# Relazione" sopra, che viene reso a parte nell'intestazione): senza
+    // questo controllo la riga cadeva nel ramo generico "Testo normale" più
+    // sotto, che stampa "# Titolo" come testo letterale invece che come titolo.
+    if (line.startsWith('# ')) {
+      blocchi.push(para(stripInlineMarkers(line.slice(2).trim()), { bold: true, underline: true, center: true, size: SIZE_HEADER, spaceBefore: 240, spaceAfter: 180 }))
+      i++
+      continue
+    }
+
     if (line.startsWith('## ') && sezioniDinamiche.has(line.slice(3).trim())) {
       flushCognitivo()
       flushNepsy()
@@ -810,7 +892,7 @@ export async function esportaDocx({ testo, data, nomeStudio, anagrafica, profess
     }
 
     if (line.startsWith('## ')) {
-      const title = line.slice(3).trim()
+      const title = stripInlineMarkers(line.slice(3).trim())
       blocchi.push(para(title, { bold: true, underline: true, center: true, size: SIZE_HEADER, spaceBefore: 200, spaceAfter: 140 }))
       i++
       continue
@@ -831,13 +913,7 @@ export async function esportaDocx({ testo, data, nomeStudio, anagrafica, profess
       continue
     }
 
-    const runs = parseInline(line.trim())
-    blocchi.push(new Paragraph({
-      alignment: AlignmentType.JUSTIFIED,
-      indent: { firstLine: 720 },
-      spacing: { after: 120 },
-      children: runs.map(r => new TextRun({ text: r.text, font: FONT, size: SIZE_BODY, bold: r.bold })),
-    }))
+    blocchi.push(testoParagraph(line))
     i++
   }
 
@@ -848,7 +924,30 @@ export async function esportaDocx({ testo, data, nomeStudio, anagrafica, profess
   const paraAnagrafica = anagraficaParagraph(anagrafica)
 
   const doc = new Document({
-    numbering: { config: [] },
+    numbering: {
+      config: [
+        {
+          reference: 'bullet-list',
+          levels: [{
+            level: 0,
+            format: LevelFormat.BULLET,
+            text: '•',
+            alignment: AlignmentType.LEFT,
+            style: { paragraph: { indent: { left: 720, hanging: 360 } } },
+          }],
+        },
+        {
+          reference: 'numbered-list',
+          levels: [{
+            level: 0,
+            format: LevelFormat.DECIMAL,
+            text: '%1.',
+            alignment: AlignmentType.LEFT,
+            style: { paragraph: { indent: { left: 720, hanging: 360 } } },
+          }],
+        },
+      ],
+    },
     styles: {
       default: {
         document: { run: { font: FONT, size: SIZE_BODY } },

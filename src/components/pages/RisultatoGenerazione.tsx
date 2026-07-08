@@ -10,6 +10,7 @@ import { sostituisciNomePlaceholder } from '../../services/wizardToText'
 import { esportaDocx, scaricaDocx } from '../../services/exportDocx'
 import { getTestTemplatesAttivi } from '../../data/testTemplatesData'
 import { migraWizardSnapshotLegacy } from '../../services/testTemplateEngine'
+import RichTextEditor from '../shared/RichTextEditor'
 
 function reducer(state, action) {
   switch (action.type) {
@@ -62,6 +63,7 @@ export default function RisultatoGenerazione() {
   // dell'oggetto, così una vera modifica dei dati fa ripartire la generazione
   // mentre un remount con dati identici no.
   const ultimaGenerazioneRef = useRef<string | null>(null)
+  const editorRef = useRef<import('../shared/RichTextEditor').RichTextEditorHandle>(null)
 
   const run = useCallback(async () => {
     if (!wizardData) return
@@ -113,6 +115,7 @@ export default function RisultatoGenerazione() {
   // clinico + snapshot del wizard in `relazioni`, collegati da paziente_id.
   // wizard_snapshot NON include mai `anagrafica` — vive solo in `pazienti`.
   async function handleSalvaArchivio() {
+    const testoAggiornato = editorRef.current?.flush() ?? state.testo
     dispatch({ type: 'SAVING' })
 
     const paziente = await upsertPazienteAnagrafica(wizardData.anagrafica, wizardData._pazienteId || null)
@@ -124,7 +127,7 @@ export default function RisultatoGenerazione() {
       tipo:           'generata',
       tipo_relazione: 'valutazione',
       anno:           new Date().getFullYear(),
-      testo_markdown: state.testo,
+      testo_markdown: testoAggiornato,
       tag:            wizardData.sezioni_attive || [],
       paziente_id:    paziente?.id || null,
       wizard_snapshot: wizardSnapshot,
@@ -141,12 +144,13 @@ export default function RisultatoGenerazione() {
   }
 
   async function handleEsportaDocx() {
+    const testoAggiornato = editorRef.current?.flush() ?? state.testo
     dispatch({ type: 'EXPORTING' })
     try {
       const professionista = await getProfiloProfessionista()
       const templates = await getTestTemplatesAttivi()
       const blob    = await esportaDocx({
-        testo: state.testo,
+        testo: testoAggiornato,
         anagrafica: wizardData.anagrafica,
         professionista,
         cognitivo: wizardData.cognitivo,
@@ -246,15 +250,15 @@ export default function RisultatoGenerazione() {
               </div>
             </div>
 
-            <textarea
-              className="form-textarea"
+            <RichTextEditor
+              ref={editorRef}
               value={state.testo}
-              onChange={e => dispatch({ type: 'EDIT', testo: e.target.value })}
-              style={{ minHeight: 520, fontFamily: 'var(--font-ui)', fontSize: 13.5, lineHeight: 1.8 }}
+              onChange={testo => dispatch({ type: 'EDIT', testo })}
+              minHeight={520}
             />
 
             <p style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: 8 }}>
-              Il testo sopra è in Markdown — i titoli (##), il <strong>grassetto</strong> e le tabelle (|) vengono convertiti automaticamente nel DOCX finale.
+              In <strong>Visuale</strong> formatti col mouse (titoli, <strong>grassetto</strong>, <em>corsivo</em>, elenchi); in <strong>Testo</strong> vedi/modifichi il Markdown grezzo — è quello che viene convertito nel DOCX finale.
               {!wizardData?._isDirectEdit && isModifica && ' Puoi anche tornare al wizard per aggiungere sezioni (es. un test dimenticato) e rigenerare.'}
             </p>
           </div>

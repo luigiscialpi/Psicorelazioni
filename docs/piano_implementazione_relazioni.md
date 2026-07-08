@@ -71,7 +71,7 @@ Non tutte le relazioni includono tutte le sezioni (una rivalutazione può non av
 | Modulo 2 — Profilo di stile | ✅ Stabile e robusto | Prompt di analisi aggiornato per riconoscere indici WISC, tabelle NEPSY, formule normative fisse. Affidabilità Gemini (fallback modelli, retry, limiti payload) e logica incrementale deterministica aggiunte (sedicesima e diciassettesima correzione). Architettura Split-Prompt Chaining per evitare troncamento output (ventiquattresima correzione): due chiamate parallele (stile sezioni 1-6 + test clinici sezione 7). Continuazione intelligente consapevole della Sezione 7 con tracking del finishReason quando MAX_TOKENS viene raggiunto (ventnovesima correzione) |
 | Modulo 2b — Gestione Test Dinamici | ✅ Implementato | CRUD completo per template personalizzabili di test clinici (campi principali, subtest, scale di punteggio, note range). Modifica, disattivazione/riattivazione, eliminazione con conferma gender-aware. Suggerimenti AI da archivio e da Profilo di Stile con estrazione on-demand e persistenza in database (venticinquesima e ventisettesima correzione) |
 | Modulo 3 — Wizard | ✅ Calibrato sulla struttura reale | Selettore di sezioni dinamico + step dedicati per anamnesi, osservazione, cognitivo, NEPSY, apprendimenti, questionari, conclusioni. Campi "punteggi" come testo libero per le tabelle incollate. Allineamento bidirezionale col Profilo di Stile e accordion punti ponderati per subtest WISC-IV (diciottesima e ventesima correzione). Genere del paziente obbligatorio per concordanza grammaticale (ventitreesima correzione) |
-| Modulo 4 — Generazione + editor | ✅ Completo | Generazione, editor e rigenerazione sezioni a runtime completati. Risolti bug critici di runtime: (1) perdita dei marcatori di genere per de-anonimizzazione precoce (ora il genere viene preservato nel payload privato inviato all'AI), (2) omissione dei template testuali e questionari dinamici (es. CBCL) durante il montaggio del Markdown combinato. Rafforzato il system prompt con regole di interclastamento per spezzettare l'output verbale dei test sotto ciascuna sotto-tabella |
+| Modulo 4 — Generazione + editor | ✅ Completo | Generazione, editor e rigenerazione sezioni a runtime completati. Risolti bug critici di runtime: (1) perdita dei marcatori di genere per de-anonimizzazione precoce (ora il genere viene preservato nel payload privato inviato all'AI), (2) omissione dei template testuali e questionari dinamici (es. CBCL) durante il montaggio del Markdown combinato. Rafforzato il system prompt con regole di interclastamento per spezzettare l'output verbale dei test sotto ciascuna sotto-tabella. Editor di revisione arricchito con toggle Visuale/Testo (trentacinquesima correzione), con due bug post-rilascio risolti: perdita di contenuto nello switch di modalità e titolo H1 esportato come testo letterale (trentaseiesima e trentasettesima correzione) |
 | Modulo 5 — Export DOCX | ✅ Implementato | Template fedele allo screenshot. Corretto bug critico dei duplicati delle tabelle e implementata la separazione fisica tra tabelle principali e secondarie (Scale Sindromiche, DSM) nel file Word con interclastamento della relativa narrativa prodotta dall'AI |
 | Modulo 5 — Archivio | ✅ Implementato | Ricerca full-text, filtro per tipo, apertura dettaglio, riapertura per modifica quando `wizard_snapshot` è presente. Dettaglio ora con rendering Markdown reale (tabelle/liste/blockquote) invece di testo piatto (quattordicesima correzione). Aggiunta la possibilità di eliminare definitivamente una relazione dall'archivio con conferma (ventottesima correzione) |
 
@@ -459,6 +459,40 @@ La sezione Conclusioni nel documento generato conteneva prima la narrativa prodo
 **Causa**: in `assemblaDocumentoMarkdown` (`wizardToText.ts`), il blocco template-fisso con i campi delle conclusioni veniva **sempre** aggiunto dopo la narrativa Gemini, senza verificare se quest'ultima fosse già presente. Il blocco era originariamente un fallback per quando Gemini non produceva narrativa, ma non era mai stato condizionato alla sua assenza.
 
 **Risoluzione**: il blocco template-fisso ora è racchiuso in un `else`, attivandosi solo quando la narrativa Gemini è vuota. Quando Gemini produce una narrativa, solo questa viene inserita (più la formula di chiusura standard).
+
+### Trentacinquesima correzione: Editor di revisione arricchito con toggle Visuale/Testo
+
+L'editor della bozza (`RisultatoGenerazione.tsx`) era una `<textarea>` semplice sul Markdown grezzo. Richiesta di rendere l'editing più accessibile con una modalità **Visuale** (rich text, sul modello Jira/Confluence) accanto alla modalità **Testo** (Markdown grezzo, comportamento precedente).
+
+**Decisione di prodotto — font e dimensione esclusi deliberatamente**: il DOCX finale usa sempre Calibri fisso (11pt corpo) per fedeltà al template reale (vedi Ottava correzione). Un selettore di font/dimensione nella toolbar sarebbe stato un WYSIWYG ingannevole — funzionante a video ma silenziosamente ignorato in export, perché la grammatica Markdown supportata non ha modo di rappresentare font/size arbitrari. Il "Formato" disponibile in toolbar è quindi solo Titolo principale (`#`) / Titolo sezione (`##`) / Testo normale — gli unici tre livelli che l'esportatore capisce davvero.
+
+**Implementazione**:
+- Nuovo componente `src/components/shared/RichTextEditor.tsx`: un `contentEditable` pilotato con `document.execCommand` per grassetto/corsivo/elenchi/titolo, non un editor a stato React controllato — il contenuto React resta sempre il Markdown, mai un secondo formato parallelo.
+- Conversione HTML → Markdown con `Turndown` (stessa libreria e configurazione già usata per l'import DOCX in `fileExtractor.ts`: `headingStyle: 'atx'`, `bulletListMarker: '-'`, `emDelimiter: '*'`, `strongDelimiter: '**'`), sincronizzata al blur, ai click sulla toolbar, al cambio modalità, e tramite un metodo imperativo `flush()` chiamato esplicitamente prima di "Salva in archivio"/"Esporta DOCX" — necessario perché lo state React non è sincrono, quindi non basta fare affidamento sul reducer per avere il Markdown aggiornato nel momento esatto del salvataggio.
+- Conversione Markdown → HTML fatta a mano (niente libreria Markdown generica, per restare leggera e sempre in sincrono con `exportDocx.ts`), speculare a `parseInline`/`markdownToParagraphs`.
+- **Protezione blocchi grezzi**: righe che iniziano con `|` o 4+ spazi (tabelle di punteggio incollate dal software esterno) sono mostrate in Visuale come blocco monospace non modificabile (`contenteditable="false"`) e riportate byte-per-byte in Markdown al salvataggio, invece di passare per il rendering HTML generico — altrimenti rischiavano di essere silenziosamente riformattate (es. Turndown che aggiunge una riga di separazione `| --- | --- |` mai incollata dall'utente), la stessa classe della Nona correzione (tabelle duplicate).
+
+**Estensione di `exportDocx.ts`** (necessaria: senza questa parte, elenchi e corsivo creati in Visuale sarebbero stati esportati in modo scorretto o silenziosamente persi):
+- `parseInline` estesa per riconoscere anche `*corsivo*` oltre a `**grassetto**`, con rilevamento a coppie bilanciate (non un toggle stateful) per non alterare la resa di relazioni già archiviate che contengano un asterisco singolo isolato (es. una vecchia nota non richiusa).
+- Nuove funzioni `parseListItem`/`listItemParagraph`/`testoParagraph` per riconoscere `- `/`* `/`1. ` a inizio riga e generare veri elenchi Word, tramite una nuova configurazione `numbering` nel `Document` (bullet e numerato), al posto del precedente `numbering: { config: [] }` vuoto.
+- `stripInlineMarkers` applicata ai titoli H1/H2 per evitare che un `**grassetto**` inserito per errore dentro un titolo comparisse con gli asterischi letterali nel DOCX (i titoli non passavano da `parseInline`).
+- Aggiunti 12 test in `exportDocx.test.ts` per `parseInline`/`parseListItem`/`stripInlineMarkers`, incluso un test di regressione sull'asterisco singolo isolato.
+
+### Trentaseiesima correzione — critica: contenuto perso passando da Testo a Visuale e viceversa
+
+Subito dopo il rilascio della Trentacinquesima correzione: passando da Visuale a Testo tutto ok, ma tornando in Visuale il contenuto spariva — e tornando di nuovo in Testo risultava vuoto anche lì, con perdita effettiva del testo digitato (non solo un problema di visualizzazione).
+
+**Causa**: `RichTextEditor.tsx` montava il `<div contentEditable>` e la `<textarea>` con un ternario (`mode === 'visual' ? <div/> : <textarea/>`): ad ogni cambio modalità React smontava un elemento e ne montava un altro da zero. Tornando in Visuale, il nuovo `<div>` era vuoto, e l'ottimizzazione anti-cursor-jump dell'`useEffect` di sincronizzazione — che salta la resync quando pensa che il contenuto sia già allineato (`syncedOnceRef.current && value === lastEmittedRef.current`) — non si accorgeva che il DOM fosse in realtà un nodo nuovo e vuoto, lasciandolo tale. Il vuoto veniva poi riletto e riscritto nello state al successivo passaggio in Testo, propagando la perdita.
+
+**Risoluzione**: entrambe le superfici (`div` e `textarea`) restano sempre montate; solo la visibilità (`display: block/none`) cambia in base alla modalità. Il nodo `contentEditable` non viene mai distrutto tra uno switch e l'altro, quindi non perde più il proprio contenuto.
+
+### Trentasettesima correzione: titolo principale (H1) creato in Visuale esportato come testo Markdown letterale
+
+Un "Titolo principale" creato dalla toolbar Visuale appariva correttamente in modalità Testo (`# Titolo`), ma nel DOCX esportato compariva come testo letterale con il cancelletto, invece che come titolo formattato — mentre grassetto, corsivo ed elenchi funzionavano correttamente.
+
+**Causa**: nel ciclo principale di assemblaggio del DOCX (`esportaDocx`, non la funzione di supporto `markdownToParagraphs` già corretta nella correzione precedente), esisteva solo `line.startsWith('# Relazione')` — un controllo specifico per il titolo fisso del documento, mai pensato per un H1 generico, perché prima dell'editor Visuale non poteva mai comparirne un altro. Un H1 creato altrove nel corpo cadeva quindi nel ramo generico "Testo normale" (`testoParagraph`), che non spoglia il marcatore `#` iniziale. Stessa famiglia di bug della Trentaduesima/Trentatreesima correzione: un controllo pensato per un caso specifico che non copre un caso generico emerso in seguito.
+
+**Risoluzione**: aggiunto un controllo `line.startsWith('# ')` generico subito dopo quello per `"# Relazione"`, che rende il titolo con la stessa formattazione (grassetto, sottolineato, centrato) usata ovunque altrove nel documento. Verificato generando un DOCX reale con un H1 in corpo e ispezionando l'XML risultante (`<w:b/>`, `<w:u val="single"/>`, `<w:jc w:val="center"/>`), non solo con i test unitari.
 
 ---
 
@@ -1054,6 +1088,7 @@ I dati inviati alla Gemini API gratuita (Google AI Studio) potrebbero essere usa
 - [x] Suggerimenti AI da archivio per test non ancora registrati
 - [x] Estrazione on-demand di template test dal Profilo di Stile (due funzioni: rilevamento nomi rapido + generazione struttura singolo test), senza rischi di troncamento output
 - [x] Dashboard: sezione bozze in corso limitata a 6 elementi con scorrimento
+- [x] Editor di revisione: toggle Visuale/Testo con toolbar (titolo, grassetto, corsivo, elenchi), estendendo `exportDocx.ts` per supportare davvero elenchi e corsivo nel DOCX finale
 
 ### Versione 1.1 — Priorità 3
 - [ ] Statistiche dashboard
@@ -1093,4 +1128,4 @@ Assumendo che la maggior parte del codice (componenti React, API, prompt) venga 
 
 ---
 
-*Documento aggiornato il 3 luglio 2026. Da aggiornare durante lo sviluppo con le decisioni prese e i problemi incontrati.*
+*Documento aggiornato l'8 luglio 2026 (editor Visuale/Testo + due correzioni post-rilascio). Da aggiornare durante lo sviluppo con le decisioni prese e i problemi incontrati.*
