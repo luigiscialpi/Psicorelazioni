@@ -45,6 +45,31 @@ const INIT_FORM: FormState = {
   richiedeStrumentiUtilizzati: false,
 }
 
+// ── Conversione template → FormState ─────────────────────────
+function templateToForm(t: TestTemplate): FormState {
+  return {
+    nome: t.nome,
+    categoria: t.categoria,
+    scalaDefault: t.scalaDefault,
+    campiPrincipali: (t.campiPrincipali || []).map((c) => ({
+      key: c.key,
+      label: c.label,
+      descr: c.descr || '',
+    })),
+    gruppiSecondari: (t.gruppiSecondari || []).map((g) => ({
+      key: g.key,
+      label: g.label,
+      campi: (g.campi || []).map((c) => ({
+        key: c.key,
+        label: c.label,
+      })),
+    })),
+    notaRange: t.notaRange || '',
+    richiedeEtaValutazione: t.richiedeEtaValutazione,
+    richiedeStrumentiUtilizzati: t.richiedeStrumentiUtilizzati,
+  }
+}
+
 // ── Generazione slug automatica ───────────────────────────────
 function toSlug(s: string): string {
   return s.toLowerCase()
@@ -524,8 +549,8 @@ function FormTemplate({
 }
 
 // ── Card singolo template ─────────────────────────────────────
-function TemplateCard({ template, onDisattiva, onDelete, onEdit, onRiattiva }: { template: TestTemplate, onDisattiva?: () => void, onDelete?: () => void, onEdit?: () => void, onRiattiva?: () => void }) {
-  const [open, setOpen] = useState(false)
+function TemplateCard({ template, onDisattiva, onDelete, onEditSave, onEditCancel, onRiattiva }: { template: TestTemplate, onDisattiva?: () => void, onDelete?: () => void, onEditSave?: (id: string, form: FormState) => Promise<void>, onEditCancel?: () => void, onRiattiva?: () => void }) {
+  const [expanded, setExpanded] = useState<'none' | 'details' | 'edit'>('none')
 
   return (
     <div style={{
@@ -553,13 +578,13 @@ function TemplateCard({ template, onDisattiva, onDelete, onEdit, onRiattiva }: {
             {template.gruppiSecondari?.length ? ` · ${template.gruppiSecondari.length} ${template.gruppiSecondari.length === 1 ? 'gruppo secondario' : 'gruppi secondari'}` : ''}
         </div>
         <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-          <button type="button" onClick={() => setOpen(v => !v)} style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 6, padding: '4px 8px', cursor: 'pointer', fontSize: 12, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 4 }}>
-            {open ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
-            {open ? 'Chiudi' : 'Dettagli'}
+          <button type="button" onClick={() => setExpanded(v => v === 'details' ? 'none' : 'details')} style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 6, padding: '4px 8px', cursor: 'pointer', fontSize: 12, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 4 }}>
+            {expanded === 'details' ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+            {expanded === 'details' ? 'Chiudi' : 'Dettagli'}
           </button>
-          {onEdit && (
-            <button type="button" onClick={onEdit} style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 6, padding: '4px 8px', cursor: 'pointer', fontSize: 12, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 4 }}>
-              <Pencil size={13} /> Modifica
+          {onEditSave && (
+            <button type="button" onClick={() => setExpanded(v => v === 'edit' ? 'none' : 'edit')} style={{ background: 'none', border: `1px solid ${expanded === 'edit' ? 'var(--accent)' : 'var(--border)'}`, borderRadius: 6, padding: '4px 8px', cursor: 'pointer', fontSize: 12, color: expanded === 'edit' ? 'var(--accent)' : 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 4 }}>
+              <Pencil size={13} /> {expanded === 'edit' ? 'Annulla modifica' : 'Modifica'}
             </button>
           )}
           {onRiattiva && (
@@ -580,7 +605,7 @@ function TemplateCard({ template, onDisattiva, onDelete, onEdit, onRiattiva }: {
         </div>
       </div>
 
-      {open && (
+      {expanded === 'details' && (
         <div style={{ marginTop: 12, borderTop: '1px solid var(--border)', paddingTop: 12 }}>
           <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 6 }}>
             Scala: <strong>{template.scalaDefault.tipo === 'qi_wisc' ? 'QI (media 100)' : template.scalaDefault.tipo === 'scalare' ? 'Scalare (media 10)' : 'Soglie personalizzate'}</strong>
@@ -608,6 +633,25 @@ function TemplateCard({ template, onDisattiva, onDelete, onEdit, onRiattiva }: {
               Nota range: {template.notaRange.substring(0, 120)}{template.notaRange.length > 120 ? '…' : ''}
             </div>
           )}
+        </div>
+      )}
+
+      {expanded === 'edit' && onEditSave && (
+        <div style={{ marginTop: 12, borderTop: `1px solid var(--accent)`, paddingTop: 14 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--accent-dk)', marginBottom: 12 }}>
+            Modifica template
+          </div>
+          <FormTemplate
+            initial={templateToForm(template)}
+            onSave={async (form) => {
+              await onEditSave(form, template.id)
+              setExpanded('none')
+            }}
+            onCancel={() => {
+              onEditCancel?.()
+              setExpanded('none')
+            }}
+          />
         </div>
       )}
     </div>
@@ -726,10 +770,11 @@ export default function GestioneTest() {
     }
   }
 
-  async function handleSave(form: FormState) {
-    if (editingTemplateId) {
+  async function handleSave(form: FormState, editingId: string | null = null) {
+    const id = editingId ?? editingTemplateId
+    if (id) {
       // Modalità modifica
-      await updateTestTemplate(editingTemplateId, {
+      await updateTestTemplate(id, {
         nome: sanitizzaStringa(form.nome),
         categoria: form.categoria,
         scalaDefault: form.scalaDefault,
@@ -1207,32 +1252,10 @@ export default function GestioneTest() {
                 <TemplateCard
                   key={t.id}
                   template={t}
-                  onEdit={() => {
-                    const f: FormState = {
-                      nome: t.nome,
-                      categoria: t.categoria,
-                      scalaDefault: t.scalaDefault,
-                      campiPrincipali: (t.campiPrincipali || []).map((c) => ({
-                        key: c.key,
-                        label: c.label,
-                        descr: c.descr || "",
-                      })),
-                      gruppiSecondari: (t.gruppiSecondari || []).map((g) => ({
-                        key: g.key,
-                        label: g.label,
-                        campi: (g.campi || []).map((c) => ({
-                          key: c.key,
-                          label: c.label,
-                        })),
-                      })),
-                      notaRange: t.notaRange || "",
-                      richiedeEtaValutazione: t.richiedeEtaValutazione,
-                      richiedeStrumentiUtilizzati:
-                        t.richiedeStrumentiUtilizzati,
-                    };
-                    setEditingTemplateId(t.id);
-                    setFormInitial(f);
-                    setShowForm(true);
+                  onEditSave={handleSave}
+                  onEditCancel={() => {
+                    setEditingTemplateId(null);
+                    setFormInitial(undefined);
                   }}
                   onDisattiva={() => setConfirmDisattiva(t.id)}
                   onDelete={
