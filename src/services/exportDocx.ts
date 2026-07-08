@@ -591,6 +591,48 @@ export async function esportaDocx({ testo, data, nomeStudio, anagrafica, profess
           }
         }
         narrativaSpezzata[sezioneCorrente] = righeAccumulate.join('\n').trim()
+
+        // Fallback: se esistono gruppi secondari, spezza la narrativa cercando i nomi dei gruppi
+        // inline nel testo generato da Gemini, sovrascrivendo eventuali risultati del parser a tag
+        if (inDinamica.template.gruppiSecondari?.length) {
+
+          const riferimenti: { indice: number; chiave: string }[] = []
+
+          for (const gruppo of inDinamica.template.gruppiSecondari) {
+            const nomeBase = gruppo.label.replace(/\([^)]*\)/g, '').trim()
+            const nomeConTrattino = nomeBase.replace(/\s+/g, '-')
+            const pattern = [
+              gruppo.label,
+              nomeBase,
+              nomeConTrattino
+            ].map(s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')
+
+            const regex = new RegExp(pattern, 'i')
+            const match = narrativa.match(regex)
+            if (match && match.index != null) {
+              riferimenti.push({ indice: match.index, chiave: gruppo.key.toLowerCase() })
+            }
+          }
+
+          if (riferimenti.length > 0) {
+            riferimenti.sort((a, b) => a.indice - b.indice)
+
+            for (let i = 0; i < riferimenti.length; i++) {
+              const ref = riferimenti[i]
+              const inizio = ref.indice
+              const fine = i + 1 < riferimenti.length ? riferimenti[i + 1].indice : narrativa.length
+
+              const testoGruppo = narrativa.slice(inizio, fine).trim()
+              if (testoGruppo) {
+                narrativaSpezzata[ref.chiave] = testoGruppo
+              }
+            }
+
+            const primoSplit = riferimenti[0].indice
+            const testoGenerale = narrativa.slice(0, primoSplit).trim()
+            narrativaSpezzata['generale'] = testoGenerale
+          }
+        }
       }
 
       // 1. Aggiungi la tabella principale del test
@@ -614,6 +656,9 @@ export async function esportaDocx({ testo, data, nomeStudio, anagrafica, profess
 
       // 3. Aggiungi le tabelle secondarie ciascuna seguita immediatamente dalla sua narrativa
       if (inDinamica.template.gruppiSecondari && inDinamica.risultato.punteggiSecondari) {
+
+        let narrativaRimanente = (narrativaSpezzata['generale'] || '').slice()
+
         for (const gruppo of inDinamica.template.gruppiSecondari) {
           const secValidi = gruppo.campi.filter(c => inDinamica!.risultato.punteggiSecondari![c.key] !== undefined && inDinamica!.risultato.punteggiSecondari![c.key] !== '')
           if (secValidi.length > 0) {
@@ -624,11 +669,11 @@ export async function esportaDocx({ testo, data, nomeStudio, anagrafica, profess
             
             // Cerchiamo se c'è della narrativa per questo gruppo specifico nella mappa degli spezzettati
             const chiaviGruppo = [
-              gruppo.label.toLowerCase(),
               gruppo.key.toLowerCase(),
-              gruppo.label.replace(/\(.*?\)/g, '').trim().toLowerCase() // es: "scale sindromiche (cbcl)" -> "scale sindromiche"
+              gruppo.label.toLowerCase(),
+              gruppo.label.replace(/\(.*?\)/g, '').trim().toLowerCase()
             ]
-            
+
             let testoGruppo = ''
             for (const chiave of chiaviGruppo) {
               // Cerca corrispondenza esatta o parziale
@@ -638,12 +683,40 @@ export async function esportaDocx({ testo, data, nomeStudio, anagrafica, profess
                 break
               }
             }
-            
+
+            if (!testoGruppo && narrativaRimanente) {
+              const nomeBase = gruppo.label.replace(/\([^)]*\)/g, '').trim()
+              const pattern = [
+                gruppo.label,
+                nomeBase,
+                nomeBase.replace(/\s+/g, '-')
+              ].map(s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')
+              const regex = new RegExp(`(?:^|\\n)(${pattern})`, 'i')
+              const match = narrativaRimanente.match(regex)
+
+              if (match) {
+                const splitIndex = narrativaRimanente.indexOf(match[0])
+                testoGruppo = narrativaRimanente.slice(splitIndex).trim()
+                narrativaRimanente = narrativaRimanente.slice(0, splitIndex).trim()
+              }
+            }
+
+            if (!testoGruppo) {
+              testoGruppo = narrativaRimanente
+              narrativaRimanente = ''
+            }
+
             if (testoGruppo) {
               blocchi.push(...markdownToParagraphs(testoGruppo))
               blocchi.push(emptyLine(60))
             }
           }
+        }
+
+        const rimanentePulito = narrativaRimanente.trim()
+        if (rimanentePulito) {
+          blocchi.push(...markdownToParagraphs(rimanentePulito))
+          blocchi.push(emptyLine(60))
         }
       }
 
@@ -706,11 +779,9 @@ export async function esportaDocx({ testo, data, nomeStudio, anagrafica, profess
       continue
     }
 
-    if (line.startsWith('## Dati e motivo')) {
-      i++
-      while (i < lines.length && !lines[i].startsWith('## ')) i++
-      continue
-    }
+    // "## Dati e motivo dell'invio" viene ora trattata come qualsiasi altra
+    // sezione generica (cadendo nel ramo generico '## ' più avanti), così la
+    // narrativa generata da Gemini finisce nel DOCX invece di essere skippata.
 
     if (line.startsWith('## ') && sezioniDinamiche.has(line.slice(3).trim())) {
       flushCognitivo()
