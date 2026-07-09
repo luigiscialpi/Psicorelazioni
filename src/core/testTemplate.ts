@@ -41,10 +41,12 @@ export const FormulaCalcoloSchema = z.object({
   descrizione: z.string().optional(),
 });
 
+export const CategoriaTestSchema = z.enum(['cognitivo', 'nepsy', 'apprendimenti', 'questionari', 'altro']);
+
 export const TestTemplateSchema = z.object({
   id: z.string(),                 // slug stabile: 'wisc-iv', 'nepsy-ii', o UUID per i custom
   nome: z.string(),               // "WISC-IV", visualizzato ovunque
-  categoria: z.enum(['cognitivo', 'nepsy', 'apprendimenti', 'questionari', 'altro']),
+  categoria: CategoriaTestSchema,
   scalaDefault: ScalaPunteggioSchema,
   campiPrincipali: z.array(CampoTestSchema),
   gruppiSecondari: z.array(GruppoTestSchema).optional(),
@@ -61,6 +63,15 @@ export const TestTemplateSchema = z.object({
   formule: z.array(FormulaCalcoloSchema).optional(),  // Formule di calcolo per indici sintetici/totale
 });
 
+// Sottoinsieme di TestTemplate che ha senso far generare a un LLM: niente
+// campi gestiti dall'app (id, builtIn, attivo, schemaVersion, timestamp) né
+// colonne/formule, che restano configurazione manuale in "Gestione Test".
+// Usato come responseSchema strutturato in geminiService.ts#generaTemplateTest.
+export const GeneratedTestTemplateSchema = TestTemplateSchema.omit({
+  id: true, builtIn: true, attivo: true, schemaVersion: true, createdAt: true, updatedAt: true,
+  colonne: true, formule: true,
+});
+
 // Estrazione tipi TypeScript dagli schemi Zod
 export type TipoScala = z.infer<typeof TipoScalaSchema>;
 export type SogliaCustom = z.infer<typeof SogliaCustomSchema>;
@@ -69,6 +80,7 @@ export type CampoTest = z.infer<typeof CampoTestSchema>;
 export type GruppoTest = z.infer<typeof GruppoTestSchema>;
 export type FormulaCalcolo = z.infer<typeof FormulaCalcoloSchema>;
 export type TestTemplate = z.infer<typeof TestTemplateSchema>;
+export type GeneratedTestTemplate = z.infer<typeof GeneratedTestTemplateSchema>;
 
 // Risultato di un test compilato nel wizard
 export type RisultatoTest = {

@@ -322,6 +322,15 @@ export function calcolaNarrativaGruppi(template: TestTemplate, risultato: Risult
 
 /**
  * Costruisce la sezione da inviare come prompt a Gemini per il test.
+ *
+ * ⚠️ Il payload contiene SOLO dati grezzi (label/punteggio/fascia), MAI la tabella
+ * Markdown già renderizzata (generaTabella) né il testo formattato di notaRange.
+ * Motivo: un LLM a cui si mostra una tabella `|...|` o una frase in corsivo appena
+ * prima di chiedergli di commentarla tende a farne l'eco nella narrativa generata,
+ * eco che poi va ripulita a valle con regex (vedi rimuoviTabelleMarkdown /
+ * pulisciSezioneDaIntestazioni in wizardToText.ts). Tabella e nota range vengono
+ * inserite nel documento finale in modo deterministico da generaSezioneTest() /
+ * assemblaDocumentoMarkdown(): Gemini non le vede mai renderizzate, solo i valori.
  */
 export function buildGeminiPayload(template: TestTemplate, risultato: RisultatoTest): string {
   let out = `=== SEZIONE: ${template.id} ===\n`
@@ -332,11 +341,28 @@ export function buildGeminiPayload(template: TestTemplate, risultato: RisultatoT
   if (template.richiedeStrumentiUtilizzati) {
     out += `Strumenti utilizzati: ${risultato.strumentiUtilizzati || 'Non specificati'}\n`
   }
-  
-  const tabella = generaTabella(template, risultato).trim()
-  out += `Tabella ${template.nome} (non modificare, verrà inserita automaticamente):\n${tabella || 'Nessuna'}\n\n`
-  
-  out += `Nota range: ${risultato.includiNotaRange !== false && template.notaRange ? template.notaRange : 'Nessuna'}\n`
+
+  const campiPrincipaliValidi = template.campiPrincipali.filter(c =>
+    risultato.punteggi[c.key] !== undefined && risultato.punteggi[c.key] !== ''
+  )
+  if (campiPrincipaliValidi.length > 0) {
+    out += 'Punteggi (solo dati: NON riprodurre come tabella o elenco, usali solo per scrivere il commento in prosa):\n'
+    for (const c of campiPrincipaliValidi) {
+      const p = risultato.punteggi[c.key]
+      const fascia = calcolaFascia(p, getScalaApplicabile(c, template)) ?? '-'
+      const interpretabile = risultato.interpretabilita?.[c.key] !== false
+      out += `${c.label}: ${p}, fascia ${fascia}${interpretabile ? '' : ' (NON interpretabile: dispersione eccessiva nei subtest)'}\n`
+    }
+  } else {
+    out += 'Punteggi: nessuno\n'
+  }
+
+  if (risultato.includiNotaRange !== false && template.notaRange) {
+    const notaPulita = template.notaRange.replace(/^\*+|\*+$/g, '').trim()
+    out += `Criterio interpretativo di riferimento (usa per informare il commento, NON citarlo testualmente né riprodurlo come nota a parte): ${notaPulita}\n`
+  } else {
+    out += 'Criterio interpretativo di riferimento: nessuno\n'
+  }
   
   if (template.gruppiSecondari?.length) {
     const narrativaGruppi = calcolaNarrativaGruppi(template, risultato).trim()

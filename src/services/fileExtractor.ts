@@ -51,7 +51,7 @@ type PdfLine = {
   parts: string[]
 }
 
-// Il worker è servito come asset statico da /public (vedi SETUP.md)
+// Il worker è servito come asset statico da /public (vedi README.md, §2 Setup)
 
 export function getFileKind(filename: string): FileKind {
   const ext = filename.toLowerCase().split('.').pop()

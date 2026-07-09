@@ -6,12 +6,15 @@
 // mai usate come contenuto — solo per ricavarne lo scheletro).
 // ============================================================
 
+import { GoogleGenAI, ApiError } from '@google/genai'
+import { z } from 'zod'
 import {
   wiscToMarkdownTable, nepsyToMarkdownTable, assemblaDocumentoMarkdown,
 } from './wizardToText'
-import { buildGeminiPayload, calcolaNarrativaGruppi } from './testTemplateEngine'
+import { buildGeminiPayload } from './testTemplateEngine'
 import { MOCK_WISC_IV_TEMPLATE, MOCK_NEPSY_II_TEMPLATE } from '../data/mockTemplates'
-import type { RisultatoTest, TestTemplate } from '../core/testTemplate'
+import type { RisultatoTest, TestTemplate, GeneratedTestTemplate } from '../core/testTemplate'
+import { GeneratedTestTemplateSchema, CategoriaTestSchema } from '../core/testTemplate'
 import { getPazienteById } from '../data/pazientiData'
 import { anonimizzaTesto } from './anonimizza'
 import {
@@ -287,6 +290,114 @@ async function callGeminiWithFinishReason(systemPrompt: string, userPrompt: stri
       }
 
       throw lastErr
+    }
+  }
+
+  throw lastErr || new Error('Gemini API error: richiesta non completata')
+}
+
+// ⚠️ Output strutturato per generaNarrativaSezioni: a differenza di callGemini
+// (testo libero + delimitatori "=== SEZIONE ===" fatti rispettare a colpi di
+// prompt/regex), qui lo schema stesso vincola la forma della risposta lato API
+// tramite responseJsonSchema — vedi geminiService.ts §generaNarrativaSezioni.
+const NarrativaSezioniSchema = z.object({
+  sezioni: z.array(z.object({
+    id: z.string().describe('Id esatto della sezione, uno tra quelli richiesti nel prompt'),
+    narrativa: z.string().describe('Testo narrativo in prosa italiana per questa sezione, nello stile del Profilo di Stile fornito'),
+  })),
+})
+type NarrativaSezioniOutput = z.infer<typeof NarrativaSezioniSchema>
+
+const NomiTestSchema = z.array(z.object({
+  nome: z.string().describe('Nome esatto del test/batteria, es. "BVSCO-3"'),
+  categoria: CategoriaTestSchema,
+}))
+
+// Client SDK creato pigramente: se costruito eagerly a livello di modulo,
+// un API_KEY vuota (caso USE_MOCK_AI, incluso sotto test) romperebbe
+// l'import di questo file anche per chi non chiama mai questa funzione.
+let _geminiClient: GoogleGenAI | null = null
+function getGeminiClient(): GoogleGenAI {
+  if (!_geminiClient) {
+    _geminiClient = new GoogleGenAI({ apiKey: API_KEY })
+  }
+  return _geminiClient
+}
+
+async function callGeminiStructured<T>(
+  systemPrompt: string,
+  userPrompt: string,
+  schema: z.ZodType<T>,
+  options: GeminiCallOptions = {}
+): Promise<T> {
+  const {
+    maxOutputTokens = 4096,
+    temperature = 0.7,
+    thinkingBudget = 0,
+  } = options
+
+  const jsonSchema = z.toJSONSchema(schema, { target: 'openapi-3.0' })
+  const ai = getGeminiClient()
+  let lastErr: Error | null = null
+
+  for (let modelIndex = 0; modelIndex < MODEL_CANDIDATES.length; modelIndex++) {
+    const modelName = MODEL_CANDIDATES[modelIndex]
+    const maxAttempts = 3
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        const response = await ai.models.generateContent({
+          model: modelName,
+          contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
+          config: {
+            systemInstruction: systemPrompt,
+            temperature,
+            maxOutputTokens,
+            thinkingConfig: { thinkingBudget },
+            responseMimeType: 'application/json',
+            responseJsonSchema: jsonSchema,
+          },
+        })
+
+        if (response.candidates?.[0]?.finishReason === 'MAX_TOKENS') {
+          // A differenza del testo libero (vedi continuaSezione), un JSON
+          // troncato a metà non è valido e non è completabile chiedendo una
+          // continuazione: l'unica opzione corretta è segnalare l'errore.
+          throw new Error(`Risposta troncata per limite token output [${modelName}]: riduci il numero di sezioni per blocco o aumenta maxOutputTokens.`)
+        }
+
+        const parsed = JSON.parse(response.text ?? '')
+        return schema.parse(parsed)
+      } catch (err) {
+        if (err instanceof ApiError) {
+          const status = err.status
+          const dettaglio = err.message
+          lastErr = new Error(`Gemini API error ${status} [${modelName}]: ${dettaglio}`)
+
+          if (erroreQuotaEsaurita(status, dettaglio) && modelIndex < MODEL_CANDIDATES.length - 1) {
+            break
+          }
+          if (erroreModelloNonDisponibile(status, dettaglio) && modelIndex < MODEL_CANDIDATES.length - 1) {
+            break
+          }
+          if ((status === 429 || status >= 500) && attempt < maxAttempts) {
+            const waitMs = 4000 * Math.pow(2, attempt - 1)
+            await new Promise<void>(resolve => setTimeout(resolve, waitMs))
+            continue
+          }
+          throw lastErr
+        }
+
+        // JSON non valido o non conforme allo schema: si ritenta come un
+        // errore transitorio (stesso spirito degli altri retry sopra),
+        // invece del vecchio fallback a regex più lasca sul testo libero.
+        lastErr = err instanceof Error ? err : new Error(String(err))
+        if (attempt < maxAttempts) {
+          console.warn(`[callGeminiStructured] Risposta non valida da ${modelName} (tentativo ${attempt}/${maxAttempts}): ${lastErr.message}`)
+          continue
+        }
+        break
+      }
     }
   }
 
@@ -675,7 +786,7 @@ Se una sezione di un test clinico contiene gruppi o sottotest secondari (ad esem
 Spezza e suddividi esplicitamente la narrativa inserendo i tag di sottosezione corrispondenti (es. "=== SOTTOSEZIONE: Scale Sindromiche ===" prima di analizzare i subtest sindromici, o "=== SOTTOSEZIONE: Scale DSM Oriented ===" prima dell'analisi DSM). Questo permetterà di inserire e posizionare ciascuna parte di testo direttamente sotto la corrispettiva tabella.
 CONCORDANZA GRAMMATICALE: ${istruzioneGenere}
 ${istruzioneLunghezza ? `\nLIVELLO DI DETTAGLIO RICHIESTO: ${istruzioneLunghezza}\n` : ''}
-Rispondi SOLO con il testo narrativo per ogni sezione richiesta del blocco, separato esattamente da intestazioni "=== SEZIONE: nome ===". Non includere altre sezioni oltre a quelle richieste.
+Per ogni sezione richiesta del blocco, fornisci l'id esatto della sezione (così come indicato nel prompt utente) e il relativo testo narrativo. Non includere altre sezioni oltre a quelle richieste.
 
 === PROFILO DI STILE (priorità massima) ===
 ${profiloStile}
@@ -858,35 +969,21 @@ Per ogni sezione del blocco, fornisci un testo fluido e coerente con il Profilo 
 ${blockPayload}`
 
     const maxTokens = wizard.lunghezza === 'dettagliata' ? 4096 : 3072
-    console.log(`[generaNarrativaSezioni] Chiamata Gemini per il blocco: ${blocco.join(', ')}...`)
-    const risposta = await callGemini(baseSystemPrompt, userPrompt, { maxOutputTokens: maxTokens, temperature: 0.7 })
+    console.log(`[generaNarrativaSezioni] Chiamata Gemini (output strutturato) per il blocco: ${blocco.join(', ')}...`)
+    const risposta: NarrativaSezioniOutput = await callGeminiStructured(
+      baseSystemPrompt, userPrompt, NarrativaSezioniSchema, { maxOutputTokens: maxTokens, temperature: 0.7 }
+    )
 
-    const sezioneRegex = /=== SEZIONE: ([\w-]+) ===\n([\s\S]*?)(?=\n=== SEZIONE:|\n*$)/g
-    const matches = risposta.matchAll(sezioneRegex)
     let numSezioniTrovate = 0
-
-    for (const match of matches) {
-      const nome = match[1]
-      const testo = match[2].trim()
-      if (nome && blocco.includes(nome) && testo) {
-        out[nome] = testo
+    for (const s of risposta.sezioni) {
+      if (blocco.includes(s.id) && s.narrativa?.trim()) {
+        out[s.id] = s.narrativa.trim()
         numSezioniTrovate++
       }
     }
 
     if (numSezioniTrovate < blocco.length) {
-      console.warn(`[generaNarrativaSezioni] Chiamata blocco [${blocco.join(', ')}]: trovate solo ${numSezioniTrovate}/${blocco.length} sezioni. Tento fallback regex più lasco per le sezioni mancanti.`)
-      // Fallback: se Gemini ha fluttuato sui tag ma li ha scritti comunque
-      for (const nome of blocco) {
-        if (!out[nome]) {
-          const fallbackRegex = new RegExp(`===\\s*SEZIONE:\\s*${nome}\\s*===\n([\\s\\S]*?)(?=\\n===\\s*SEZIONE:|\\n*$)`, 'i')
-          const fMatch = risposta.match(fallbackRegex)
-          if (fMatch && fMatch[1].trim()) {
-            out[nome] = fMatch[1].trim()
-            console.log(`[generaNarrativaSezioni] Fallback riuscito per sezione: ${nome}`)
-          }
-        }
-      }
+      console.warn(`[generaNarrativaSezioni] Chiamata blocco [${blocco.join(', ')}]: trovate solo ${numSezioniTrovate}/${blocco.length} sezioni nella risposta strutturata.`)
     }
   }
 
@@ -1069,7 +1166,7 @@ Estrai la lista di test/batterie non già mappati.`
   }
 }
 
-export async function rilevaNomiTestDaProfilo(profiloStile: string, templateEsistenti: string[]): Promise<{ nome: string; categoria: string }[]> {
+export async function rilevaNomiTestDaProfilo(profiloStile: string, templateEsistenti: string[]): Promise<z.infer<typeof NomiTestSchema>> {
   if (USE_MOCK_AI) {
     if (typeof process === 'undefined' || process.env.NODE_ENV !== 'test') {
       await new Promise<void>(resolve => setTimeout(resolve, 800))
@@ -1084,22 +1181,12 @@ export async function rilevaNomiTestDaProfilo(profiloStile: string, templateEsis
 
   const promptSystem = `Sei un assistente clinico.
 Analizza il profilo di stile fornito e individua tutti i test clinici o batterie menzionati nella sezione 7 o in altre parti del profilo (escludi WISC-IV e NEPSY-II).
-Restituisci esclusivamente un array JSON di oggetti con chiavi "nome" e "categoria" (scegli la categoria tra: cognitivo, nepsy, apprendimenti, questionari, altro).
-Non includere i test già esistenti: [${templateEsistenti.join(', ')}].
-Restituisci SOLO il JSON array grezzo, senza spiegazioni o formattazioni.`
+Non includere i test già esistenti: [${templateEsistenti.join(', ')}].`
 
-  const testo = await callGemini(promptSystem, profiloStile, { maxOutputTokens: 1500, temperature: 0.1 })
-  try {
-    const raw = testo.replace(/```json/g, '').replace(/```/g, '').trim()
-    const parsed = JSON.parse(raw)
-    return Array.isArray(parsed) ? parsed : []
-  } catch (e) {
-    console.error('Errore rilevamento nomi test da profilo:', e)
-    return []
-  }
+  return callGeminiStructured(promptSystem, profiloStile, NomiTestSchema, { maxOutputTokens: 1500, temperature: 0.1 })
 }
 
-export async function generaTemplateTest(testNome: string, profiloStile: string): Promise<any> {
+export async function generaTemplateTest(testNome: string, profiloStile: string): Promise<GeneratedTestTemplate> {
   if (USE_MOCK_AI) {
     if (typeof process === 'undefined' || process.env.NODE_ENV !== 'test') {
       await new Promise<void>(resolve => setTimeout(resolve, 1000))
@@ -1150,52 +1237,13 @@ export async function generaTemplateTest(testNome: string, profiloStile: string)
   }
 
   const promptSystem = `Sei un assistente clinico esperto in psicometria e valutazione dello sviluppo.
-Il tuo compito è analizzare la descrizione del test "${testNome}" presente nel Profilo di Stile fornito e strutturarlo in un oggetto JSON singolo che rappresenti il template del test.
+Il tuo compito è analizzare la descrizione del test "${testNome}" presente nel Profilo di Stile fornito e strutturarlo in un template del test.
 
-Restituisci ESCLUSIVAMENTE un oggetto JSON valido (senza spiegazioni o markdown codeblocks tranne \`\`\`json se necessario):
+Sii estremamente accurato nel mappare tutti i subtest, gli indici, le colonne e le soglie descritte nel profilo per questo specifico test.
+Per "scalaDefault": usa "qi_wisc" o "scalare" solo se il test dichiara esplicitamente di riusare quelle scale standard; altrimenti usa "soglie_custom" con le soglie realmente descritte nel profilo (max null se non c'è limite superiore).
+Il campo "nome" deve essere esattamente "${testNome}".`
 
-\`\`\`json
-{
-  "nome": "${testNome}",
-  "categoria": "apprendimenti", // una tra: "cognitivo", "nepsy", "apprendimenti", "questionari", "altro"
-  "scalaDefault": {
-    "tipo": "soglie_custom", // una tra: "qi_wisc", "scalare", "soglie_custom"
-    "soglie": [ // Obbligatorio solo se tipo è "soglie_custom"
-      { "min": 0, "max": 4, "etichetta": "Richiesta di Intervento" } // max può essere null se non c'è limite superiore
-    ]
-  },
-  "campiPrincipali": [
-    { 
-      "key": "chiave_univoca_in_minuscolo", // es. "dettato_brano"
-      "label": "Etichetta visualizzata", // es. "Dettato di brano"
-      "descr": "Una breve frase-cornice descrittiva per la narrativa" // opzionale
-    }
-  ],
-  "gruppiSecondari": [ // Sezioni secondarie/subtest opzionali
-    {
-      "key": "chiave_gruppo",
-      "label": "Titolo Gruppo", // es. "Velocità di scrittura"
-      "campi": [
-        { "key": "chiave_subtest", "label": "Nome subtest" }
-      ]
-    }
-  ],
-  "notaRange": "*Nota metodologica descrittiva delle soglie*", // opzionale
-  "richiedeEtaValutazione": false,
-  "richiedeStrumentiUtilizzati": true
-}
-\`\`\`
-
-Sii estremamente accurato nel mappare tutti i subtest, gli indici, le colonne e le soglie descritte nel profilo per questo specifico test.`
-
-  const testo = await callGemini(promptSystem, profiloStile, { maxOutputTokens: 2500, temperature: 0.1 })
-  try {
-    const raw = testo.replace(/```json/g, '').replace(/```/g, '').trim()
-    return JSON.parse(raw)
-  } catch (e) {
-    console.error(`Errore generazione template per test ${testNome}:`, e)
-    return null
-  }
+  return callGeminiStructured(promptSystem, profiloStile, GeneratedTestTemplateSchema, { maxOutputTokens: 2500, temperature: 0.1 })
 }
 
 export { USE_MOCK_AI }

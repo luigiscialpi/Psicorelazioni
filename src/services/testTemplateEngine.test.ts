@@ -11,7 +11,7 @@ vi.mock('../core/supabase', () => ({
     }),
   },
 }))
-import { calcolaFascia, generaTabella, generaNarrativa, generaSezioneTest, valutaFormule, migraWizardSnapshotLegacy } from './testTemplateEngine'
+import { calcolaFascia, generaTabella, generaNarrativa, generaSezioneTest, valutaFormule, migraWizardSnapshotLegacy, buildGeminiPayload } from './testTemplateEngine'
 import { MOCK_WISC_IV_TEMPLATE, MOCK_NEPSY_II_TEMPLATE } from '../data/mockTemplates'
 import type { RisultatoTest, TestTemplate } from '../core/testTemplate'
 import { rilevaNomiTestDaProfilo, generaTemplateTest } from './geminiService'
@@ -147,6 +147,41 @@ describe('testTemplateEngine', () => {
       expect(testo).toContain('## Valutazione cognitiva')
       expect(testo).toContain('Strumenti utilizzati: WISC-IV.')
       expect(testo).toContain('*WISC-IV: QI >129')
+    })
+  })
+
+  describe('buildGeminiPayload', () => {
+    const risultatoMock: RisultatoTest = {
+      somministrato: true,
+      strumentiUtilizzati: 'WISC-IV',
+      punteggi: { icv: '108', rp: '95', iml: '88', ve: '91', qit: '95' },
+      punteggiSecondari: { so: '11', vc: '12', co: '10', dc: '9' },
+      interpretabilita: { icv: true, rp: true, iml: false, ve: true, qit: true },
+      includiNotaRange: true,
+      noteCliniche: 'Paziente molto collaborativo.'
+    }
+
+    it('non contiene sintassi di tabella Markdown (nessuna riga con "|")', () => {
+      const payload = buildGeminiPayload(MOCK_WISC_IV_TEMPLATE, risultatoMock)
+      expect(payload).not.toContain('|')
+      expect(payload).not.toContain('---')
+    })
+
+    it('riporta i punteggi come dati semplici label/valore/fascia', () => {
+      const payload = buildGeminiPayload(MOCK_WISC_IV_TEMPLATE, risultatoMock)
+      expect(payload).toContain('Comprensione Verbale (ICV): 108, fascia Media')
+      expect(payload).toContain('Memoria di Lavoro (IML): 88, fascia Media inferiore (NON interpretabile: dispersione eccessiva nei subtest)')
+    })
+
+    it('spoglia la nota range dagli asterischi di formattazione', () => {
+      const payload = buildGeminiPayload(MOCK_WISC_IV_TEMPLATE, risultatoMock)
+      expect(payload).toContain('Criterio interpretativo di riferimento (usa per informare il commento, NON citarlo testualmente né riprodurlo come nota a parte): WISC-IV: QI >129')
+      expect(payload).not.toContain('*WISC-IV')
+    })
+
+    it('mantiene comunque il marcatore di sezione per il parsing a valle', () => {
+      const payload = buildGeminiPayload(MOCK_WISC_IV_TEMPLATE, risultatoMock)
+      expect(payload).toMatch(/^=== SEZIONE: wisc-iv ===/)
     })
   })
 

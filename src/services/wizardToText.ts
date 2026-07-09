@@ -94,6 +94,7 @@ export function rimuoviTabelleMarkdown(testo: string): string {
   const risultato: string[] = []
   let dentroTabella = false
   let appenaUscitoDaTabella = false
+  let righeRimosse = 0
 
   for (const riga of righe) {
     const isRigaTabella = /^\s*\|.*\|\s*$/.test(riga)
@@ -101,6 +102,7 @@ export function rimuoviTabelleMarkdown(testo: string): string {
 
     if (isRigaTabella || (dentroTabella && isSeparatoreTabella)) {
       dentroTabella = true
+      righeRimosse++
       continue
     }
 
@@ -117,6 +119,7 @@ export function rimuoviTabelleMarkdown(testo: string): string {
     // compare legittimamente altrove nel testo narrativo.
     if (appenaUscitoDaTabella && PATTERN_NOTA_RANGE.test(riga)) {
       appenaUscitoDaTabella = false
+      righeRimosse++
       continue
     }
 
@@ -127,6 +130,15 @@ export function rimuoviTabelleMarkdown(testo: string): string {
 
   // Collassa eventuali righe vuote multiple lasciate dalla rimozione
   const output = risultato.join('\n').replace(/\n{3,}/g, '\n\n').trim()
+
+  // Telemetria: visibilità su QUANTO SPESSO Gemini rigenera tabelle/note
+  // nonostante il prompt lo vieti esplicitamente — utile per verificare
+  // empiricamente se un intervento a monte (es. sul payload inviato in
+  // buildGeminiPayload) riduce davvero la frequenza di questo leak nel
+  // tempo, invece di limitarsi a fidarsi che la regex l'abbia gestito bene.
+  if (righeRimosse > 0) {
+    console.warn(`[rimuoviTabelleMarkdown] Rimosse ${righeRimosse} righe (tabella/nota range) rigenerate da Gemini nonostante l'istruzione di non farlo.`)
+  }
   if (output.includes('|')) {
     console.warn('[rimuoviTabelleMarkdown] Possibile tabella Markdown non rimossa completamente dal testo generato da Gemini.')
   }
@@ -306,6 +318,7 @@ export function pulisciSezioneDaIntestazioni(testo: string, titoloSezione: strin
   if (!testo) return testo
   const righe = testo.split('\n')
   const titoloClean = titoloSezione.trim().toLowerCase()
+  let rimosse = 0
   
   const filtered = righe.filter(riga => {
     const raw = riga.trim().toLowerCase()
@@ -313,11 +326,16 @@ export function pulisciSezioneDaIntestazioni(testo: string, titoloSezione: strin
     if (raw.startsWith('#')) {
       const pulito = raw.replace(/^#+\s*/, '')
       if (pulito === titoloClean || pulito.includes(titoloClean) || titoloClean.includes(pulito)) {
+        rimosse++
         return false // rimuovi l'intestazione duplicata
       }
     }
     return true
   })
+
+  if (rimosse > 0) {
+    console.warn(`[pulisciSezioneDaIntestazioni] Rimosse ${rimosse} intestazioni duplicate ("${titoloSezione}") rigenerate da Gemini nella narrativa.`)
+  }
   
   return filtered.join('\n').trim()
 }
@@ -336,17 +354,23 @@ export function rimuoviFormuleRilascioDuplicate(tabellaOMarkdown: string): strin
   ]
   
   let formulaTrovata = false
+  let duplicatiRimossi = 0
   const filtered = righe.filter(riga => {
     const isFormula = formulePattern.some(p => p.test(riga))
     if (isFormula) {
       if (formulaTrovata) {
         // Abbiamo già questa formula, eliminiamo la duplicazione
+        duplicatiRimossi++
         return false
       }
       formulaTrovata = true
     }
     return true
   })
+
+  if (duplicatiRimossi > 0) {
+    console.warn(`[rimuoviFormuleRilascioDuplicate] Rimosse ${duplicatiRimossi} formule di chiusura duplicate rigenerate da Gemini.`)
+  }
   
   return filtered.join('\n').trim()
 }
