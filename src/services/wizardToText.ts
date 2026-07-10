@@ -14,11 +14,6 @@ import { MOCK_WISC_IV_TEMPLATE, MOCK_NEPSY_II_TEMPLATE } from '../data/mockTempl
 import { generaSezioneTest, generaTabella, generaNarrativa, calcolaNarrativaGruppi } from './testTemplateEngine'
 import type { RisultatoTest, TestTemplate } from '../core/testTemplate'
 
-import {
-  WISC_IV_CAMPI, NEPSY_II_DOMINI, fasciaWISC, fasciaScalare,
-  WISC_IV_SUBTEST_PER_INDICE, WISC_IV_INDICE_LABEL,
-} from '../components/constants/testDefinitions'
-
 // Converte le voci selezionate (+ eventuali dettagli) in una frase discorsiva
 function vociToTesto(vociSelezionate, vociDisponibili, dettagli = {}) {
   const frasi = vociSelezionate.map(id => {
@@ -77,14 +72,20 @@ const PATTERN_NOTA_RANGE = /^\s*\*[A-Z][\w-]*(-II)?:\s.*\*\s*$/
 // markdown) ed exportDocx.ts (che deve riconoscere lo stesso titolo per
 // decidere se disegnare una tabella Word nativa invece di testo semplice).
 // Un'unica fonte di verità evita che le due stringhe divergano in futuro.
-export function titoloSezioneTest(template: { categoria: string; nome: string }): string {
-  const perCategoria: Record<string, string> = {
-    cognitivo: 'Valutazione cognitiva',
-    nepsy: 'Approfondimento neuropsicologico',
-    apprendimenti: 'Valutazione apprendimenti',
-    questionari: 'Questionari',
-  }
-  return perCategoria[template.categoria] || template.nome
+//
+// ⚠️ L'etichetta generica per categoria ("Questionari", "Valutazione
+// apprendimenti") è usata SOLO per i due built-in garantiti singoli
+// (WISC-IV/NEPSY-II, un solo test possibile per categoria). Per qualunque
+// test dinamico creato in Gestione Test si usa sempre template.nome: due
+// template diversi con la stessa categoria (es. due questionari diversi
+// attivi nella stessa relazione) altrimenti produrrebbero lo stesso titolo
+// "## Questionari" due volte, e sezioniDinamiche (Map keyed by titolo, in
+// exportDocx.ts) sovrascriverebbe silenziosamente il primo col secondo:
+// la prima tabella finirebbe abbinata alla narrativa del secondo test.
+export function titoloSezioneTest(template: { id: string; categoria: string; nome: string }): string {
+  if (template.id === 'wisc-iv') return 'Valutazione cognitiva'
+  if (template.id === 'nepsy-ii') return 'Approfondimento neuropsicologico'
+  return template.nome
 }
 
 export function rimuoviTabelleMarkdown(testo: string): string {
@@ -145,114 +146,7 @@ export function rimuoviTabelleMarkdown(testo: string): string {
   return output
 }
 
-// ── Tabella WISC-IV in Markdown, pronta per Gemini e per il parser di exportDocx.ts ──
-// `interpretabilita` è un oggetto opzionale { [chiaveIndice]: boolean },
-// dove true = "Sì" (default se assente, coerente col comportamento
-// storico della funzione), false = "No". La colonna "Interpretabilità"
-// viene mostrata in tabella SOLO se almeno un indice compilato ha
-// interpretabilità = false — quando tutti gli indici sono "Sì" (il caso
-// più comune) la colonna è ridondante e viene omessa per non appesantire
-// la tabella con un'informazione che non aggiunge nulla.
-export function wiscToMarkdownTable(punteggi, interpretabilita: Record<string, boolean> = {}) {
-  const righeValide = WISC_IV_CAMPI.filter(c => punteggi[c.key])
-  if (righeValide.length === 0) return ''
 
-  // Default true (Sì) per qualunque indice non esplicitamente marcato —
-  // preserva il comportamento precedente quando il parametro non è passato.
-  const valori = righeValide.map(c => interpretabilita[c.key] !== false)
-  const mostraColonna = valori.some(v => v === false)
-
-  let md = mostraColonna
-    ? '| WISC-IV scale | Indici/QI | Categoria descrittiva | Interpretabilità |\n|---|---|---|---|\n'
-    : '| WISC-IV scale | Indici/QI | Categoria descrittiva |\n|---|---|---|\n'
-
-  for (const c of righeValide) {
-    const val = punteggi[c.key]
-    const interpretabile = interpretabilita[c.key] !== false
-    md += mostraColonna
-      ? `| ${c.label} | ${val} | ${fasciaWISC(val)} | ${interpretabile ? 'Sì' : 'No'} |\n`
-      : `| ${c.label} | ${val} | ${fasciaWISC(val)} |\n`
-  }
-  return md
-}
-
-export function notaRangeWisc() {
-  return '*WISC-IV: QI >129 molto superiore, 120-129 superiore, 110-119 medio-superiore, 90-109 media, 80-89 media inferiore, 70-79 inferiore alla media, <69 molto inferiore alla norma.*'
-}
-
-// Testo narrativo per gli indici WISC compilati — frase-cornice fissa + fascia calcolata
-export function wiscToNarrativa(punteggi, subtestPp: Record<string, string | number> = {}) {
-  const base = WISC_IV_CAMPI
-    .filter(c => punteggi[c.key] && c.tipo !== 'totale')
-    .map(c => `${c.descr} Il punteggio ottenuto (${punteggi[c.key]}) si colloca nella fascia "${fasciaWISC(punteggi[c.key])}".`)
-    .join(' ')
-
-  const rif = wiscSubtestPpToNarrativa(subtestPp)
-
-  if (!rif) return base
-
-  return [base, rif].filter(Boolean).join(' ')
-}
-
-// Testo narrativo (mai tabellare) per i punti ponderati dei subtest per
-// indice. Compila solo gli indici con almeno un subtest valorizzato —
-// restano tutti facoltativi. Il risultato è pensato per essere
-// incollato dopo la frase-cornice dell'indice corrispondente.
-export function wiscSubtestPpToNarrativa(subtestPp: Record<string, string | number> = {}) {
-  if (!subtestPp || typeof subtestPp !== 'object') return ''
-
-  const frasiPerIndice: string[] = []
-
-  for (const [indiceKey, indiceLabel] of Object.entries(WISC_IV_INDICE_LABEL)) {
-    const subtestIndice = WISC_IV_SUBTEST_PER_INDICE[indiceKey] || []
-    const compilati = subtestIndice.filter(st => subtestPp[st.key] !== undefined && subtestPp[st.key] !== '')
-    if (compilati.length === 0) continue
-
-    const dettagli = compilati
-      .map(st => `${st.label} (pp ${subtestPp[st.key]}, fascia ${fasciaScalare(subtestPp[st.key]).toLowerCase()})`)
-      .join(', ')
-
-    frasiPerIndice.push(`Per l'indice ${indiceLabel} sono stati considerati i seguenti subtest: ${dettagli}.`)
-  }
-
-  return frasiPerIndice.join(' ')
-}
-
-// ── Tabella NEPSY-II in Markdown ──────────────────────────
-export function nepsyToMarkdownTable(punteggi) {
-  const domWithData = NEPSY_II_DOMINI
-    .map(d => ({ ...d, subtest: d.subtest.filter(s => punteggi[s.key]) }))
-    .filter(d => d.subtest.length > 0)
-
-  if (domWithData.length === 0) return ''
-
-  let md = '| NEPSY-II sottotest | Punteggio scalare | Fascia |\n|---|---|---|\n'
-  for (const dom of domWithData) {
-    for (const st of dom.subtest) {
-      md += `| ${st.label} (${dom.dominio}) | ${punteggi[st.key]} | ${fasciaScalare(punteggi[st.key])} |\n`
-    }
-  }
-  return md
-}
-
-export function notaRangeNepsy() {
-  return '*NEPSY-II: punteggi scalari con media 10 e DS 3; valori più alti indicano prestazioni migliori. Interpretazione contestualizzata al dominio valutato.*'
-}
-
-export function nepsyToNarrativa(punteggi) {
-  const nomi = []
-  for (const dom of NEPSY_II_DOMINI) {
-    for (const st of dom.subtest) {
-      if (punteggi[st.key]) {
-        nomi.push(`${st.label} (fascia ${fasciaScalare(punteggi[st.key]).toLowerCase()})`)
-      }
-    }
-  }
-  if (nomi.length === 0) return ''
-  return `Le prestazioni ai sottotest somministrati risultano: ${nomi.join(', ')}.`
-}
-
-// ── Rimozione di tabelle Markdown duplicate a livello DOCUMENTO ──
 // Rete di sicurezza aggiuntiva rispetto a rimuoviTabelleMarkdown():
 // quella agisce SOLO sul testo narrativo di cognitivo/nepsy prima
 // che venga concatenato. Questa agisce sul documento GIÀ assemblato,
@@ -375,6 +269,32 @@ export function rimuoviFormuleRilascioDuplicate(tabellaOMarkdown: string): strin
   return filtered.join('\n').trim()
 }
 
+// ⚠️ Il prompt di generaNarrativaSezioni (geminiService.ts) chiede a Gemini
+// di inserire marcatori "=== SOTTOSEZIONE: nome ===" per QUALSIASI sezione
+// con sottoparti (l'istruzione è scritta per i test con sottotest, ma il
+// modello a volte la applica anche a sezioni discorsive come "conclusioni",
+// es. per separare "Conclusioni" da "Raccomandazioni"). Questi marcatori
+// vengono interpretati SOLO dentro il percorso dei test dinamici in
+// exportDocx.ts (flushDinamica, cerca per titolo in sezioniDinamiche): in
+// ogni altra sezione (intestazione, anamnesi, osservazione, apprendimenti,
+// questionari, conclusioni) nessuno li interpreta, e senza questa funzione
+// finiscono nel documento finale come testo tecnico visibile. Li convertiamo
+// in un sotto-titolo in grassetto invece di limitarci a cancellarli, così la
+// struttura voluta da Gemini (es. "Raccomandazioni" separata da "Conclusioni")
+// resta leggibile nel documento invece di sparire o restare grezza.
+export function convertiMarcatoriSottosezione(testo: string): string {
+  if (!testo) return testo
+  let conversioni = 0
+  const risultato = testo.replace(/\\?===\s*SOTTOSEZIONE:\s*(.*?)\s*===\\?/gi, (_match, nome) => {
+    conversioni++
+    return `\n\n**${nome.trim()}**\n`
+  })
+  if (conversioni > 0) {
+    console.warn(`[convertiMarcatoriSottosezione] Convertiti ${conversioni} marcatori SOTTOSEZIONE orfani in sotto-titoli, fuori dal percorso dei test dinamici che sa interpretarli.`)
+  }
+  return risultato.replace(/\n{3,}/g, '\n\n').trim()
+}
+
 export function assemblaDocumentoMarkdown(wizard, narrativaPerSezione = {}, templates: TestTemplate[] = []) {
   const sez = wizard.sezioni_attive || []
   const templatesById = new Map<string, TestTemplate>([
@@ -384,7 +304,7 @@ export function assemblaDocumentoMarkdown(wizard, narrativaPerSezione = {}, temp
   ])
   let out = '# Relazione di Valutazione Neuropsicologica\n\n'
   out += '## Dati e motivo dell\'invio\n'
-  const narrativaIntestazione = pulisciSezioneDaIntestazioni(rimuoviTabelleMarkdown(narrativaPerSezione['intestazione'] || ''), 'dati e motivo')
+  const narrativaIntestazione = convertiMarcatoriSottosezione(pulisciSezioneDaIntestazioni(rimuoviTabelleMarkdown(narrativaPerSezione['intestazione'] || ''), 'dati e motivo'))
   if (narrativaIntestazione) {
     out += narrativaIntestazione + '\n'
   } else {
@@ -399,7 +319,7 @@ export function assemblaDocumentoMarkdown(wizard, narrativaPerSezione = {}, temp
     // fallita per questa sezione), ricade sulla composizione deterministica
     // da vociToTesto — meno elegante ma sempre disponibile, non lascia mai
     // la sezione vuota.
-    const narrativaAnamnesi = pulisciSezioneDaIntestazioni(rimuoviTabelleMarkdown(narrativaPerSezione['anamnesi'] || ''), 'anamnesi')
+    const narrativaAnamnesi = convertiMarcatoriSottosezione(pulisciSezioneDaIntestazioni(rimuoviTabelleMarkdown(narrativaPerSezione['anamnesi'] || ''), 'anamnesi'))
     if (narrativaAnamnesi) {
       out += narrativaAnamnesi + '\n'
     } else if (wizard.anamnesi) {
@@ -413,7 +333,7 @@ export function assemblaDocumentoMarkdown(wizard, narrativaPerSezione = {}, temp
 
   if (sez.includes('osservazione')) {
     out += '\n## Osservazione comportamentale\n'
-    const narrativaOss = pulisciSezioneDaIntestazioni(rimuoviTabelleMarkdown(narrativaPerSezione['osservazione'] || ''), 'osservazione')
+    const narrativaOss = convertiMarcatoriSottosezione(pulisciSezioneDaIntestazioni(rimuoviTabelleMarkdown(narrativaPerSezione['osservazione'] || ''), 'osservazione'))
     if (narrativaOss) {
       out += narrativaOss + '\n'
     } else {
@@ -426,12 +346,17 @@ export function assemblaDocumentoMarkdown(wizard, narrativaPerSezione = {}, temp
   // Stessa logica di cognitivo/nepsy ma per test/questionari custom:
   // tabella + narrativa costruite sui punteggi REALI in wizard.test_risultati,
   // mai lasciando che la sezione mostri solo il vecchio campo libero
-  // (quello resta gestito più sotto in 'questionari' solo come fallback
-  // per relazioni compilate prima dell'introduzione dei template dinamici).
+  // (quello resta gestito più sotto in 'questionari'/'apprendimenti' SOLO
+  // come fallback per relazioni compilate prima dell'introduzione dei
+  // template dinamici — categorieCoperte impedisce che vengano mostrate
+  // entrambe quando esiste già un test dinamico della stessa categoria,
+  // es. CBCL comparso sia come test dinamico sia come "Questionari" legacy).
+  const categorieCoperte = new Set<string>()
   for (const sezId of sez) {
     const template = templatesById.get(sezId)
     const risultato: RisultatoTest | undefined = wizard.test_risultati?.[sezId]
     if (!template || !risultato?.somministrato) continue
+    categorieCoperte.add(template.categoria)
 
     const titolo = titoloSezioneTest(template)
     out += `\n## ${titolo}\n`
@@ -455,14 +380,14 @@ export function assemblaDocumentoMarkdown(wizard, narrativaPerSezione = {}, temp
     }
   }
 
-  if (sez.includes('apprendimenti')) {
+  if (sez.includes('apprendimenti') && !categorieCoperte.has('apprendimenti')) {
     out += '\n## Valutazione apprendimenti\n'
     if (wizard.apprendimenti?.strumenti) out += `${wizard.apprendimenti.strumenti}\n\n`
     if (wizard.apprendimenti?.punteggi_grezzi) out += `${wizard.apprendimenti.punteggi_grezzi}\n\n`
     // Testo narrativo di Gemini (se presente) integra ora anche le note
     // di lettura/scrittura/matematica, tessute in prosa — non vengono più
     // riappese come frasi isolate in coda (vedi geminiService.ts).
-    const narrativaApp = pulisciSezioneDaIntestazioni(rimuoviTabelleMarkdown(narrativaPerSezione['apprendimenti'] || ''), 'apprendimenti')
+    const narrativaApp = convertiMarcatoriSottosezione(pulisciSezioneDaIntestazioni(rimuoviTabelleMarkdown(narrativaPerSezione['apprendimenti'] || ''), 'apprendimenti'))
     if (narrativaApp) {
       out += narrativaApp + '\n'
     } else {
@@ -471,11 +396,11 @@ export function assemblaDocumentoMarkdown(wizard, narrativaPerSezione = {}, temp
     }
   }
 
-  if (sez.includes('questionari')) {
+  if (sez.includes('questionari') && !categorieCoperte.has('questionari')) {
     out += '\n## Questionari\n'
     if (wizard.questionari?.tipo) out += `${wizard.questionari.tipo}\n\n`
     if (wizard.questionari?.punteggi_grezzi) out += `${wizard.questionari.punteggi_grezzi}\n\n`
-    const narrativaQ = pulisciSezioneDaIntestazioni(rimuoviTabelleMarkdown(narrativaPerSezione['questionari'] || ''), 'questionari')
+    const narrativaQ = convertiMarcatoriSottosezione(pulisciSezioneDaIntestazioni(rimuoviTabelleMarkdown(narrativaPerSezione['questionari'] || ''), 'questionari'))
     if (narrativaQ) out += narrativaQ + '\n'
     if (wizard.questionari?.note_cliniche) out += wizard.questionari.note_cliniche + '\n'
   }
@@ -487,7 +412,7 @@ export function assemblaDocumentoMarkdown(wizard, narrativaPerSezione = {}, temp
     // template fisso di diagnosi/consigli — prima era generato ma mai
     // usato, il che contribuiva a relazioni percepite como "scarne"
     // anche quando Gemini aveva prodotto un'analisi ricca.
-    const narrativaConcl = pulisciSezioneDaIntestazioni(rimuoviTabelleMarkdown(narrativaPerSezione['conclusioni'] || ''), 'conclusioni')
+    const narrativaConcl = convertiMarcatoriSottosezione(pulisciSezioneDaIntestazioni(rimuoviTabelleMarkdown(narrativaPerSezione['conclusioni'] || ''), 'conclusioni'))
     if (narrativaConcl) {
       // Gemini ha prodotto una narrativa strutturata che integra già
       // diagnosi, consigli, strumenti e misure — non duplicarli.

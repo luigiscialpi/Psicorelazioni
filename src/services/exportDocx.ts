@@ -20,7 +20,6 @@ import {
   PageNumber, NumberFormat, UnderlineType, LevelFormat,
 } from 'docx'
 import type { AnagraficaPaziente, ProfiloProfessionista } from '../core/types'
-import { fasciaWISC, fasciaScalare, WISC_IV_CAMPI, NEPSY_II_DOMINI } from '../components/constants/testDefinitions'
 import { MOCK_WISC_IV_TEMPLATE, MOCK_NEPSY_II_TEMPLATE } from '../data/mockTemplates'
 import type { TestTemplate, RisultatoTest, ScalaPunteggio } from '../core/testTemplate'
 import { calcolaFascia, getScalaApplicabile } from './testTemplateEngine'
@@ -778,11 +777,12 @@ export async function esportaDocx({ testo, data, nomeStudio, anagrafica, profess
       continue
     }
 
-    if (line.startsWith('## Dati e motivo')) {
-      i++
-      while (i < lines.length && !lines[i].startsWith('## ')) i++
-      continue
-    }
+    // ⚠️ Qui c'era uno skip esplicito di "## Dati e motivo dell'invio" (avanzava
+    // fino alla prossima intestazione senza mai fare blocchi.push). Non esiste
+    // nessun altro punto in questo file che renderizzi quel contenuto altrove:
+    // lo skip non evitava un doppio rendering, cancellava l'intera sezione dal
+    // documento finale. Ora cade nel ramo generico "## " qualche riga sotto,
+    // come Anamnesi/Osservazione/Conclusioni.
 
     // Un H1 creato dall'utente nell'editor Visuale (diverso dal titolo fisso
     // "# Relazione" sopra, che viene reso a parte nell'intestazione): senza

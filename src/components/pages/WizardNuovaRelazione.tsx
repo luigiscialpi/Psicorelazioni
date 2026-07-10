@@ -7,10 +7,6 @@ import { getSessioneById, upsertSessione } from '../../data/sessioniData'
 import { USE_MOCK } from '../../core/config'
 import type { UnknownRecord } from '../../core/types'
 import {
-  WISC_IV_CAMPI, NEPSY_II_DOMINI, fasciaWISC, fasciaScalare,
-  WISC_IV_SUBTEST_PER_INDICE, WISC_IV_INDICE_LABEL,
-} from '../constants/testDefinitions'
-import {
   ANAMNESI_REMOTA_VOCI, ANAMNESI_RECENTE_VOCI,
   OSSERVAZIONE_ADATTAMENTO_VOCI, OSSERVAZIONE_ATTEGGIAMENTO_VOCI,
 } from '../constants/anamnesiVoci'

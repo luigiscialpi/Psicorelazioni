@@ -36,7 +36,7 @@ Pipeline in breve: **importa relazioni passate → un LLM ne distilla un "Profil
 | Preview Markdown | `react-markdown` + `remark-gfm` | |
 | Validazione dati | `zod` | schemi in `core/testTemplate.ts`, riusati anche come `responseSchema` per Gemini (§7) |
 | Lint | `oxlint` (non `eslint`) | `npm run lint` |
-| Test | `vitest` | `npx vitest run` — `services/testTemplateEngine.test.ts` + `core/testTemplate.test.ts` |
+| Test | `vitest` | `npx vitest run` — `services/testTemplateEngine.test.ts`, `services/wizardToText.test.ts`, `services/exportDocx.test.ts`, `core/testTemplate.test.ts` |
 | Hosting previsto | Vercel | nessuna configurazione PWA presente ad oggi (`vite.config.ts` non ha plugin PWA, nonostante fosse nei piani iniziali) |
 
 ## 2. Setup e avvio locale
@@ -121,7 +121,7 @@ src/
                          # migraWizardSnapshotLegacy — vedi §6
     wizardToText.ts     # assemblaDocumentoMarkdown() e le pulizie difensive sull'output Gemini
                          # (rimuoviTabelleMarkdown, pulisciSezioneDaIntestazioni,
-                         # rimuoviFormuleRilascioDuplicate)
+                         # rimuoviFormuleRilascioDuplicate, convertiMarcatoriSottosezione)
     exportDocx.ts        # Markdown → .docx (titoli, **grassetto**/*corsivo*, elenchi puntati/numerati,
                          # tabelle, paragrafo anagrafica). Non un parser Markdown generico: riconosce
                          # solo la grammatica descritta in §3, in sincrono con RichTextEditor (sotto)
@@ -141,10 +141,6 @@ src/
                          # che exportDocx.ts sa davvero rendere (§3): niente selettore font/size
     state/                # Reducer dedicati (es. archivioState.ts, importRelazioniState.ts)
     constants/
-      testDefinitions.ts  # Costanti WISC-IV/NEPSY-II "storiche" (WISC_IV_CAMPI,
-                           # NEPSY_II_DOMINI, fasciaWISC, fasciaScalare), ancora importate
-                           # direttamente da wizardToText.ts/exportDocx.ts/WizardNuovaRelazione.tsx
-                           # accanto al motore generico TestTemplate — non del tutto unificate
       anamnesiVoci.ts      # Opzioni predefinite per lo step Anamnesi del wizard
 docs/
   profilo_di_stile.md    # Esempio REALE di Profilo di Stile generato dall'app (corpus di
@@ -187,9 +183,11 @@ Ogni test (WISC-IV, NEPSY-II, o uno creato da zero in **Gestione Test**) è desc
 - `calcolaNarrativaGruppi()` → descrizione testuale piatta dei subtest, per il payload Gemini
 - `buildGeminiPayload()` → il testo che Gemini riceve per scrivere il commento narrativo. **Contiene solo dati grezzi (label/punteggio/fascia), mai la tabella già renderizzata né la nota range col corsivo**: un LLM a cui si mostra contenuto già formattato come tabella o citazione, appena prima di chiedergli di commentarlo, tende a farne l'eco nella risposta. Tabella e nota range finale vengono inserite nel documento solo dopo, da `assemblaDocumentoMarkdown()` — Gemini non le vede mai renderizzate.
 
-`wizardToText.ts` applica comunque, come rete di sicurezza, tre pulizie difensive sul testo tornato da Gemini prima dell'inserimento nel documento (`rimuoviTabelleMarkdown`, `pulisciSezioneDaIntestazioni`, `rimuoviFormuleRilascioDuplicate`): loggano via `console.warn` quante righe/duplicati rimuovono, utile per capire quanto spesso il modello rigenera comunque contenuto che non dovrebbe.
+`wizardToText.ts` applica comunque, come rete di sicurezza, quattro pulizie difensive sul testo tornato da Gemini prima dell'inserimento nel documento (`rimuoviTabelleMarkdown`, `pulisciSezioneDaIntestazioni`, `rimuoviFormuleRilascioDuplicate`, `convertiMarcatoriSottosezione`): loggano via `console.warn` quante righe/duplicati/marcatori rimuovono o convertono, utile per capire quanto spesso il modello rigenera comunque contenuto che non dovrebbe. L'ultima delle quattro merita una nota a parte: il prompt chiede a Gemini di usare marcatori `=== SOTTOSEZIONE: nome ===` per separare sotto-parti **solo** nelle sezioni di test con sottotest/gruppi (es. CBCL: "Scale Sindromiche" vs "Scale DSM Oriented"), dove `exportDocx.ts` sa interpretarli e posizionarli sotto la tabella giusta; se il modello li usa comunque in una sezione discorsiva (tipicamente "conclusioni", per separare diagnosi da raccomandazioni), nessun altro punto del codice li interpreta — `convertiMarcatoriSottosezione` li converte in un sotto-titolo in **grassetto** invece di lasciarli come testo tecnico visibile nel documento finale.
 
-WISC-IV e NEPSY-II restano, oltre ad avere un `TestTemplate` (`MOCK_WISC_IV_TEMPLATE`/`MOCK_NEPSY_II_TEMPLATE`, usati per payload e motore generico), anche descritti da costanti dedicate in `components/constants/testDefinitions.ts` (`WISC_IV_CAMPI`, `NEPSY_II_DOMINI`, `fasciaWISC`, `fasciaScalare`), importate direttamente da `wizardToText.ts`/`exportDocx.ts`/`WizardNuovaRelazione.tsx`: la generalizzazione a un motore 100% data-driven per questi due test storici convive quindi con codice legacy dedicato, non è del tutto completa.
+`assemblaDocumentoMarkdown()` deduplica anche per categoria: se `sezioni_attive` contiene sia un test dinamico di categoria `questionari`/`apprendimenti` (es. CBCL) sia la vecchia sezione libera con lo stesso nome (`wizard.questionari`/`wizard.apprendimenti`, mantenuta solo per compatibilità con relazioni compilate prima dei template dinamici), viene mostrato solo il primo — altrimenti lo stesso questionario compare due volte sotto lo stesso titolo "## Questionari", con la seconda copia che mostra anche i campi liberi non ripuliti (es. appunti grezzi digitati dalla psicologa) invece della narrativa Gemini rifinita.
+
+WISC-IV e NEPSY-II sono `TestTemplate` come qualunque altro (`MOCK_WISC_IV_TEMPLATE`/`MOCK_NEPSY_II_TEMPLATE`, seminati di default nella stessa mappa dei test custom): nessun trattamento speciale nel motore. L'unica particolarità residua, volutamente cosmetica, è in `titoloSezioneTest()`: per questi due soli built-in (garantiti singoli per costruzione — non è possibile che ne esistano due nella stessa relazione) il titolo di sezione è un'etichetta amichevole ("Valutazione cognitiva"/"Approfondimento neuropsicologico") invece del nome grezzo del test; qualunque altro template dinamico usa sempre il proprio `nome` come titolo, anche per evitare collisioni quando più test della stessa categoria sono attivi insieme (es. due questionari diversi) — vedi la nota sotto su `sezioniDinamiche`.
 
 ## 7. Generazione con Gemini
 
@@ -253,7 +251,7 @@ Tutte le pagine tranne `AuthScreen` sono caricate con `React.lazy`. Il layout co
 - **Mock branch obbligatorio**: qualunque nuova funzione che chiama Supabase o Gemini deve avere anche il proprio ramo `USE_MOCK`/`USE_MOCK_AI`, altrimenti l'app non è più utilizzabile senza credenziali reali (e i test, che girano in mock, non la coprono).
 - **Zod come fonte di verità sui tipi test**: modificare la forma di `TestTemplate`/`RisultatoTest` si fa in `core/testTemplate.ts`, non con cast sparsi altrove.
 - **Lint**: `npm run lint` (oxlint, non eslint — regole/config diverse da quanto normalmente ci si aspetta da eslint).
-- **Test**: `npx vitest run`; oggi `services/testTemplateEngine.test.ts` + `core/testTemplate.test.ts`. Gira in automatico in mock mode, non serve alcuna chiave API.
+- **Test**: `npx vitest run`; oggi `services/testTemplateEngine.test.ts`, `services/wizardToText.test.ts`, `services/exportDocx.test.ts`, `core/testTemplate.test.ts`. Gira in automatico in mock mode, non serve alcuna chiave API.
 - **Typecheck**: `npx tsc -b` (project references).
 
 ## 11. Punti di attenzione attuali
@@ -261,7 +259,7 @@ Tutte le pagine tranne `AuthScreen` sono caricate con `React.lazy`. Il layout co
 - `supabase_setup.sql` è lo script di riferimento per ricreare lo schema da zero; se lo modifichi a mano tenendolo disallineato dal progetto Supabase reale, la fonte di verità sui nomi colonna resta comunque il codice in `data/*.ts` (query dirette), non questo file.
 - `deleteTestTemplate()` esegue una DELETE reale sulla tabella `test_templates` (non solo soft-delete via `attivo = false`); in modalità mock è un no-op silenzioso, non rimuove nulla dall'array locale.
 - Nessun plugin PWA è configurato in `vite.config.ts` ad oggi: l'app non è installabile come PWA nonostante fosse tra gli obiettivi iniziali.
-- `components/constants/testDefinitions.ts` (WISC-IV/NEPSY-II) e il motore generico `TestTemplate` (§6) coesistono: prima di modificare il comportamento di questi due test specifici, verifica quale dei due percorsi tocca effettivamente il file che stai cambiando.
+- **Nessun isolamento dati tra utenti sullo stesso progetto Supabase**: le policy RLS (`supabase_setup.sql`) sono tutte `USING (auth.role() = 'authenticated')` — controllano solo che ci sia un login valido, non _quale_ utente. Non esiste una colonna `user_id`/`auth.uid()` da nessuna parte: un secondo utente creato in Authentication → Users sullo stesso progetto vede per intero pazienti, relazioni e profilo di stile del primo. Isolare i dati per utente richiederebbe una colonna owner + policy riscritte su tutte le tabelle, non è un cambiamento piccolo.
 - Il layer dati (`data/*.ts`) traduce sempre `camelCase` (TypeScript) ↔ `snake_case` (Supabase) a mano, campo per campo: non c'è un mapper automatico, quindi aggiungere un campo a un tipo richiede di aggiornarlo in almeno tre punti (schema Zod/tipo, query di lettura, payload di scrittura).
 - Lo schema `responseSchema` di `generaTemplateTest` (§7) include un'unione discriminata (`scalaDefault`, tre forme diverse secondo `tipo`): la conversione Zod→JSON Schema e la validazione lato client sono testate (`core/testTemplate.test.ts`), ma quanto bene Gemini rispetti effettivamente quella forma va verificato con una chiamata reale, non è osservabile in sviluppo senza chiave API valida.
 - In `RichTextEditor.tsx` il `<div contentEditable>` e la `<textarea>` restano sempre entrambi montati (visibilità a CSS, mai smontaggio condizionale): non è uno stile, è la correzione di un bug reale di perdita contenuto (smontare/rimontare il contentEditable lo svuotava). Non "semplificare" tornando a un rendering condizionale dei due modi.

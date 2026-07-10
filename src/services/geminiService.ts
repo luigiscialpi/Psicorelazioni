@@ -8,9 +8,7 @@
 
 import { GoogleGenAI, ApiError } from '@google/genai'
 import { z } from 'zod'
-import {
-  wiscToMarkdownTable, nepsyToMarkdownTable, assemblaDocumentoMarkdown,
-} from './wizardToText'
+import { assemblaDocumentoMarkdown } from './wizardToText'
 import { buildGeminiPayload } from './testTemplateEngine'
 import { MOCK_WISC_IV_TEMPLATE, MOCK_NEPSY_II_TEMPLATE } from '../data/mockTemplates'
 import type { RisultatoTest, TestTemplate, GeneratedTestTemplate } from '../core/testTemplate'
@@ -749,9 +747,6 @@ export async function generaNarrativaSezioni(
     return out
   }
 
-  const wiscTabella = wizard.cognitivo?.punteggi ? wiscToMarkdownTable(wizard.cognitivo.punteggi, (wizard.cognitivo.interpretabilita as Record<string, boolean>) || {}) : ''
-  const nepsyTabella = wizard.nepsy?.punteggi ? nepsyToMarkdownTable(wizard.nepsy.punteggi) : ''
-
   const esempiFewShot = esempi.length > 0
     ? esempi.map((e: Relazione, i: number) => `--- ESEMPIO ${i+1} ---\n${e.testo_anonimizzato || e.testo_markdown}`).join('\n\n')
     : ''
@@ -782,8 +777,9 @@ Per la sezione "apprendimenti": integra le note su lettura, scrittura e matemati
 Non usare mai nomi reali o dati identificativi: ovunque scriveresti il nome del/la paziente, usa esattamente il segnaposto {{NOME}} (con le doppie graffe, senza spazi interni). Non usare "il/la paziente" o altre perifrasi impersonali al posto del segnaposto: scrivi le frasi come le scriveresti con un nome vero, sostituendo solo il nome con {{NOME}} (es. "{{NOME}} accetta e porta a termine le attività proposte" invece di "il/la paziente accetta..."). Questo segnaposto verra sostituito automaticamente con il nome reale dopo la generazione.
 ORDINE DI ANALISI NEI TEST: Per la narrativa di qualsiasi test clinico (es. cognitivo, nepsy, questionari, ecc.), esponi sempre prima il risultato globale/finale (es. QIT/IAG/ICC per la WISC-IV, o il punteggio totale del test) e solo successivamente procedi con l'analisi dettagliata dei singoli indici o subtest secondari. Questo ordine dal generale al particolare è tassativo.
 STRUTTURA E SUDDIVISIONE NARRATIVA SEZIONI CON SOTTOTEST/GRUPPI CONDIVISI O COMPLESSI:
-Se una sezione di un test clinico contiene gruppi o sottotest secondari (ad esempio i questionari CBCL con "Scale Sindromiche" e "Scale DSM Oriented", o la WISC-IV con i vari indici), non formattare mai il testo come un unico blocco narrativo omogeneo. 
+Se una sezione di un TEST CLINICO (cognitivo, nepsy, o un test dinamico come i questionari CBCL) contiene gruppi o sottotest secondari definiti nel suo template (ad esempio CBCL con "Scale Sindromiche" e "Scale DSM Oriented", o la WISC-IV con i vari indici), non formattare mai il testo come un unico blocco narrativo omogeneo.
 Spezza e suddividi esplicitamente la narrativa inserendo i tag di sottosezione corrispondenti (es. "=== SOTTOSEZIONE: Scale Sindromiche ===" prima di analizzare i subtest sindromici, o "=== SOTTOSEZIONE: Scale DSM Oriented ===" prima dell'analisi DSM). Questo permetterà di inserire e posizionare ciascuna parte di testo direttamente sotto la corrispettiva tabella.
+NON usare MAI questi tag "=== SOTTOSEZIONE: ... ===" nelle sezioni discorsive senza tabella (intestazione, anamnesi, osservazione, apprendimenti, conclusioni): anche se contengono più argomenti (es. diagnosi e raccomandazioni), scrivile come prosa continua o con **grassetto** per eventuali enfasi, mai con questi marcatori tecnici.
 CONCORDANZA GRAMMATICALE: ${istruzioneGenere}
 ${istruzioneLunghezza ? `\nLIVELLO DI DETTAGLIO RICHIESTO: ${istruzioneLunghezza}\n` : ''}
 Per ogni sezione richiesta del blocco, fornisci l'id esatto della sezione (così come indicato nel prompt utente) e il relativo testo narrativo. Non includere altre sezioni oltre a quelle richieste.
@@ -1183,7 +1179,7 @@ export async function rilevaNomiTestDaProfilo(profiloStile: string, templateEsis
 Analizza il profilo di stile fornito e individua tutti i test clinici o batterie menzionati nella sezione 7 o in altre parti del profilo (escludi WISC-IV e NEPSY-II).
 Non includere i test già esistenti: [${templateEsistenti.join(', ')}].`
 
-  return callGeminiStructured(promptSystem, profiloStile, NomiTestSchema, { maxOutputTokens: 1500, temperature: 0.1 })
+  return callGeministructured(promptSystem, profiloStile, NomiTestSchema, { maxOutputTokens: 1500, temperature: 0.1 })
 }
 
 export async function generaTemplateTest(testNome: string, profiloStile: string): Promise<GeneratedTestTemplate> {
@@ -1243,7 +1239,7 @@ Sii estremamente accurato nel mappare tutti i subtest, gli indici, le colonne e 
 Per "scalaDefault": usa "qi_wisc" o "scalare" solo se il test dichiara esplicitamente di riusare quelle scale standard; altrimenti usa "soglie_custom" con le soglie realmente descritte nel profilo (max null se non c'è limite superiore).
 Il campo "nome" deve essere esattamente "${testNome}".`
 
-  return callGeminiStructured(promptSystem, profiloStile, GeneratedTestTemplateSchema, { maxOutputTokens: 2500, temperature: 0.1 })
+  return callGeministructured(promptSystem, profiloStile, GeneratedTestTemplateSchema, { maxOutputTokens: 2500, temperature: 0.1 })
 }
 
 export { USE_MOCK_AI }
