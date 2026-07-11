@@ -23,9 +23,10 @@ export async function upsertPaziente(codice: string): Promise<Pick<Paziente, 'id
     if (!p) { p = { id: uid(), codice, created_at: new Date().toISOString() }; mockPazienti.push(p) }
     return p
   }
-  const { data: existing } = await supabase.from('pazienti').select('id').eq('codice', codice).single()
+  const userId = (await supabase.auth.getUser()).data.user?.id
+  const { data: existing } = await supabase.from('pazienti').select('id').eq('codice', codice).eq('owner_id', userId).single()
   if (existing) return existing
-  const { data } = await supabase.from('pazienti').insert({ codice }).select('id').single()
+  const { data } = await supabase.from('pazienti').insert({ codice, owner_id: userId }).select('id').single()
   return data as Pick<Paziente, 'id'>
 }
 
@@ -47,10 +48,12 @@ export async function upsertPazienteAnagrafica(anagrafica: AnagraficaPaziente, p
     return p
   }
 
+  const userId = (await supabase.auth.getUser()).data.user?.id
+
   if (pazienteId) {
-    const { data } = await supabase.from('pazienti').update(payload).eq('id', pazienteId).select().single()
+    const { data } = await supabase.from('pazienti').update(payload).eq('id', pazienteId).eq('owner_id', userId).select().single()
     return data as Paziente | null
   }
-  const { data } = await supabase.from('pazienti').insert(payload).select().single()
+  const { data } = await supabase.from('pazienti').insert({ ...payload, owner_id: userId }).select().single()
   return data as Paziente | null
 }

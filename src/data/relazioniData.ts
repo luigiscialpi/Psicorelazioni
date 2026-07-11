@@ -18,7 +18,8 @@ export async function insertRelazione(row: RelazioneInput): Promise<Relazione> {
     mockRelazioni.push(r)
     return r
   }
-  const { data } = await supabase.from('relazioni').insert(row).select().single()
+  const userId = (await supabase.auth.getUser()).data.user?.id
+  const { data } = await supabase.from('relazioni').insert({ ...row, owner_id: userId }).select().single()
   return data as Relazione
 }
 

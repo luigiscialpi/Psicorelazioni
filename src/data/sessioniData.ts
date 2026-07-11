@@ -23,7 +23,8 @@ export async function upsertSessione(id: Id | null, patch: Partial<SessioneWizar
     await supabase.from('sessioni_wizard').update(patch).eq('id', id)
     return { id }
   }
-  const { data } = await supabase.from('sessioni_wizard').insert(patch).select().single()
+  const userId = (await supabase.auth.getUser()).data.user?.id
+  const { data } = await supabase.from('sessioni_wizard').insert({ ...patch, owner_id: userId }).select().single()
   return data as SessioneWizard
 }
 

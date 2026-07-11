@@ -55,6 +55,7 @@ export type TemplateRilevatoItem = {
 }
 
 export type ProfiloStileRecord = {
+  id?: string
   documento_stile: string | null
   updated_at: string | null
   num_relazioni_analizzate: number
@@ -62,7 +63,7 @@ export type ProfiloStileRecord = {
 }
 
 export type ProfiloProfessionista = {
-  id?: number
+  id?: string
   nome_completo?: string | null
   genere?: string | null
   titolo?: string | null

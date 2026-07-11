@@ -38,12 +38,13 @@ export async function insertTestTemplate(t: Omit<TestTemplate,'id'|'createdAt'|'
   if (USE_MOCK) throw new Error("Operazione non supportata in modalità demo")
   
   const id = crypto.randomUUID()
+  const userId = (await supabase.auth.getUser()).data.user?.id
   const payload = {
     id,
     nome: t.nome,
     categoria: t.categoria,
     scala_default: t.scalaDefault,
-    campi_principali: t.campiPrincipali,
+    campi_principali: t.campi_principali,
     gruppi_secondari: t.gruppiSecondari,
     nota_range: t.notaRange,
     richiede_eta_valutazione: t.richiedeEtaValutazione,
@@ -52,7 +53,8 @@ export async function insertTestTemplate(t: Omit<TestTemplate,'id'|'createdAt'|'
     attivo: t.attivo,
     schema_version: t.schemaVersion || 1,
     colonne: t.colonne ?? ['Punteggio'],
-    formule: t.formule
+    formule: t.formule,
+    owner_id: userId
   }
   
   const { data, error } = await supabase.from('test_templates').insert(payload).select().single()

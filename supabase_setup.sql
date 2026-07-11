@@ -14,20 +14,21 @@ CREATE TABLE IF NOT EXISTS pazienti (
   cognome             TEXT,
   data_nascita        DATE,
   scuola_classe       TEXT,
-  codice              TEXT,   -- riferimento interno facoltativo, non più univoco/obbligatorio
+  codice              TEXT,
   eta_approssimativa  INTEGER,
   sesso               TEXT,
   tipo_consulto       TEXT,
-  note_generali       TEXT
+  note_generali       TEXT,
+  owner_id            UUID NOT NULL DEFAULT auth.uid()
 );
 
 -- 2. Tabella relazioni
 CREATE TABLE IF NOT EXISTS relazioni (
   id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   created_at            TIMESTAMPTZ DEFAULT now(),
-  updated_at            TIMESTAMPTZ DEFAULT now(), -- aggiornato ad ogni modifica post-generazione
-  tipo                  TEXT NOT NULL DEFAULT 'importata',  -- 'importata' | 'generata'
-  tipo_relazione        TEXT,   -- 'iniziale','follow-up','diagnostica','legale','scolastica','altro'
+  updated_at            TIMESTAMPTZ DEFAULT now(),
+  tipo                  TEXT NOT NULL DEFAULT 'importata',
+  tipo_relazione        TEXT,
   paziente_id           UUID REFERENCES pazienti(id) ON DELETE SET NULL,
   testo_markdown        TEXT NOT NULL,
   testo_originale_path  TEXT,
@@ -35,43 +36,40 @@ CREATE TABLE IF NOT EXISTS relazioni (
   note_interne          TEXT,
   anno                  INTEGER,
   tag                   TEXT[],
-  wizard_snapshot        JSONB   -- risposte complete del wizard (sezioni, punteggi, checkbox...)
-                                  -- SENZA anagrafica, che vive solo in pazienti.
-                                  -- Permette di riaprire e continuare a modificare
-                                  -- una relazione già generata senza ripartire da zero.
+  wizard_snapshot        JSONB,
+  owner_id              UUID NOT NULL DEFAULT auth.uid()
 );
 
--- 3. Tabella profilo_stile (singolo record)
+-- 3. Tabella profilo_stile (singolo record per utente)
 CREATE TABLE IF NOT EXISTS profilo_stile (
-  id                       INTEGER PRIMARY KEY DEFAULT 1,
-  updated_at               TIMESTAMPTZ DEFAULT now(), -- usato per l'analisi incrementale:
-                                                      -- le relazioni con created_at > updated_at
-                                                      -- sono "nuove" rispetto all'ultimo profilo
+  id                       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  owner_id                 UUID NOT NULL UNIQUE DEFAULT auth.uid(),
+  updated_at               TIMESTAMPTZ DEFAULT now(),
   documento_stile          TEXT,
   versione                 INTEGER DEFAULT 1,
   num_relazioni_analizzate INTEGER DEFAULT 0,
   note_manuali             TEXT,
-  template_rilevati        JSONB DEFAULT '[]'         -- suggerimenti rilevati da Gemini dal profilo;
-                                                      -- azzerati automaticamente quando il profilo
-                                                      -- viene rigenerato o modificato manualmente
+  template_rilevati        JSONB DEFAULT '[]'
 );
 
 -- 4. Tabella sessioni_wizard
 CREATE TABLE IF NOT EXISTS sessioni_wizard (
   id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   created_at          TIMESTAMPTZ DEFAULT now(),
-  stato               TEXT DEFAULT 'in_corso',  -- 'in_corso' | 'completata' | 'esportata'
+  owner_id            UUID NOT NULL DEFAULT auth.uid(),
+  stato               TEXT DEFAULT 'in_corso',
   risposte_wizard     JSONB,
   bozza_generata      TEXT,
   relazione_finale_id UUID REFERENCES relazioni(id) ON DELETE SET NULL
 );
 
--- 5. Tabella professionista (singolo record)
+-- 5. Tabella professionista (singolo record per utente)
 CREATE TABLE IF NOT EXISTS professionista (
-  id                  INTEGER PRIMARY KEY DEFAULT 1,
+  id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  owner_id            UUID NOT NULL UNIQUE DEFAULT auth.uid(),
   updated_at          TIMESTAMPTZ DEFAULT now(),
   nome_completo       TEXT,
-  genere              TEXT,  -- 'uomo' | 'donna' | 'non_binario'
+  genere              TEXT,
   titolo              TEXT,
   specializzazione    TEXT,
   email               TEXT,
@@ -86,41 +84,69 @@ CREATE TABLE IF NOT EXISTS professionista (
 ALTER TABLE professionista ADD COLUMN IF NOT EXISTS genere TEXT;
 ALTER TABLE profilo_stile  ADD COLUMN IF NOT EXISTS template_rilevati JSONB DEFAULT '[]';
 
--- 6. Tabella test_templates — definizioni dei test clinici (WISC-IV/NEPSY-II
--- built-in + eventuali test custom creati in "Gestione Test"). Letta/scritta
--- da src/data/testTemplatesData.ts.
+-- Isolamento per-utente: aggiungi colonne nullable, poi popola, poi vincola
+ALTER TABLE pazienti        ADD COLUMN IF NOT EXISTS owner_id UUID;
+ALTER TABLE relazioni       ADD COLUMN IF NOT EXISTS owner_id UUID;
+ALTER TABLE sessioni_wizard ADD COLUMN IF NOT EXISTS owner_id UUID;
+ALTER TABLE profilo_stile   ADD COLUMN IF NOT EXISTS owner_id UUID;
+ALTER TABLE professionista  ADD COLUMN IF NOT EXISTS owner_id UUID;
+ALTER TABLE test_templates  ADD COLUMN IF NOT EXISTS owner_id UUID;
+
+UPDATE pazienti        SET owner_id = COALESCE((SELECT auth.uid()), gen_random_uuid()) WHERE owner_id IS NULL;
+UPDATE relazioni       SET owner_id = COALESCE((SELECT auth.uid()), gen_random_uuid()) WHERE owner_id IS NULL;
+UPDATE sessioni_wizard SET owner_id = COALESCE((SELECT auth.uid()), gen_random_uuid()) WHERE owner_id IS NULL;
+UPDATE profilo_stile   SET owner_id = COALESCE((SELECT auth.uid()), gen_random_uuid()) WHERE owner_id IS NULL;
+UPDATE professionista  SET owner_id = COALESCE((SELECT auth.uid()), gen_random_uuid()) WHERE owner_id IS NULL;
+UPDATE test_templates  SET owner_id = COALESCE((SELECT auth.uid()), gen_random_uuid()) WHERE owner_id IS NULL AND built_in = false;
+
+ALTER TABLE pazienti        ALTER COLUMN owner_id SET NOT NULL;
+ALTER TABLE relazioni       ALTER COLUMN owner_id SET NOT NULL;
+ALTER TABLE sessioni_wizard ALTER COLUMN owner_id SET NOT NULL;
+ALTER TABLE profilo_stile   ALTER COLUMN owner_id SET NOT NULL;
+ALTER TABLE professionista  ALTER COLUMN owner_id SET NOT NULL;
+
+ALTER TABLE pazienti        ALTER COLUMN owner_id SET DEFAULT auth.uid();
+ALTER TABLE relazioni       ALTER COLUMN owner_id SET DEFAULT auth.uid();
+ALTER TABLE sessioni_wizard ALTER COLUMN owner_id SET DEFAULT auth.uid();
+ALTER TABLE profilo_stile   ALTER COLUMN owner_id SET DEFAULT auth.uid();
+ALTER TABLE professionista  ALTER COLUMN owner_id SET DEFAULT auth.uid();
+ALTER TABLE test_templates  ALTER COLUMN owner_id SET DEFAULT auth.uid();
+
+ALTER TABLE profilo_stile   ADD CONSTRAINT IF NOT EXISTS profilo_stile_owner_id_key UNIQUE (owner_id);
+ALTER TABLE professionista  ADD CONSTRAINT IF NOT EXISTS professionista_owner_id_key UNIQUE (owner_id);
+
+-- 6. Tabella test_templates
 CREATE TABLE IF NOT EXISTS test_templates (
   id                            TEXT PRIMARY KEY,
   nome                          TEXT NOT NULL,
   categoria                     TEXT NOT NULL,
   scala_default                 JSONB NOT NULL,
-  campi_principali               JSONB NOT NULL,   -- CampoTest[]
-  gruppi_secondari               JSONB,             -- GruppoTest[] | null
+  campi_principali               JSONB NOT NULL,
+  gruppi_secondari               JSONB,
   nota_range                    TEXT,
-  colonne                       JSONB DEFAULT '["Punteggio"]',  -- es. ["Punteggio","Percentile"]
-  formule                       JSONB,              -- FormulaCalcolo[] | null, es. indici derivati (IAG/ICC)
+  colonne                       JSONB DEFAULT '["Punteggio"]',
+  formule                       JSONB,
   richiede_eta_valutazione       BOOLEAN NOT NULL DEFAULT false,
   richiede_strumenti_utilizzati  BOOLEAN NOT NULL DEFAULT false,
   built_in                      BOOLEAN NOT NULL DEFAULT false,
   attivo                        BOOLEAN NOT NULL DEFAULT true,
   schema_version                 INTEGER NOT NULL DEFAULT 1,
   created_at                    TIMESTAMPTZ DEFAULT now(),
-  updated_at                    TIMESTAMPTZ DEFAULT now()
+  updated_at                    TIMESTAMPTZ DEFAULT now(),
+  owner_id                      UUID
 );
 
 ALTER TABLE test_templates ENABLE ROW LEVEL SECURITY;
 
--- Policy granulari (non il pattern "Accesso autenticato" unico usato sopra):
--- qualunque utente autenticato legge/crea/aggiorna, ma può ELIMINARE solo i
--- template non built-in, per proteggere WISC-IV/NEPSY-II da cancellazioni.
+-- Policy granulari: built-in visibili a tutti, custom isolati per utente
 CREATE POLICY "Utenti autenticati possono leggere test_templates" ON test_templates
-  FOR SELECT TO authenticated USING (true);
+  FOR SELECT TO authenticated USING (built_in = true OR auth.uid() = owner_id);
 CREATE POLICY "Utenti autenticati possono creare test_templates custom" ON test_templates
-  FOR INSERT TO authenticated WITH CHECK (true);
-CREATE POLICY "Utenti autenticati possono aggiornare test_templates" ON test_templates
-  FOR UPDATE TO authenticated USING (true);
+  FOR INSERT TO authenticated WITH CHECK (built_in = false AND auth.uid() = owner_id);
+CREATE POLICY "Utenti autenticati possono aggiornare test_templates custom" ON test_templates
+  FOR UPDATE TO authenticated USING (built_in = false AND auth.uid() = owner_id);
 CREATE POLICY "Utenti autenticati possono eliminare test_templates custom" ON test_templates
-  FOR DELETE TO authenticated USING (built_in = false);
+  FOR DELETE TO authenticated USING (built_in = false AND auth.uid() = owner_id);
 
 -- Seed: i due test built-in, nello stesso formato TestTemplate usato dal codice.
 INSERT INTO test_templates (id, nome, categoria, scala_default, campi_principali, gruppi_secondari, nota_range, richiede_eta_valutazione, richiede_strumenti_utilizzati, built_in, attivo, schema_version)
@@ -132,7 +158,7 @@ VALUES ('nepsy-ii', 'NEPSY-II', 'nepsy', '{"tipo":"scalare"}', '[{"key":"attenzi
 ON CONFLICT (id) DO NOTHING;
 
 -- ============================================================
--- Row Level Security: solo l'utente autenticato vede i suoi dati
+-- Row Level Security: isolamento per-utente (owner_id)
 -- ============================================================
 
 ALTER TABLE pazienti        ENABLE ROW LEVEL SECURITY;
@@ -141,12 +167,11 @@ ALTER TABLE profilo_stile   ENABLE ROW LEVEL SECURITY;
 ALTER TABLE sessioni_wizard ENABLE ROW LEVEL SECURITY;
 ALTER TABLE professionista  ENABLE ROW LEVEL SECURITY;
 
--- Policy: accesso solo per utenti autenticati (utente singola)
-CREATE POLICY "Accesso autenticato" ON pazienti        FOR ALL USING (auth.role() = 'authenticated');
-CREATE POLICY "Accesso autenticato" ON relazioni       FOR ALL USING (auth.role() = 'authenticated');
-CREATE POLICY "Accesso autenticato" ON profilo_stile   FOR ALL USING (auth.role() = 'authenticated');
-CREATE POLICY "Accesso autenticato" ON sessioni_wizard FOR ALL USING (auth.role() = 'authenticated');
-CREATE POLICY "Accesso autenticato" ON professionista  FOR ALL USING (auth.role() = 'authenticated');
+CREATE POLICY "Isolamento per owner_id" ON pazienti        FOR ALL USING (auth.uid() = owner_id) WITH CHECK (auth.uid() = owner_id);
+CREATE POLICY "Isolamento per owner_id" ON relazioni       FOR ALL USING (auth.uid() = owner_id) WITH CHECK (auth.uid() = owner_id);
+CREATE POLICY "Isolamento per owner_id" ON profilo_stile   FOR ALL USING (auth.uid() = owner_id) WITH CHECK (auth.uid() = owner_id);
+CREATE POLICY "Isolamento per owner_id" ON sessioni_wizard FOR ALL USING (auth.uid() = owner_id) WITH CHECK (auth.uid() = owner_id);
+CREATE POLICY "Isolamento per owner_id" ON professionista  FOR ALL USING (auth.uid() = owner_id) WITH CHECK (auth.uid() = owner_id);
 
 -- ============================================================
 -- Storage buckets (esegui separatamente da Supabase > Storage)
