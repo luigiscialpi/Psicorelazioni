@@ -11,7 +11,7 @@ import {
   OSSERVAZIONE_ADATTAMENTO_VOCI, OSSERVAZIONE_ATTEGGIAMENTO_VOCI,
 } from '../components/constants/anamnesiVoci'
 import { MOCK_WISC_IV_TEMPLATE, MOCK_NEPSY_II_TEMPLATE } from '../data/mockTemplates'
-import { generaSezioneTest, generaTabella, generaNarrativa, calcolaNarrativaGruppi } from './testTemplateEngine'
+import { generaTabella, generaNarrativa, calcolaNarrativaGruppi } from './testTemplateEngine'
 import type { RisultatoTest, TestTemplate } from '../core/testTemplate'
 
 // Converte le voci selezionate (+ eventuali dettagli) in una frase discorsiva

@@ -1,4 +1,4 @@
-import { useReducer, useEffect, useRef, useState, useMemo } from 'react'
+import { useReducer, useEffect, useRef, useState } from 'react'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { ChevronRight, ChevronLeft, Save, FlaskConical, Check, ShieldAlert } from 'lucide-react'
 import { getRelazioneById } from '../../data/relazioniData'
@@ -809,7 +809,6 @@ export default function WizardNuovaRelazione() {
   const sessionIdRef = useRef(null)
   const [saving, toggleSaving] = useReducer(s => !s, false)
   const saveTimer = useRef(null)
-  const [validationError, setValidationError] = useState('')
   const [templates, setTemplates] = useState<TestTemplate[]>([])
   // Step già visitati almeno una volta — serve per non marcare di rosso
   // step che l'utente non ha ancora raggiunto (sarebbe un falso allarme,
@@ -901,7 +900,7 @@ export default function WizardNuovaRelazione() {
     })()
 
     return () => { live = false }
-  }, [searchParams])
+  }, [searchParams, relazioneId, sessionId])
 
   useEffect(() => {
     if (hydrating) return

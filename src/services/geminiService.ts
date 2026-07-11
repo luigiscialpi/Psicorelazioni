@@ -697,22 +697,6 @@ export async function generaNarrativaSezioni(
       out['intestazione'] = `Il/la paziente {{NOME}} viene inviato/a da ${chiInvia} per ${wizard.motivo_invio || 'valutazione neuropsicologica'}.`
     }
     if (sez.includes('cognitivo') && wizard.cognitivo?.punteggi) {
-      const cleanPunteggi = (p: ScoreMap | undefined): Record<string, string | number> => {
-        const cleaned: Record<string, string | number> = {}
-        if (!p) return cleaned
-        for (const [k, v] of Object.entries(p)) {
-          if (typeof v === 'string' || typeof v === 'number') {
-            cleaned[k] = v
-          }
-        }
-        return cleaned
-      }
-
-      const ris: RisultatoTest = {
-        somministrato: true,
-        punteggi: cleanPunteggi(wizard.cognitivo.punteggi),
-        punteggiSecondari: cleanPunteggi(wizard.cognitivo.subtest_pp),
-      }
       const premessa = [
         wizard.cognitivo?.eta_valutazione ? `Età al momento della valutazione: ${wizard.cognitivo.eta_valutazione}.` : '',
         wizard.cognitivo?.strumenti_utilizzati ? `Strumenti utilizzati: ${wizard.cognitivo.strumenti_utilizzati}.` : '',

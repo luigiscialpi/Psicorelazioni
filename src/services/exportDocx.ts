@@ -21,7 +21,7 @@ import {
 } from 'docx'
 import type { AnagraficaPaziente, ProfiloProfessionista } from '../core/types'
 import { MOCK_WISC_IV_TEMPLATE, MOCK_NEPSY_II_TEMPLATE } from '../data/mockTemplates'
-import type { TestTemplate, RisultatoTest, ScalaPunteggio } from '../core/testTemplate'
+import type { TestTemplate, RisultatoTest } from '../core/testTemplate'
 import { calcolaFascia, getScalaApplicabile } from './testTemplateEngine'
 import { titoloSezioneTest } from './wizardToText'
 

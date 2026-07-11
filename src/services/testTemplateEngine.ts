@@ -142,7 +142,7 @@ export function valutaFormulaSicura(espressione: string, variabili: Record<strin
   try {
     const result = new Function(`return (${expr})`)()
     return typeof result === 'number' && !isNaN(result) ? result : NaN
-  } catch (e) {
+  } catch {
     return NaN
   }
 }
@@ -306,8 +306,6 @@ export function calcolaNarrativaGruppi(template: TestTemplate, risultato: Risult
     const dettagli = compilati
       .map(c => {
         const p = risultato.punteggiSecondari![c.key]
-        const scala = getScalaApplicabile(c, template) // Usa template.scalaDefault o g.scalaDefault in teoria, ma getScalaApplicabile supporta campo o template.
-        // Wait, getScalaApplicabile accepts CampoTest, TestTemplate.
         const scalaEffettiva = c.scala || g.scalaDefault || template.scalaDefault
         const fascia = calcolaFascia(p, scalaEffettiva)?.toLowerCase() ?? '-'
         return `${c.label} (pp ${p}, fascia ${fascia})`

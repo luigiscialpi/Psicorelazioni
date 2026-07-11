@@ -1,11 +1,10 @@
-import { useState, useEffect, useReducer } from 'react'
-import { Plus, Trash2, ChevronDown, ChevronUp, Eye, Save, AlertTriangle, Lock, FlaskConical, X, GripVertical, Check, Sparkles, Pencil } from 'lucide-react'
+import { useState, useEffect } from 'react'
+import { Plus, Trash2, ChevronDown, ChevronUp, Eye, Save, AlertTriangle, Lock, FlaskConical, X, Check, Sparkles, Pencil } from 'lucide-react'
 import {
   getTestTemplates, insertTestTemplate, updateTestTemplate, disattivaTestTemplate, deleteTestTemplate
 } from '../../data/testTemplatesData'
 import { validaSoglieCustom } from '../../services/testTemplateEngine'
-import { suggerisciTestDaArchivio, rilevaNomiTestDaProfilo, generaTemplateTest } from '../../services/geminiService'
-import { getRelazioni } from '../../data/relazioniData'
+import { rilevaNomiTestDaProfilo, generaTemplateTest } from '../../services/geminiService'
 import { getProfiloProfessionista, getProfiloStile, getTemplateRilevati, saveTemplateRilevati, clearTemplateRilevati } from '../../data/profiloData'
 import type { ProfiloProfessionista, TemplateRilevatoItem } from '../../core/types'
 import type { TestTemplate, CampoTest, GruppoTest, SogliaCustom, ScalaPunteggio } from '../../core/testTemplate'
@@ -672,7 +671,6 @@ export default function GestioneTest() {
   
   // Stati per suggerimenti AI
   const [suggerimenti, setSuggerimenti] = useState<string[]>([])
-  const [loadingSuggerimenti, setLoadingSuggerimenti] = useState(false)
 
   // Stati per suggerimenti da Profilo di Stile
   const [suggerimentiProfilo, setSuggerimentiProfilo] = useState<TemplateRilevatoItem[]>([])
