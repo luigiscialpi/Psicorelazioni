@@ -237,11 +237,13 @@ Routing dichiarativo (`react-router-dom`), definito in `components/pages/App.tsx
 | `/archivio` | `Archivio` | Archivio |
 | `/nuova` | `WizardNuovaRelazione` | Nuova relazione |
 | `/modifica` | `WizardNuovaRelazione` | (da Archivio, modifica relazione esistente) |
-| `/risultato/:relazioneId?` | `RisultatoGenerazione` | (parametro opzionale: assente per generazione appena completata) |
+| `/risultato/:relazioneId?` | `RisultatoGenerazione` | path param = id di `relazioni` (riapertura da Archivio); per una generazione fresca non ancora salvata usa invece `?sessionId=` in query string (vedi sotto) |
 | `/gestione-test` | `GestioneTest` | Gestione test |
 | `/`, `*` | → redirect `/dashboard` | |
 
 Tutte le pagine tranne `AuthScreen` sono caricate con `React.lazy`. Il layout con sidebar (`AppLayout`, dentro `App.tsx`) gestisce anche il drawer mobile.
+
+**Sicurezza-refresh su `/risultato`**: i dati per generare (`wizardData`) viaggiano in `location.state` di React Router, che un refresh del browser cancella. `RisultatoGenerazione.tsx` mitiga così: appena una generazione fresca ha successo, il testo viene salvato in `sessioni_wizard.bozza_generata` (riusando `wizardData._sessionId`, già creato dall'autosave del wizard durante la compilazione) e l'URL viene sostituito con `/risultato?sessionId=<id>` via `navigate(..., {replace:true})`. Se `location.state` va perso ma l'URL porta ancora quel `sessionId`, il componente ricarica il testo da Supabase invece di richiamare Gemini una seconda volta (l'LLM non è deterministico: una rigenerazione può produrre un testo diverso dal primo) o di buttare via la generazione. Resta una finestra residua stretta: un refresh durante i pochi secondi della *prima* chiamata a Gemini (prima che l'URL venga aggiornato) perde comunque lo stato, dato che a quel punto in-corso non c'è ancora nulla da recuperare.
 
 ## 10. Convenzioni di sviluppo
 
