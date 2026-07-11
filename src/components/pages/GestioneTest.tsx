@@ -1,4 +1,11 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useReducer } from 'react'
+import {
+  formTemplateReducer,
+  gestioneTestReducer,
+  GESTIONE_TEST_INIT,
+  INIT_FORM,
+} from '../state/gestioneTestState'
+import type { FormState } from '../state/gestioneTestState'
 import { Plus, Trash2, ChevronDown, ChevronUp, Eye, Save, AlertTriangle, Lock, FlaskConical, X, Check, Sparkles, Pencil } from 'lucide-react'
 import {
   getTestTemplates, insertTestTemplate, updateTestTemplate, disattivaTestTemplate, deleteTestTemplate
@@ -6,7 +13,6 @@ import {
 import { validaSoglieCustom } from '../../services/testTemplateEngine'
 import { rilevaNomiTestDaProfilo, generaTemplateTest } from '../../services/geminiService'
 import { getProfiloProfessionista, getProfiloStile, getTemplateRilevati, saveTemplateRilevati, clearTemplateRilevati } from '../../data/profiloData'
-import type { ProfiloProfessionista, TemplateRilevatoItem } from '../../core/types'
 import type { TestTemplate, CampoTest, GruppoTest, SogliaCustom, ScalaPunteggio } from '../../core/testTemplate'
 import { USE_MOCK } from '../../core/config'
 
@@ -19,29 +25,6 @@ function sanitizzaStringa(s: string): string {
     .replace(/\|[^\n]+\|/g, '')   // rimuove righe tabella markdown
     .replace(/[-]{3,}/g, '')       // rimuove separatori markdown
     .trim()
-}
-
-// ── Form state types ──────────────────────────────────────────
-type FormState = {
-  nome: string
-  categoria: TestTemplate['categoria']
-  scalaDefault: ScalaPunteggio
-  campiPrincipali: Array<{ key: string; label: string; descr: string }>
-  gruppiSecondari: Array<{ key: string; label: string; campi: Array<{ key: string; label: string }> }>
-  notaRange: string
-  richiedeEtaValutazione: boolean
-  richiedeStrumentiUtilizzati: boolean
-}
-
-const INIT_FORM: FormState = {
-  nome: '',
-  categoria: 'altro',
-  scalaDefault: { tipo: 'scalare' },
-  campiPrincipali: [{ key: '', label: '', descr: '' }],
-  gruppiSecondari: [],
-  notaRange: '',
-  richiedeEtaValutazione: false,
-  richiedeStrumentiUtilizzati: false,
 }
 
 // ── Conversione template → FormState ─────────────────────────
@@ -67,14 +50,6 @@ function templateToForm(t: TestTemplate): FormState {
     richiedeEtaValutazione: t.richiedeEtaValutazione,
     richiedeStrumentiUtilizzati: t.richiedeStrumentiUtilizzati,
   }
-}
-
-// ── Generazione slug automatica ───────────────────────────────
-function toSlug(s: string): string {
-  return s.toLowerCase()
-    .normalize('NFD').replace(/[\u0300-\u036f]/g, '') // rimuove accenti
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-|-$/g, '')
 }
 
 // ── Anteprima calcolo fascia fittizio ─────────────────────────
@@ -225,74 +200,47 @@ function FormTemplate({
   onSave: (f: FormState) => Promise<void>
   onCancel: () => void
 }) {
-  const [form, setForm] = useState<FormState>(initial || INIT_FORM)
-  const [soglieCustom, setSoglieCustom] = useState<SogliaCustom[]>(
-    initial?.scalaDefault.tipo === 'soglie_custom' ? initial.scalaDefault.soglie : []
-  )
-  const [showPreview, setShowPreview] = useState(false)
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState('')
+  const [state, dispatch] = useReducer(formTemplateReducer, {
+    form: initial || INIT_FORM,
+    soglieCustom: initial?.scalaDefault.tipo === 'soglie_custom' ? initial.scalaDefault.soglie : [],
+    showPreview: false,
+    saving: false,
+    error: '',
+  })
+
+  const { form, soglieCustom, showPreview, saving, error } = state
 
   function setField<K extends keyof FormState>(k: K, v: FormState[K]) {
-    setForm(f => ({ ...f, [k]: v }))
+    dispatch({ type: 'SET_FIELD', payload: { key: k, value: v } })
   }
 
   function addCampo() {
-    setForm(f => ({ ...f, campiPrincipali: [...f.campiPrincipali, { key: '', label: '', descr: '' }] }))
+    dispatch({ type: 'ADD_CAMPO' })
   }
   function removeCampo(i: number) {
-    setForm(f => ({ ...f, campiPrincipali: f.campiPrincipali.filter((_, idx) => idx !== i) }))
+    dispatch({ type: 'REMOVE_CAMPO', payload: i })
   }
   function updateCampo(i: number, field: string, v: string) {
-    const next = form.campiPrincipali.map((c, idx) => {
-      if (idx !== i) return c
-      const updated = { ...c, [field]: v }
-      // auto-genera chiave dal label se la chiave è vuota o era auto-generata
-      if (field === 'label') updated.key = toSlug(v)
-      return updated
-    })
-    setForm(f => ({ ...f, campiPrincipali: next }))
+    dispatch({ type: 'UPDATE_CAMPO', payload: { idx: i, field, value: v } })
   }
 
   function addGruppo() {
-    setForm(f => ({ ...f, gruppiSecondari: [...f.gruppiSecondari, { key: '', label: '', campi: [{ key: '', label: '' }] }] }))
+    dispatch({ type: 'ADD_GRUPPO' })
   }
   function removeGruppo(i: number) {
-    setForm(f => ({ ...f, gruppiSecondari: f.gruppiSecondari.filter((_, idx) => idx !== i) }))
+    dispatch({ type: 'REMOVE_GRUPPO', payload: i })
   }
   function updateGruppo(i: number, field: string, v: string) {
-    const next = form.gruppiSecondari.map((g, idx) => {
-      if (idx !== i) return g
-      const updated = { ...g, [field]: v }
-      if (field === 'label') updated.key = toSlug(v)
-      return updated
-    })
-    setForm(f => ({ ...f, gruppiSecondari: next }))
+    dispatch({ type: 'UPDATE_GRUPPO', payload: { idx: i, field, value: v } })
   }
   function addCampoGruppo(gi: number) {
-    const next = form.gruppiSecondari.map((g, idx) =>
-      idx === gi ? { ...g, campi: [...g.campi, { key: '', label: '' }] } : g
-    )
-    setForm(f => ({ ...f, gruppiSecondari: next }))
+    dispatch({ type: 'ADD_CAMPO_GRUPPO', payload: gi })
   }
   function removeCampoGruppo(gi: number, ci: number) {
-    const next = form.gruppiSecondari.map((g, idx) =>
-      idx === gi ? { ...g, campi: g.campi.filter((_, cidx) => cidx !== ci) } : g
-    )
-    setForm(f => ({ ...f, gruppiSecondari: next }))
+    dispatch({ type: 'REMOVE_CAMPO_GRUPPO', payload: { gi, ci } })
   }
   function updateCampoGruppo(gi: number, ci: number, field: string, v: string) {
-    const next = form.gruppiSecondari.map((g, gidx) => {
-      if (gidx !== gi) return g
-      const nuoviCampi = g.campi.map((c, cidx) => {
-        if (cidx !== ci) return c
-        const updated = { ...c, [field]: v }
-        if (field === 'label') updated.key = toSlug(v)
-        return updated
-      })
-      return { ...g, campi: nuoviCampi }
-    })
-    setForm(f => ({ ...f, gruppiSecondari: next }))
+    dispatch({ type: 'UPDATE_CAMPO_GRUPPO', payload: { gi, ci, field, value: v } })
   }
 
   function getScalaEffettiva(): ScalaPunteggio {
@@ -316,9 +264,11 @@ function FormTemplate({
 
   async function handleSave() {
     const err = validate()
-    if (err) { setError(err); return }
-    setError('')
-    setSaving(true)
+    if (err) {
+      dispatch({ type: 'SAVE_ERROR', payload: err })
+      return
+    }
+    dispatch({ type: 'START_SAVE' })
     try {
       const scala = getScalaEffettiva()
       const sanitized: FormState = {
@@ -338,10 +288,9 @@ function FormTemplate({
         })),
       }
       await onSave(sanitized)
+      dispatch({ type: 'SAVE_SUCCESS' })
     } catch (e: any) {
-      setError(e.message || 'Errore durante il salvataggio.')
-    } finally {
-      setSaving(false)
+      dispatch({ type: 'SAVE_ERROR', payload: e.message || 'Errore durante il salvataggio.' })
     }
   }
 
@@ -405,8 +354,7 @@ function FormTemplate({
               <span />
             </div>
             <EditorSoglieCustom soglie={soglieCustom} onChange={soglie => {
-              setSoglieCustom(soglie)
-              setField('scalaDefault', { tipo: 'soglie_custom', soglie })
+              dispatch({ type: 'SET_SOGLIE_CUSTOM', payload: soglie })
             }} />
           </div>
         )}
@@ -522,7 +470,7 @@ function FormTemplate({
       </div>
 
       {/* Anteprima */}
-      <button type="button" onClick={() => setShowPreview(v => !v)} style={{
+      <button type="button" onClick={() => dispatch({ type: 'TOGGLE_PREVIEW' })} style={{
         fontSize: 12, color: 'var(--accent)', background: 'none', border: '1px solid var(--border)',
         borderRadius: 'var(--radius)', padding: '6px 12px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, marginBottom: 14,
       }}>
@@ -659,25 +607,25 @@ function TemplateCard({ template, onDisattiva, onDelete, onEditSave, onEditCance
 
 // ── Pagina principale ─────────────────────────────────────────
 export default function GestioneTest() {
-  const [templates, setTemplates] = useState<TestTemplate[]>([])
-  const [loading, setLoading] = useState(true)
-  const [showForm, setShowForm] = useState(false)
-  const [formInitial, setFormInitial] = useState<FormState | undefined>(undefined)
-  const [editingTemplateId, setEditingTemplateId] = useState<string | null>(null)
-  const [confirmDisattiva, setConfirmDisattiva] = useState<string | null>(null)
-  const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
-  const [profilo, setProfilo] = useState<ProfiloProfessionista | null>(null)
-  const [successo, setSuccesso] = useState('')
-  
-  // Stati per suggerimenti AI
-  const [suggerimenti, setSuggerimenti] = useState<string[]>([])
+  const [state, dispatch] = useReducer(gestioneTestReducer, GESTIONE_TEST_INIT)
 
-  // Stati per suggerimenti da Profilo di Stile
-  const [suggerimentiProfilo, setSuggerimentiProfilo] = useState<TemplateRilevatoItem[]>([])
-  const [loadingProfilo, setLoadingProfilo] = useState(false)
-  const [erroreProfilo, setErroreProfilo] = useState('')
-  const [loadingEstraiTest, setLoadingEstraiTest] = useState<string | null>(null)
-  const [accordionAperto, setAccordionAperto] = useState(true)
+  const {
+    templates,
+    loading,
+    showForm,
+    formInitial,
+    editingTemplateId,
+    confirmDisattiva,
+    confirmDelete,
+    profilo,
+    successo,
+    suggerimenti,
+    suggerimentiProfilo,
+    loadingProfilo,
+    erroreProfilo,
+    loadingEstraiTest,
+    accordionAperto,
+  } = state
 
   useEffect(() => {
     Promise.all([
@@ -685,67 +633,81 @@ export default function GestioneTest() {
       getProfiloProfessionista(),
       getTemplateRilevati(),
     ]).then(([t, prof, rilevati]) => {
-      setTemplates(t)
-      setProfilo(prof)
-      setSuggerimentiProfilo(rilevati)
-      setLoading(false)
+      dispatch({
+        type: 'LOAD_DATA_SUCCESS',
+        payload: { templates: t, profilo: prof, suggerimentiProfilo: rilevati },
+      })
     })
   }, [])
 
   function precompilaDaSuggerimento(nome: string) {
-    setFormInitial({ ...INIT_FORM, nome })
-    setShowForm(true)
-    setSuggerimenti(s => s.filter(x => x !== nome))
+    dispatch({
+      type: 'OPEN_EDIT_FORM',
+      payload: { initial: { ...INIT_FORM, nome }, id: '' }
+    })
+    dispatch({
+      type: 'SET_SUGGERIMENTI',
+      payload: suggerimenti.filter(x => x !== nome),
+    })
   }
 
   async function handleEstraiDaProfilo() {
-    setLoadingProfilo(true)
-    setErroreProfilo('')
+    dispatch({ type: 'START_ESTRAZIONE_PROFILO' })
     try {
       const profiloStile = await getProfiloStile()
       if (!profiloStile || !profiloStile.trim()) {
-        setErroreProfilo('Nessun Profilo di Stile trovato. Generalo prima nella pagina "Il mio stile".')
-        setTimeout(() => setErroreProfilo(''), 5000)
+        dispatch({
+          type: 'ESTRAZIONE_PROFILO_ERROR',
+          payload: 'Nessun Profilo di Stile trovato. Generalo prima nella pagina "Il mio stile".',
+        })
+        setTimeout(() => dispatch({ type: 'ESTRAZIONE_PROFILO_ERROR', payload: '' }), 5000)
         return
       }
       const nomiEsistenti = templates.map(t => t.nome)
       const res = await rilevaNomiTestDaProfilo(profiloStile, nomiEsistenti)
       if (res.length === 0) {
-        setSuccesso('Nessun nuovo test template rilevato nel tuo Profilo di Stile.')
-        setTimeout(() => setSuccesso(''), 4000)
+        dispatch({
+          type: 'ESTRAZIONE_PROFILO_SUCCESS',
+          payload: { suggerimentiProfilo: [], successo: 'Nessun nuovo test template rilevato nel tuo Profilo di Stile.' },
+        })
+        setTimeout(() => dispatch({ type: 'CLEAR_SUCCESS_MSG' }), 4000)
         // Azzera anche quelli salvati, così la UI è coerente
         await clearTemplateRilevati()
-        setSuggerimentiProfilo([])
       } else {
         // Rimpiazza sempre (non additivo)
         await saveTemplateRilevati(res)
-        setSuggerimentiProfilo(res)
-        setAccordionAperto(true)
+        dispatch({
+          type: 'ESTRAZIONE_PROFILO_SUCCESS',
+          payload: { suggerimentiProfilo: res },
+        })
       }
     } catch (e: any) {
       console.error(e)
-      setErroreProfilo('Errore durante l\'estrazione: ' + e.message)
-      setTimeout(() => setErroreProfilo(''), 5000)
-    } finally {
-      setLoadingProfilo(false)
+      dispatch({
+        type: 'ESTRAZIONE_PROFILO_ERROR',
+        payload: 'Errore durante l\'estrazione: ' + e.message,
+      })
+      setTimeout(() => dispatch({ type: 'ESTRAZIONE_PROFILO_ERROR', payload: '' }), 5000)
     }
   }
 
   async function precompilaDaProfilo(nome: string) {
-    setLoadingEstraiTest(nome)
-    setErroreProfilo('')
+    dispatch({ type: 'START_PRECOMPILAZIONE', payload: nome })
     try {
       const profiloStile = await getProfiloStile()
       if (!profiloStile || !profiloStile.trim()) {
-        setErroreProfilo('Nessun Profilo di Stile trovato.')
+        dispatch({ type: 'PRECOMPILAZIONE_ERROR', payload: 'Nessun Profilo di Stile trovato.' })
         return
       }
       const t = await generaTemplateTest(nome, profiloStile)
       if (!t) {
-        setErroreProfilo(`Impossibile generare il template dettagliato per il test "${nome}".`)
+        dispatch({
+          type: 'PRECOMPILAZIONE_ERROR',
+          payload: `Impossibile generare il template dettagliato per il test "${nome}".`,
+        })
         return
       }
-      setFormInitial({
+      const initial: FormState = {
         nome: t.nome || nome,
         categoria: t.categoria || 'altro',
         scalaDefault: t.scalaDefault || { tipo: 'scalare' },
@@ -754,17 +716,20 @@ export default function GestioneTest() {
         notaRange: t.notaRange || '',
         richiedeEtaValutazione: t.richiedeEtaValutazione ?? false,
         richiedeStrumentiUtilizzati: t.richiedeStrumentiUtilizzati ?? false,
-      })
-      setShowForm(true)
+      }
       // Rimuovi questo item dai suggerimenti salvati
       const aggiornati = suggerimentiProfilo.filter(x => x.nome !== nome)
-      setSuggerimentiProfilo(aggiornati)
       await saveTemplateRilevati(aggiornati)
+      dispatch({
+        type: 'PRECOMPILAZIONE_SUCCESS',
+        payload: { initial, suggerimentiProfilo: aggiornati },
+      })
     } catch (e: any) {
       console.error(e)
-      setErroreProfilo('Errore durante la generazione del template: ' + e.message)
-    } finally {
-      setLoadingEstraiTest(null)
+      dispatch({
+        type: 'PRECOMPILAZIONE_ERROR',
+        payload: 'Errore durante la generazione del template: ' + e.message,
+      })
     }
   }
 
@@ -783,12 +748,12 @@ export default function GestioneTest() {
         richiedeStrumentiUtilizzati: form.richiedeStrumentiUtilizzati,
       })
       const updated = await getTestTemplates()
-      setTemplates(updated)
-      setShowForm(false)
-      setEditingTemplateId(null)
-      setFormInitial(undefined)
-      setSuccesso(`Template "${sanitizzaStringa(form.nome)}" aggiornato con successo.`)
-      setTimeout(() => setSuccesso(''), 4000)
+      dispatch({
+        type: 'OPERATION_SUCCESS',
+        payload: { templates: updated, successo: `Template "${sanitizzaStringa(form.nome)}" aggiornato con successo.` },
+      })
+      dispatch({ type: 'CLOSE_FORM' })
+      setTimeout(() => dispatch({ type: 'CLEAR_SUCCESS_MSG' }), 4000)
       return
     }
     // Modalità creazione
@@ -806,36 +771,44 @@ export default function GestioneTest() {
       colonne: ['Punteggio'],
     })
     const updated = await getTestTemplates()
-    setTemplates(updated)
-    setShowForm(false)
-    setSuccesso(`Template "${nuovoTemplate.nome}" aggiunto con successo.`)
-    setTimeout(() => setSuccesso(''), 4000)
+    dispatch({
+      type: 'OPERATION_SUCCESS',
+      payload: { templates: updated, successo: `Template "${nuovoTemplate.nome}" aggiunto con successo.` },
+    })
+    dispatch({ type: 'CLOSE_FORM' })
+    setTimeout(() => dispatch({ type: 'CLEAR_SUCCESS_MSG' }), 4000)
   }
 
   async function handleDisattiva(id: string) {
     await disattivaTestTemplate(id)
     const updated = await getTestTemplates()
-    setTemplates(updated)
-    setConfirmDisattiva(null)
-    setSuccesso('Template disattivato. Non comparirà più nel wizard.')
-    setTimeout(() => setSuccesso(''), 4000)
+    dispatch({
+      type: 'OPERATION_SUCCESS',
+      payload: { templates: updated, successo: 'Template disattivato. Non comparirà più nel wizard.' },
+    })
+    dispatch({ type: 'SET_CONFIRM_DISATTIVA', payload: null })
+    setTimeout(() => dispatch({ type: 'CLEAR_SUCCESS_MSG' }), 4000)
   }
 
   async function handleRiattiva(id: string) {
     await updateTestTemplate(id, { attivo: true })
     const updated = await getTestTemplates()
-    setTemplates(updated)
-    setSuccesso('Template riattivato. Comparirà di nuovo nel wizard.')
-    setTimeout(() => setSuccesso(''), 4000)
+    dispatch({
+      type: 'OPERATION_SUCCESS',
+      payload: { templates: updated, successo: 'Template riattivato. Comparirà di nuovo nel wizard.' },
+    })
+    setTimeout(() => dispatch({ type: 'CLEAR_SUCCESS_MSG' }), 4000)
   }
 
   async function handleDelete(id: string) {
     await deleteTestTemplate(id)
     const updated = await getTestTemplates()
-    setTemplates(updated)
-    setConfirmDelete(null)
-    setSuccesso('Template eliminato definitivamente.')
-    setTimeout(() => setSuccesso(''), 4000)
+    dispatch({
+      type: 'OPERATION_SUCCESS',
+      payload: { templates: updated, successo: 'Template eliminato definitivamente.' },
+    })
+    dispatch({ type: 'SET_CONFIRM_DELETE', payload: null })
+    setTimeout(() => dispatch({ type: 'CLEAR_SUCCESS_MSG' }), 4000)
   }
 
   const attivi = templates.filter(t => t.attivo)
@@ -973,10 +946,7 @@ export default function GestioneTest() {
                   </button>
                   <button
                     className="btn btn-primary btn-sm"
-                    onClick={() => {
-                      setFormInitial(undefined);
-                      setShowForm(true);
-                    }}
+                    onClick={() => dispatch({ type: 'OPEN_CREATE_FORM' })}
                     style={{ display: "flex", alignItems: "center", gap: 6 }}
                   >
                     <Plus size={14} /> Nuovo template
@@ -1016,7 +986,7 @@ export default function GestioneTest() {
                 {/* Header accordion */}
                 <button
                   type="button"
-                  onClick={() => setAccordionAperto((v) => !v)}
+                  onClick={() => dispatch({ type: 'SET_ACCORDION_APERTO', payload: !accordionAperto })}
                   style={{
                     width: "100%",
                     display: "flex",
@@ -1138,7 +1108,7 @@ export default function GestioneTest() {
                       type="button"
                       onClick={async () => {
                         await clearTemplateRilevati();
-                        setSuggerimentiProfilo([]);
+                        dispatch({ type: 'CLEAR_SUGGERIMENTI_PROFILO' });
                       }}
                       style={{
                         fontSize: 11.5,
@@ -1236,11 +1206,7 @@ export default function GestioneTest() {
                 <FormTemplate
                   initial={formInitial}
                   onSave={handleSave}
-                  onCancel={() => {
-                    setShowForm(false);
-                    setEditingTemplateId(null);
-                    setFormInitial(undefined);
-                  }}
+                  onCancel={() => dispatch({ type: 'CLOSE_FORM' })}
                 />
               </div>
             )}
@@ -1251,13 +1217,10 @@ export default function GestioneTest() {
                   key={t.id}
                   template={t}
                   onEditSave={handleSave}
-                  onEditCancel={() => {
-                    setEditingTemplateId(null);
-                    setFormInitial(undefined);
-                  }}
-                  onDisattiva={() => setConfirmDisattiva(t.id)}
+                  onEditCancel={() => dispatch({ type: 'CLOSE_FORM' })}
+                  onDisattiva={() => dispatch({ type: 'SET_CONFIRM_DISATTIVA', payload: t.id })}
                   onDelete={
-                    !t.builtIn ? () => setConfirmDelete(t.id) : undefined
+                    !t.builtIn ? () => dispatch({ type: 'SET_CONFIRM_DELETE', payload: t.id }) : undefined
                   }
                 />
               ))}
@@ -1298,7 +1261,7 @@ export default function GestioneTest() {
                   template={t}
                   onRiattiva={() => handleRiattiva(t.id)}
                   onDelete={
-                    !t.builtIn ? () => setConfirmDelete(t.id) : undefined
+                    !t.builtIn ? () => dispatch({ type: 'SET_CONFIRM_DELETE', payload: t.id }) : undefined
                   }
                 />
               ))}
@@ -1367,7 +1330,7 @@ export default function GestioneTest() {
                 </button>
                 <button
                   className="btn btn-secondary"
-                  onClick={() => setConfirmDisattiva(null)}
+                  onClick={() => dispatch({ type: 'SET_CONFIRM_DISATTIVA', payload: null })}
                 >
                   Annulla
                 </button>
@@ -1448,7 +1411,7 @@ export default function GestioneTest() {
                     </button>
                     <button
                       className="btn btn-secondary"
-                      onClick={() => setConfirmDelete(null)}
+                      onClick={() => dispatch({ type: 'SET_CONFIRM_DELETE', payload: null })}
                     >
                       Annulla
                     </button>
