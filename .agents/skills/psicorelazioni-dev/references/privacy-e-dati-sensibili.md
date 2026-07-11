@@ -1,45 +1,44 @@
 # Privacy e dati sensibili — approfondimento
 
+> Il resoconto completo (misure tecniche, rischio residuo con API key gratuita, autenticazione) è in README §8. Qui: le regole da applicare quando scrivi codice che tocca dati del paziente o chiamate Gemini.
+
 ## Perché questo file esiste
 
-PsicoRelazioni tratta dati sanitari di minori (valutazioni neuropsicologiche, diagnosi DSA/ADHD). Non è un dettaglio implementativo qualsiasi: è il vincolo che ha guidato più correzioni di ogni altra parte del progetto (vedi in particolare le correzioni 3, 6, 11, 21, 22, 23 in `docs-ai/piano_implementazione_relazioni.md`).
+PsicoRelazioni tratta dati sanitari di minori (valutazioni neuropsicologiche, diagnosi DSA/ADHD). La privacy non è un dettaglio implementativo ma un vincolo architetturale: l'anonimizzazione non è un filtro finale applicato "prima di inviare", ma una separazione incorporata fin dalla progettazione del flusso dati. Ogni nuova funzionalità che introduce una chiamata AI deve preservarla.
 
-## Cosa non arriva mai a Gemini
+## Il confine di privacy
 
-- Nome, cognome, data di nascita, scuola/classe del paziente (`anagrafica`) — rimossi per destructuring prima di ogni prompt in `geminiService.ts`
-- Chiunque venga nominato incidentalmente in un testo libero importato (altri specialisti, familiari) — sostituito con `[PERSONA]` da `anonimizza.ts`
+L'applicazione separa sempre `AnagraficaPaziente` (dati identificativi: nome, cognome, data di nascita, scuola/classe, e i riferimenti accidentali a specialisti/familiari/insegnanti nei testi importati) dal resto dei dati clinici. Prima di costruire un prompt per Gemini, il dominio va sempre diviso in identificativi (mai inviati) e clinici anonimizzati (possono esserlo). Non introdurre nuove chiamate Gemini che ricevano l'intero `WizardData` senza questa separazione esplicita.
 
-## Cosa arriva a Gemini, e perché è un'eccezione consapevole
+**Eccezioni deliberate, non dimenticanze:**
+- **Genere** — mantenuto per la concordanza grammaticale italiana della relazione.
+- **Nome dell'inviante** — mantenuto solo se l'utente vuole che compaia esplicitamente nel referto finale; se invece è un dato del paziente o un riferimento accidentale, va anonimizzato. La domanda guida è sempre: *l'utente desidera che questa informazione compaia nel documento?*
 
-- **`genere`** (maschio/femmina) del paziente — serve per la concordanza grammaticale italiana ("il minore accetta" vs "la ragazzina accetta"). È l'unico dato anagrafico-adiacente presente nel payload.
-- **`nome_inviante`** (es. "dott.ssa Maria Rossi", il professionista che invia il paziente) — a differenza dei nomi citati incidentalmente in anamnesi, questo nome è *voluto* nel testo finale ("su segnalazione della Dott.ssa Rossi..."). Non passa dal filtro di anonimizzazione: sostituirlo con `[PERSONA]` produrrebbe l'opposto di quanto richiesto.
+Nessuna delle due eccezioni autorizza a inviare altri dati anagrafici "per comodità".
 
-Se stai lavorando su un campo simile, la domanda guida è: *l'utente vuole vedere questo dato per esteso nel referto?* Se sì, non anonimizzarlo. Se è un dato del paziente o di un terzo menzionato incidentalmente, anonimizzalo.
+## `anonimizza.ts`
 
-## `anonimizza.ts` — come funziona
+`anonimizzaTesto()` lavora interamente lato client (nessuna chiamata di rete) applicando sostituzioni regex progressive sul Markdown, sostituendo con placeholder tipo `[PAZIENTE]`: nome/cognome, data di nascita, titoli professionali con nominativo, telefoni, partita IVA, codice fiscale, indirizzi, scuole, altri riferimenti identificativi. **L'ordine delle sostituzioni è significativo** — una regex introdotta dopo può smettere di matchare se una regex precedente ha già sostituito parte del testo con un placeholder. Quando aggiungi una nuova regola, verifica che non interferisca con quelle esistenti e presta attenzione ai falsi positivi (nomi comuni che coincidono con parole del linguaggio clinico).
 
-Applica sostituzioni locali, **senza chiamate di rete**, sul testo Markdown prima di `analizzaStile`/`aggiornaProfiloIncrementale`. L'ordine conta, perché regole successive operano su testo già ripulito dalle precedenti:
+**Anteprima obbligatoria**: prima dell'invio a Gemini l'utente deve vedere e confermare il testo anonimizzato. Non è opzionale — qualunque nuovo flusso che avvia un'analisi AI deve passare dallo stesso meccanismo di conferma, mai chiamare direttamente il servizio Gemini bypassandolo.
 
-1. Nome+cognome del paziente collegato (se noto via `paziente_id`) → `[PAZIENTE]`
-2. Pattern "Nome Cognome, nato/a il..." in testo libero → `[PAZIENTE]` + `[DATA]`
-3. Date dopo "nato/nata (il)" → `[DATA]`
-4. Titoli professionali + nome (dott./dott.ssa/dr./prof...) → `[PERSONA]`
-5. Telefoni (con e senza prefisso esplicito) → `[TELEFONO]`
-6. Partita IVA → `[PIVA]`
-7. Codice fiscale → `[CF]`
-8. Indirizzi (via/piazza/corso + numero) → `[INDIRIZZO]`
-9. Nomi di scuole/istituti → `[SCUOLA]`
+L'introduzione di `callGeminiStructured()` non cambia queste regole: privacy e validazione Zod sono responsabilità indipendenti, uno schema corretto non rende automaticamente sicuro il contenuto inviato.
 
-Nota tecnica se estendi le regex: nel pattern dei titoli professionali, il titolo è case-insensitive tramite una classe di caratteri esplicita, ma il nome proprio che segue resta case-sensitive (richiede maiuscola vera). Un flag `/i` globale su quella regex catturerebbe per errore parole minuscole comuni come "presso" — bug reale osservato e corretto in passato con la frase "dott.ssa Concetta De Giambattista presso il Cepsia".
+## Logging
 
-## L'anteprima è obbligatoria, non un nice-to-have
+Durante lo sviluppo, non loggare prompt completi, payload destinati a Gemini, anagrafica, o testi clinici non anonimizzati. Per debug, preferisci identificativi tecnici, conteggi, metadati, o versioni già anonimizzate del payload.
 
-In `ProfiloStile.tsx`, prima di confermare l'invio a Gemini per l'analisi di stile, l'utente **deve vedere** il testo anonimizzato con le sostituzioni evidenziate e confermare esplicitamente ("Ho verificato, procedi con l'analisi"). Nessun percorso di codice deve poter bypassare questa anteprima: se aggiungi un nuovo modo di avviare l'analisi (es. un pulsante rapido da un'altra pagina), deve passare dallo stesso step di conferma, non chiamare `analizzaStile` direttamente.
+## Limiti dell'anonimizzazione
 
-## Il rischio residuo, onestamente
-
-L'anonimizzazione è euristica (pattern/regex), non garantita al 100% — un avviso persistente lo ricorda all'utente. Anche perfettamente anonimizzato, il contenuto clinico (osservazioni, punteggi, diagnosi) resta un dato sanitario. La Gemini API gratuita usata in sviluppo potrebbe essere usata da Google per migliorare i propri modelli: per un uso professionale reale e continuativo, il progetto stesso raccomanda di valutare Vertex AI con un DPA (Data Processing Agreement) firmato, non l'API gratuita di AI Studio. Non presentare l'anonimizzazione come una soluzione completa in nessuna funzionalità nuova che tocchi questo flusso.
+È basata su pattern/regex, non è una garanzia assoluta — per questo l'app informa sempre l'utente che l'anteprima va controllata e che il contenuto clinico resta un dato sanitario anche senza nome associato. Per un uso professionale continuativo, un'infrastruttura con Data Processing Agreement (es. Vertex AI) sarebbe preferibile alle API gratuite di Google AI Studio (vedi rischio residuo, README §8).
 
 ## Autenticazione e RLS
 
-Utente singola (la psicologa), non multi-tenant. Le policy RLS su tutte le tabelle sono semplicemente "utente autenticato" (`auth.role() = 'authenticated'`), non isolamento per riga/utente. Se il progetto dovesse mai supportare più professionisti, questo è il primo punto da rivedere.
+Progettata per utilizzo single-user: le policy RLS permettono l'accesso a chiunque sia autenticato, non isolano per utente. Non esiste una colonna `user_id`/owner su nessuna tabella. Se il progetto dovesse supportare più professionisti, questo è uno dei primi aspetti da riprogettare — non aggiungere funzionalità che assumano implicitamente l'isolamento multi-tenant finché non lo è.
+
+## Checklist prima di completare modifiche che coinvolgono Gemini
+
+- L'anagrafica è separata prima della costruzione del prompt (destructuring esplicito, non un filtro applicato "a valle")
+- Il testo inviato è quello anonimizzato, e il flusso di anteprima non è stato bypassato
+- Nessun log contiene dati identificativi
+- Il genere non viene trattato come equivalente ad altri dati identificativi (è l'eccezione nota, non un precedente)

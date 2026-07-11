@@ -1,41 +1,60 @@
 # Struttura dati — approfondimento
 
+> Schema tabelle, colonne esatte e tipi TS completi sono in README §5 e §6, sempre aggiornati lì. Qui: gli invarianti architetturali e le dipendenze da verificare quando tocchi il modello dati — cose che un elenco di colonne non trasmette da solo.
+
+## Il Markdown è la single source of truth del documento
+
+L'intera pipeline ruota attorno ad esso: il Wizard raccoglie dati strutturati → `wizardToText.ts` costruisce il Markdown deterministico → Gemini genera solo la narrativa da integrare → il `RichTextEditor` modifica quel Markdown (l'HTML dell'editor non è mai la rappresentazione persistente) → `exportDocx.ts` interpreta quel Markdown per produrre il documento finale. Non introdurre rappresentazioni persistenti alternative (HTML, JSON del documento, AST proprietari): il Markdown deve restare l'unico formato condiviso tra editor, AI ed export.
+
+Se cambia la grammatica Markdown, `wizardToText.ts`, `RichTextEditor` ed `exportDocx.ts` vanno verificati insieme — non è un modulo che si può aggiornare isolatamente dagli altri due, perché `exportDocx.ts` non è un parser Markdown generico: riconosce solo la grammatica che il progetto stesso genera.
+
+## Separazione tra logica deterministica e AI
+
+Il client è responsabile di struttura del documento, tabelle, trasformazioni dei punteggi, impaginazione, export DOCX, validazione. Gemini è responsabile esclusivamente della narrativa clinica. Se una trasformazione può essere implementata deterministicamente, deve vivere nel codice dell'applicazione, non nel prompt — anche quando sarebbe più comodo chiedere a Gemini di "sistemare" l'output.
+
 ## Le tabelle Supabase
 
-`supabase_setup.sql` ne documenta 5, ma il codice reale ne usa 6 — vedi la nota in fondo.
+`supabase_setup.sql` documenta lo schema per ricrearlo da zero, ma può disallinearsi dal progetto Supabase reale nel tempo — verifica sempre contro il codice in `data/*.ts` (query dirette) prima di assumere che rispecchi la produzione. Elenco e colonne esatte: README §5.
 
-**`pazienti`** — anagrafica reale (nome, cognome, data di nascita, scuola/classe) + metadati anonimi (età approssimativa, sesso, tipo consulto). Protetta solo da autenticazione + RLS, nessuna cifratura applicativa aggiuntiva (scelta esplicita, da rivalutare se l'uso si espande oltre l'ambito personale). `codice` è un riferimento interno facoltativo, non più la chiave identificativa principale come nella prima versione del piano.
+- **`pazienti`** — l'unico punto in cui possono comparire dati identificativi. Nessun contenuto da questa tabella va mai inviato direttamente a Gemini.
+- **`relazioni`** — importate e generate. `wizard_snapshot` contiene sempre il wizard anonimizzato: il sotto-oggetto `anagrafica` non va persistito nello snapshot destinato alla rigenerazione.
+- **`profilo_stile`** — un solo record, aggiornato deterministicamente. Non usarlo come archivio generico di prompt.
+- **`sessioni_wizard`** — stato temporaneo di una relazione in costruzione, solo a supporto del recupero bozze. Non è la sorgente definitiva dei dati clinici.
+- **`professionista`** — dati permanenti dello studio, usati in esportazione. Non devono transitare nei prompt Gemini salvo casi strettamente necessari.
+- **`test_templates`** — fonte di verità per tutti i test personalizzati, WISC-IV/NEPSY-II inclusi (vedi sezione sotto). Ogni nuovo test si introduce tramite template, non con logica dedicata nel codice.
 
-**`relazioni`** — sia le relazioni importate (`tipo = 'importata'`) sia quelle generate (`tipo = 'generata'`). Contiene `testo_markdown` (contenuto), `testo_originale_path` (backup su Storage), `wizard_snapshot` (JSONB — tutte le risposte del wizard **escluso `anagrafica`**, per poter riaprire e modificare senza duplicare la relazione), `tag` (array, per il matching few-shot).
+## Test clinici: `TestTemplate` è l'unica fonte di verità
 
-**`profilo_stile`** — un solo record (`id = 1` sempre). `documento_stile` è il Markdown strutturato prodotto da Gemini; `num_relazioni_analizzate` guida l'aggiornamento incrementale deterministico (non basato solo su timestamp).
+Non esistono soglie o campi hardcoded per singoli test nel codice applicativo — WISC-IV e NEPSY-II sono `TestTemplate` come qualunque test personalizzato creato in Gestione Test, senza trattamento speciale nel motore di calcolo. Per aggiungere o modificare un test lavora su:
 
-**`sessioni_wizard`** — bozze in corso, salvate con debounce di 1.5s a ogni risposta. `risposte_wizard` (JSON), `bozza_generata`, collegamento a `relazione_finale_id` dopo l'export.
+- **`core/testTemplate.ts`** — schema Zod e tipi (`TestTemplate`, `RisultatoTest`, `CampoTest`, `GruppoTest`). Modificare la forma di un `TestTemplate` si fa qui, non con cast sparsi altrove.
+- **`services/testTemplateEngine.ts`** — motore generico, puramente deterministico (nessuna chiamata AI): calcolo delle fasce interpretative dato un punteggio e una scala, generazione della tabella/sezione Markdown, e `buildGeminiPayload()` (il testo grezzo — mai tabelle già renderizzate — che Gemini riceve per scrivere il commento narrativo).
 
-**`professionista`** — record singolo con i dati fissi dello studio (nome, titolo, specializzazione, contatti, P.IVA/CF, `genere`) da riportare nell'intestazione DOCX invece di richiederli a ogni wizard.
+Se introduci un nuovo test con un comportamento che il template non riesce a esprimere via configurazione, quella è l'eccezione da giustificare esplicitamente, non il default.
 
-**`test_templates`** (⚠️ non presente in `supabase_setup.sql`) — usata da `data/testTemplatesData.ts` per il CRUD dei template di test personalizzati (Modulo 2b / Gestione Test). Colonne reali, ricavate dal codice: `id, nome, categoria, scala_default, campi_principali, gruppi_secondari, nota_range, richiede_eta_valutazione, richiede_strumenti_utilizzati, built_in, attivo, schema_version, created_at, updated_at`. Se devi rigenerare l'istanza Supabase da zero, questa tabella va creata a mano finché `supabase_setup.sql` non viene aggiornato — non assumere che lo script SQL sia completo.
+## Tipi TypeScript principali (`core/types.ts`, `core/testTemplate.ts`)
 
-Tutte le tabelle: RLS attiva, policy "utente autenticato" (app single-user, non multi-tenant).
+- **`AnagraficaPaziente`** — il confine di privacy dell'applicazione. Prima di costruire un prompt per Gemini questi dati vanno sempre separati dal resto del modello (invariante architetturale, non una convenzione da ricordare caso per caso).
+- **`WizardData`** — modello interno del wizard: risposte delle sezioni, configurazione dinamica, anagrafica, risultati dei test. Non è il documento finale — la trasformazione a Markdown è responsabilità esclusiva di `wizardToText.ts`.
+- **Pattern CRUD per entità**: `XInput`, `XPatch`, schema Zod, mapping DB ⇄ dominio. Segui questo pattern per una nuova tabella invece di introdurne uno diverso.
 
-## Tipi TypeScript principali (`core/types.ts`)
+## Mapping DB ↔ TypeScript
 
-- `AnagraficaPaziente` — il sotto-tipo isolato che non deve mai raggiungere Gemini (Regola 1 nel SKILL.md principale)
-- `Paziente = AnagraficaPaziente & { id, codice, eta_approssimativa, sesso, tipo_consulto, ... }`
-- `Relazione` — specchio della tabella omonima
-- `WizardData` — `UnknownRecord` estesa con `sezioni_attive`, `anagrafica`, `test_risultati`; i campi delle singole sezioni (cognitivo, nepsy, anamnesi...) non sono tipizzati singolarmente qui, vivono come shape implicite nei componenti dei singoli step
-- Pattern generico per i servizi: `XInput = Omit<X, 'id' | 'created_at'>`, `XPatch = Partial<XInput>` — segui questo pattern per un nuovo servizio CRUD invece di inventarne uno diverso
+Nessun ORM. Ogni servizio converte manualmente `snake_case` (database) ↔ `camelCase` (dominio TypeScript) in entrambe le direzioni. Quando aggiungi un campo, aggiorna tutte le operazioni CRUD che toccano quella tabella — non limitarti a una singola funzione, è un errore facile da fare perché il codice compila comunque. Prima che un record entri nel dominio applicativo, validalo con lo schema Zod corrispondente; non usare `as` per aggirare la validazione.
 
-## Mapping DB ↔ TS
+## Dipendenze da verificare quando modifichi
 
-Nessun ORM. Ogni funzione in `data/*.ts` mappa manualmente `camelCase` (proprietà TS, es. `scalaDefault`) ↔ `snake_case` (colonna Postgres, es. `scala_default`) in entrambe le direzioni — vedi `testTemplatesData.ts` come esempio completo (get/insert/update fanno tutti la conversione a mano). Molte di queste funzioni validano anche la riga con uno zod schema (`XSchema.parse(...)`) prima di restituirla al chiamante. Se aggiungi un campo, aggiorna la mappatura in *ogni* funzione che tocca quella tabella, non solo in una.
+| Se modifichi... | Verifica anche... |
+|---|---|
+| `TestTemplate` | wizard, suggerimenti AI, `buildGeminiPayload`, export |
+| `wizardToText.ts` | `RichTextEditor`, `exportDocx.ts`, prompt Gemini, test |
+| la grammatica Markdown | editor, export, parser, snapshot esistenti in archivio |
+| lo schema Supabase | mapping in `data/*.ts`, schema Zod, tipi TypeScript, RLS |
 
-## Test clinici: dove vive la fonte di verità
+## Errori da evitare
 
-`components/constants/testDefinitions.ts` è la fonte di verità per WISC-IV e NEPSY-II: campi/indici, i 3 subtest predefiniti per indice WISC-IV (`WISC_IV_SUBTEST_PER_INDICE`), e le funzioni che calcolano la fascia interpretativa (`fasciaWISC`, `fasciaScalare`) da soglie standard **hardcoded**, verificate contro documenti reali — mai da Gemini, mai configurabili a runtime.
-
-Per test *personalizzati* oltre WISC-IV/NEPSY-II (CBCL, Conners, AC-MT, BVSCO...): CRUD con soft-delete (flag `attivo`, distinto da `built_in` che protegge i test predefiniti dalla cancellazione), suggerimenti AI da archivio (`suggerisciTestDaArchivio`) ed estrazione on-demand dal Profilo di Stile a due fasi (vedi `references/gemini-e-prompt-chaining.md`).
-
-## `wizardToText.ts` — il ponte tra dati puliti e testo
-
-Trasforma punteggi numerici (oggetti piatti come `{ vc: 9, so: 11 }`) in tabelle Markdown (`wiscToMarkdownTable`, `nepsyToMarkdownTable`) e narrativa di base (`wiscToNarrativa`, `wiscSubtestPpToNarrativa`). Condiviso sia dal payload per Gemini sia dall'export DOCX — è il posto giusto per una nuova trasformazione punteggio→testo, per evitare di duplicare la logica in due posti come già successo (e corretto) in passato.
+- Usare HTML o un JSON proprietario come sorgente persistente del documento al posto del Markdown
+- Duplicare una trasformazione punteggio→testo già presente in `wizardToText.ts` in un altro punto (componente React, export, prompt)
+- Delegare a Gemini un calcolo deterministico (fasce interpretative, indici derivati)
+- Introdurre un caso speciale nel codice per un test specifico quando può essere modellato tramite `TestTemplate`
+- Aggiornare solo parte del mapping DB ⇄ TypeScript dopo aver aggiunto un campo

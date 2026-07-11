@@ -1,54 +1,51 @@
-# Gemini e prompt chaining — approfondimento
+# Gemini Service e Prompt Chaining — approfondimento
 
-## `callGemini` — cosa fa già per te
+> Numeri esatti (cascata modelli, numero di tentativi, nomi di tutte le funzioni) sono in README §7 e vanno letti lì: qui solo le regole che restano vere anche quando quei dettagli cambiano.
 
-Tutte le chiamate a Gemini passano da `callGemini(systemPrompt, userPrompt, options)` in `geminiService.ts`. Non reinventarlo con un fetch diretto: gestisce già
+## Due canali, non uno
 
-- **Fallback modelli**: se un modello è in quota esaurita (429 con messaggio di quota) o non disponibile (400/404 "model not found"), passa automaticamente al modello successivo in `MODEL_CANDIDATES`
-- **Retry con backoff esponenziale**: su 429/5xx, fino a 3 tentativi per modello, attesa 4s → 8s → 16s
-- **Degradazione controllata su `MAX_TOKENS`**: non lancia un'eccezione, ritorna il testo parziale ricevuto (con una nota se non sembra JSON) — un profilo troncato è comunque più utile di un errore secco
-- **Opzioni**: `maxOutputTokens` (default 4096), `temperature` (default 0.7), `thinkingBudget` (default 0)
+`services/geminiService.ts` ha due percorsi di trasporto verso Gemini che **convivono**, scelti in base alla forma della risposta attesa:
 
-## Limiti fisici e hardcoded da conoscere
+- **Testo libero** — `callGemini()` / `callGeminiWithFinishReason()`: `fetch` diretto contro l'endpoint REST `generateContent`, nessuna SDK. Per prosa discorsiva dove uno schema non aiuterebbe (es. analisi di stile).
+- **Output strutturato** — `callGeminiStructured()`: SDK ufficiale `@google/genai`, richiesta con `responseSchema` generato da uno schema Zod, risposta validata di nuovo lato client con `schema.parse(...)` prima di essere usata. Per qualunque risposta che il codice deve poi elaborare (elenco di sezioni, un `TestTemplate`, ecc.).
 
-- Output massimo fisico di Gemini Flash: **8192 token**, non configurabile più in alto
-- `MAX_CORPUS_CHARS = 240000`, `MAX_RELATION_CHARS = 90000` in `geminiService.ts` — limiti di caratteri applicati quando si costruisce il corpus per l'analisi di stile (`costruisciCorpus`), con troncamento per singola relazione e cap sul corpus totale
-- Contesto Gemini 2.0 Flash: 1M token — abbondante in input; il vincolo reale è quasi sempre l'**output**, non l'input
+Nessuno dei due è il percorso "principale": la scelta dipende dalla forma della risposta, non da preferenza. Non introdurre una terza via (es. un fetch diretto che poi fa `JSON.parse` a mano su un output non validato) quando una delle due esistenti già copre il caso.
 
-## Quando dividere in più chiamate (split-prompt chaining)
+Una differenza pratica importante: un JSON troncato per limite di token **non è recuperabile chiedendo una continuazione** (a differenza del testo libero, dove si può provare a proseguire da dove ci si è interrotti) — se il finish reason segnala il limite di token sul percorso strutturato, la chiamata deve fallire esplicitamente invece di restituire JSON incompleto o parsato a forza.
 
-Regola pratica: se un prompt rischia di richiedere più di ~6-7k token stimati di output strutturato, dividi. Due esempi già implementati, da usare come modello:
+## Retry e fallback tra modelli
 
-**Profilo di Stile** (`analizzaStile` / `aggiornaProfiloIncrementale`): 2 chiamate parallele — stile/sezioni 1-6 (~3000 token) e test clinici/sezione 7 (~3500 token) — concatenate lato client. `splitProfilo(profilo)` divide un profilo esistente al marker `## 7. Analisi dei Test Clinici` per l'aggiornamento incrementale.
+Il servizio implementa retry e cascata automatica tra modelli candidati (dettagli e valori esatti in README §7) per errori temporanei o quota esaurita. Questa logica appartiene esclusivamente al servizio: non duplicarla nei componenti chiamanti, e non far sapere ai componenti UI quale modello è stato effettivamente usato — l'unico contratto pubblico è l'interfaccia delle funzioni `callGemini*`. Se aggiungi una nuova funzione che chiama Gemini, passa da queste funzioni esistenti invece di scrivere un nuovo `fetch`/client SDK: altrimenti quella chiamata non erediterà retry, fallback, né la gestione del finish reason.
 
-**Estrazione template test** (`rilevaNomiTestDaProfilo` → `generaTemplateTest`): prima una chiamata leggerissima che estrae solo nomi+categorie dei test menzionati nel profilo (~100 token), poi — solo quando l'utente sceglie una card specifica — una chiamata dedicata che genera il template completo per quel singolo test (~500 token). Non generare mai "tutto per tutti" in una chiamata sola se puoi far scegliere all'utente cosa gli serve davvero.
+## Prompt chaining
 
-## Formato prompt e parsing
+La generazione della narrativa è intenzionalmente suddivisa in più richieste indipendenti invece che in una sola richiesta di grandi dimensioni. Vantaggi: meno token per richiesta, risposte più stabili, retry limitati alla singola sezione, minore probabilità di troncamento. Ogni richiesta produce solo la narrativa della sezione corrente, e deve ricevere tutto il contesto necessario senza assumere che il modello ricordi richieste precedenti nella stessa generazione — quando una sezione dipende dal contenuto già generato, quella dipendenza va resa esplicita nel prompt, non lasciata alla memoria conversazionale del modello.
 
-Il prompt di generazione è gerarchico:
+Quando una nuova funzionalità chiede a Gemini di produrre molto testo strutturato, pensa fin da subito a come spezzarla in questo modo piuttosto che tentare prima con una richiesta unica e ottimizzare solo se tronca.
 
-```
-[SYSTEM — fisso]
-[PROFILO DI STILE — dinamico]
-[ESEMPI FEW-SHOT — dinamico]
-[DATI WIZARD — dinamico]
-[ISTRUZIONE FINALE]
-```
+## Costruzione del prompt
 
-Il Profilo di Stile ha sempre precedenza sugli esempi few-shot in caso di conflitto — dichiaralo esplicitamente nel system prompt se aggiungi una nuova fonte di contesto.
+Non passare mai a Gemini contenuto già formattato per l'output finale (tabelle Markdown già pronte, corsivo, citazioni impaginate): solo dati grezzi che il client assemblerà deterministicamente dopo (vedi `buildGeminiPayload()` in `testTemplateEngine.ts`, e la nota nel file principale della skill). Il contesto inviato deve restare il minimo indispensabile — niente campi inutilizzati o duplicati — perché riduce token, costo, e imprevedibilità della risposta.
 
-Per generare più sezioni in una chiamata, il pattern usato è delimitare ogni sezione nella risposta con `=== SEZIONE: nome ===` e fare il parsing con una regex (`generaNarrativaSezioni`). Se aggiungi una nuova sezione generata, mantieni lo stesso delimitatore: un parsing diverso per ogni funzione sarebbe un'inconsistenza silenziosa difficile da notare (oggi il fallback si limita a un `console.warn` se zero sezioni fanno match).
+Le istruzioni di stile (registro professionale, tono clinico, nessuna formattazione Markdown oltre a quella richiesta) restano centralizzate nel servizio, non duplicate nei singoli prompt dei componenti.
 
-## Selezione delle relazioni few-shot
+## Mock mode
 
-Non si manda mai tutto l'archivio come esempio. Logica in ordine:
-1. Filtra per stesso `tipo_relazione` del caso corrente
-2. Filtra per match sui `tag`
-3. Ordina per anno (più recenti prima)
-4. Prendi le prime 2-3 che rientrano nel budget (~2000 token/relazione stimati)
+`USE_MOCK_AI` fa girare l'app senza chiamate reali a Gemini (si attiva anche sotto test, quindi la suite Vitest non richiede una API key). Ogni funzione che chiama Gemini deve avere il proprio ramo mock con un output fittizio ma strutturalmente plausibile — non un placeholder generico che romperebbe il codice a valle se qualcuno lo trattasse come vero.
 
-Zero relazioni simili → generazione zero-shot con solo il Profilo di Stile.
+## Aggiungere una nuova chiamata Gemini — checklist
 
-## Modalità mock (`USE_MOCK_AI`)
+1. Decidi `callGemini()` (prosa libera) vs `callGeminiStructured()` (il risultato verrà elaborato dal codice) in base alla forma della risposta, non per abitudine
+2. Se strutturato, definisci lo schema Zod e usalo sia per la richiesta sia per validare la risposta — mai un cast (`as`) per aggirare la validazione
+3. Passa dalle funzioni `callGemini*` esistenti per ereditare retry/fallback/gestione finish reason
+4. Aggiungi il ramo mock corrispondente
+5. Verifica che nessun dato identificativo finisca nel payload (Regola 1 nel file principale della skill)
+6. Se l'output rischia di superare il limite di token, progetta da subito la richiesta come più chiamate mirate (prompt chaining), non come un'unica richiesta grande da ottimizzare dopo
 
-Ogni funzione esportata da `geminiService.ts` ha un ramo mock che restituisce dati plausibili senza chiamare la rete (vedi l'inizio di `generaRelazione` o `rigeneraSezione`). Serve a sviluppare/testare la UI senza consumare quota Gemini o richiedere una API key configurata. Se aggiungi una nuova funzione che chiama Gemini, il ramo mock non è opzionale: è lo stesso pattern per ogni funzione esistente nel file.
+## Errori da evitare
+
+- Usare `callGeminiStructured()` per generare semplice narrativa, o viceversa `callGemini()` quando serve un output strutturato che il codice deve poi parsare
+- Bypassare la validazione dello schema con un cast
+- Implementare retry o gestione del fallback nei componenti chiamanti invece che nel servizio
+- Costruire prompt direttamente nei componenti React
+- Affidare a Gemini la costruzione del documento Markdown, di tabelle, o di sezioni deterministiche — quella logica appartiene sempre al client
