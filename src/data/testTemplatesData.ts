@@ -14,6 +14,7 @@ export async function getTestTemplates(): Promise<TestTemplate[]> {
     nome: d.nome,
     categoria: d.categoria,
     scalaDefault: d.scala_default,
+    mostraCategoriaDescrittiva: d.mostra_categoria_descrittiva ?? undefined,
     campiPrincipali: d.campi_principali,
     gruppiSecondari: d.gruppi_secondari ?? undefined,
     notaRange: d.nota_range ?? undefined,
@@ -44,7 +45,8 @@ export async function insertTestTemplate(t: Omit<TestTemplate,'id'|'createdAt'|'
     nome: t.nome,
     categoria: t.categoria,
     scala_default: t.scalaDefault,
-    campi_principali: t.campi_principali,
+    mostra_categoria_descrittiva: t.mostraCategoriaDescrittiva,
+    campi_principali: t.campiPrincipali,
     gruppi_secondari: t.gruppiSecondari,
     nota_range: t.notaRange,
     richiede_eta_valutazione: t.richiedeEtaValutazione,
@@ -52,7 +54,7 @@ export async function insertTestTemplate(t: Omit<TestTemplate,'id'|'createdAt'|'
     built_in: false,
     attivo: t.attivo,
     schema_version: t.schemaVersion || 1,
-    colonne: t.colonne ?? ['Punteggio'],
+    colonne: t.colonne ?? [{ nome: 'Punteggio' }],
     formule: t.formule,
     owner_id: userId
   }
@@ -65,6 +67,7 @@ export async function insertTestTemplate(t: Omit<TestTemplate,'id'|'createdAt'|'
     nome: data.nome,
     categoria: data.categoria,
     scalaDefault: data.scala_default,
+    mostraCategoriaDescrittiva: data.mostra_categoria_descrittiva ?? undefined,
     campiPrincipali: data.campi_principali,
     gruppiSecondari: data.gruppi_secondari ?? undefined,
     notaRange: data.nota_range ?? undefined,
@@ -87,17 +90,25 @@ export async function updateTestTemplate(id: string, patch: Partial<TestTemplate
   if (patch.nome !== undefined) payload.nome = patch.nome
   if (patch.categoria !== undefined) payload.categoria = patch.categoria
   if (patch.scalaDefault !== undefined) payload.scala_default = patch.scalaDefault
+  if (patch.mostraCategoriaDescrittiva !== undefined) payload.mostra_categoria_descrittiva = patch.mostraCategoriaDescrittiva
   if (patch.campiPrincipali !== undefined) payload.campi_principali = patch.campiPrincipali
   if (patch.gruppiSecondari !== undefined) payload.gruppi_secondari = patch.gruppiSecondari
   if (patch.notaRange !== undefined) payload.nota_range = patch.notaRange
   if (patch.richiedeEtaValutazione !== undefined) payload.richiede_eta_valutazione = patch.richiedeEtaValutazione
   if (patch.richiedeStrumentiUtilizzati !== undefined) payload.richiede_strumenti_utilizzati = patch.richiedeStrumentiUtilizzati
   if (patch.attivo !== undefined) payload.attivo = patch.attivo
+  if (patch.builtIn !== undefined) payload.built_in = patch.builtIn
   if (patch.colonne !== undefined) payload.colonne = patch.colonne
   if (patch.formule !== undefined) payload.formule = patch.formule
   
-  const { error } = await supabase.from('test_templates').update(payload).eq('id', id)
+  // NB: se la RLS filtra la riga (es. un template built_in, non modificabile via update
+  // diretto), Supabase NON restituisce un errore: restituisce semplicemente 0 righe.
+  // Senza .select() per verificarlo, il salvataggio fallirebbe in silenzio.
+  const { data, error } = await supabase.from('test_templates').update(payload).eq('id', id).select('id')
   if (error) throw error
+  if (!data || data.length === 0) {
+    throw new Error('Salvataggio non riuscito: il template non risulta modificato. Se è un template predefinito (WISC-IV, NEPSY-II) non può essere modificato direttamente — duplicalo in un template personalizzato e modifica quello.')
+  }
 }
 
 export async function disattivaTestTemplate(id: string): Promise<void> {
@@ -109,7 +120,33 @@ export async function deleteTestTemplate(id: string): Promise<void> {
     // If mock, we can just delete from the local array in-memory, but since it's just a local constant, we can throw or just return
     return
   }
-  const { error } = await supabase.from('test_templates').delete().eq('id', id)
+  const { data, error } = await supabase.from('test_templates').delete().eq('id', id).select('id')
   if (error) throw error
+  if (!data || data.length === 0) {
+    throw new Error('Eliminazione non riuscita: probabilmente è un template predefinito, che non può essere eliminato direttamente.')
+  }
+}
+
+/**
+ * Duplica un template (built-in o custom) in un nuovo template personalizzato di proprietà
+ * dell'utente corrente, così può essere modificato liberamente senza toccare l'originale
+ * (i template built-in non sono modificabili/eliminabili direttamente, vedi updateTestTemplate).
+ */
+export async function duplicaTestTemplate(t: TestTemplate): Promise<TestTemplate> {
+  return insertTestTemplate({
+    nome: `${t.nome} (copia)`,
+    categoria: t.categoria,
+    scalaDefault: t.scalaDefault,
+    mostraCategoriaDescrittiva: t.mostraCategoriaDescrittiva,
+    campiPrincipali: t.campiPrincipali,
+    gruppiSecondari: t.gruppiSecondari,
+    notaRange: t.notaRange,
+    richiedeEtaValutazione: t.richiedeEtaValutazione,
+    richiedeStrumentiUtilizzati: t.richiedeStrumentiUtilizzati,
+    attivo: true,
+    schemaVersion: t.schemaVersion,
+    colonne: t.colonne,
+    formule: t.formule,
+  })
 }
 

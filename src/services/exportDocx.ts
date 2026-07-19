@@ -22,7 +22,7 @@ import {
 import type { AnagraficaPaziente, ProfiloProfessionista } from '../core/types'
 import { MOCK_WISC_IV_TEMPLATE, MOCK_NEPSY_II_TEMPLATE } from '../data/mockTemplates'
 import type { TestTemplate, RisultatoTest } from '../core/testTemplate'
-import { calcolaFascia, getScalaApplicabile } from './testTemplateEngine'
+import { calcolaFascia, getScalaApplicabile, getColonneEffettive, getValorePerColonna, generaCommentiVisibili } from './testTemplateEngine'
 import { titoloSezioneTest } from './wizardToText'
 
 // ── Tipi per input strutturato ──────────────────────────────
@@ -77,6 +77,7 @@ const CONTENT_W     = PAGE_W - MARGIN_LEFT - MARGIN_RIGHT  // ~9498 DXA
 // Colore di sfondo intestazione tabella nel template reale (azzurro
 // chiaro, non il grigio E8E8E8 usato in precedenza)
 const TABLE_HEADER_FILL = 'D5DCE4'
+const EVIDENZIATO_FILL = 'EFEFEF' // riga/colonna evidenziata (es. un Totale): grigio neutro, distinto dall'azzurro dell'intestazione
 
 // ── Helpers paragrafo ──────────────────────────────────────
 type ParagraphOptions = {
@@ -461,70 +462,67 @@ function makeTestTable(template: TestTemplate, risultato: RisultatoTest): Table 
     return new Table({ width: { size: CONTENT_W, type: WidthType.DXA }, rows: [] })
   }
 
+  const colonne = getColonneEffettive(template)
   const mostraColonna = campiValidi.some(c => risultato.interpretabilita?.[c.key] === false)
-  const numColonne = mostraColonna ? 4 : 3
+
+  // Intestazioni dinamiche: etichetta, poi per ogni colonna [nome, eventuale "Fascia <nome>"
+  // se la colonna ha un range proprio], poi Categoria descrittiva, poi eventuale
+  // Interpretabilità. Stessa struttura di generaTabella() in testTemplateEngine.ts:
+  // le due tabelle (markdown a schermo, Word esportata) non devono più divergere.
+  const intestazioni: string[] = [`${template.nome} scale`]
+  for (const col of colonne) {
+    intestazioni.push(col.nome)
+    if (col.scala && col.mostraFasciaInTabella) intestazioni.push(`Fascia ${col.nome}`)
+  }
+  const mostraCategoria = template.mostraCategoriaDescrittiva !== false
+  if (mostraCategoria) intestazioni.push('Categoria descrittiva')
+  if (mostraColonna) intestazioni.push('Interpretabilità')
+
+  const numColonne = intestazioni.length
   const colW = Math.floor(CONTENT_W / numColonne)
-  const colWidths = mostraColonna ? [colW * 2, colW, colW, colW] : [colW * 2, colW, colW]
+  // La prima colonna (etichetta) resta più larga delle altre, come da template originale
+  const colWidths = intestazioni.map((_, i) => (i === 0 ? colW * 2 : colW))
   const border = { style: BorderStyle.SINGLE, size: 4, color: '000000' }
   const borders = { top: border, bottom: border, left: border, right: border }
 
-  const intestazioni = mostraColonna
-    ? [`${template.nome} scale`, 'Punteggio', 'Categoria descrittiva', 'Interpretabilità']
-    : [`${template.nome} scale`, 'Punteggio', 'Categoria descrittiva']
+  function cella(text: string, width: number, opts: { header?: boolean; center?: boolean; evidenziato?: boolean } = {}): TableCell {
+    const fill = opts.header ? TABLE_HEADER_FILL : (opts.evidenziato ? EVIDENZIATO_FILL : undefined)
+    return new TableCell({
+      borders, width: { size: width, type: WidthType.DXA },
+      margins: { top: 80, bottom: 80, left: 120, right: 120 },
+      ...(fill ? { shading: { fill, type: ShadingType.CLEAR } } : {}),
+      children: [new Paragraph({
+        alignment: opts.header || opts.center ? AlignmentType.CENTER : undefined,
+        children: [new TextRun({ text, font: FONT, size: SIZE_BODY, bold: !!opts.header })],
+      })],
+    })
+  }
 
   const rows = [
     new TableRow({
-      children: intestazioni.map(text =>
-        new TableCell({
-          borders, width: { size: colW, type: WidthType.DXA },
-          margins: { top: 80, bottom: 80, left: 120, right: 120 },
-          shading: { fill: TABLE_HEADER_FILL, type: ShadingType.CLEAR },
-          children: [new Paragraph({
-            alignment: AlignmentType.CENTER,
-            children: [new TextRun({ text, font: FONT, size: SIZE_BODY, bold: true })],
-          })],
-        })
-      ),
+      children: intestazioni.map((text, i) => cella(text, colWidths[i], { header: true })),
     }),
     ...campiValidi.map(c => {
       const p = risultato.punteggi[c.key]
       const scala = getScalaApplicabile(c, template)
       const fascia = calcolaFascia(p, scala) ?? '-'
-      
-      const celle = [
-        new TableCell({
-          borders, width: { size: colWidths[0], type: WidthType.DXA },
-          margins: { top: 80, bottom: 80, left: 120, right: 120 },
-          children: [new Paragraph({ children: [new TextRun({ text: c.label, font: FONT, size: SIZE_BODY })] })],
-        }),
-        new TableCell({
-          borders, width: { size: colWidths[1], type: WidthType.DXA },
-          margins: { top: 80, bottom: 80, left: 120, right: 120 },
-          children: [new Paragraph({
-            alignment: AlignmentType.CENTER,
-            children: [new TextRun({ text: String(p), font: FONT, size: SIZE_BODY })],
-          })],
-        }),
-        new TableCell({
-          borders, width: { size: colWidths[2], type: WidthType.DXA },
-          margins: { top: 80, bottom: 80, left: 120, right: 120 },
-          children: [new Paragraph({
-            alignment: AlignmentType.CENTER,
-            children: [new TextRun({ text: fascia, font: FONT, size: SIZE_BODY })],
-          })],
-        }),
-      ]
-      
+      const rigaEvidenziata = !!c.evidenziato
+
+      const celle: TableCell[] = [cella(c.label, colWidths[0], { evidenziato: rigaEvidenziata })]
+      let wIdx = 1
+      colonne.forEach((col, idx) => {
+        const valore = getValorePerColonna(risultato, c.key, col, idx === 0) ?? '—'
+        const cellaEvidenziata = rigaEvidenziata || !!col.evidenziato
+        celle.push(cella(String(valore), colWidths[wIdx++], { center: true, evidenziato: cellaEvidenziata }))
+        if (col.scala && col.mostraFasciaInTabella) {
+          celle.push(cella(String(calcolaFascia(valore, col.scala) ?? '-'), colWidths[wIdx++], { center: true, evidenziato: cellaEvidenziata }))
+        }
+      })
+      if (mostraCategoria) celle.push(cella(fascia, colWidths[wIdx++], { center: true, evidenziato: rigaEvidenziata }))
+
       if (mostraColonna) {
         const interpretabile = risultato.interpretabilita?.[c.key] !== false
-        celle.push(new TableCell({
-          borders, width: { size: colWidths[3], type: WidthType.DXA },
-          margins: { top: 80, bottom: 80, left: 120, right: 120 },
-          children: [new Paragraph({
-            alignment: AlignmentType.CENTER,
-            children: [new TextRun({ text: interpretabile ? 'Sì' : 'No', font: FONT, size: SIZE_BODY })],
-          })],
-        }))
+        celle.push(cella(interpretabile ? 'Sì' : 'No', colWidths[wIdx++], { center: true, evidenziato: rigaEvidenziata }))
       }
       return new TableRow({ children: celle })
     }),
@@ -672,6 +670,19 @@ export async function esportaDocx({ testo, data, nomeStudio, anagrafica, profess
             spacing: { after: 120 },
             children: [new TextRun({ text: inDinamica.template.notaRange, font: FONT, size: SIZE_SMALL, italics: true })],
           }))
+        }
+        // Commenti per riga marcati visibili (checkbox nel wizard): ristampati qui in modo
+        // deterministico dalla stessa fonte dati, non parsati dal testo Markdown grezzo (che
+        // li contiene solo per l'anteprima a schermo) — stesso principio già usato per la
+        // tabella e la nota range, per evitare l'eco/duplicazione vista in passato.
+        const commentiVisibili = generaCommentiVisibili(inDinamica.template, inDinamica.risultato)
+        if (commentiVisibili.trim()) {
+          for (const riga of commentiVisibili.trim().split('\n')) {
+            blocchi.push(new Paragraph({
+              spacing: { after: 80 },
+              children: [new TextRun({ text: riga.replace(/^\*|\*$/g, ''), font: FONT, size: SIZE_SMALL, italics: true })],
+            }))
+          }
         }
         blocchi.push(emptyLine(60))
       }
@@ -883,8 +894,9 @@ export async function esportaDocx({ testo, data, nomeStudio, anagrafica, profess
       }
       const isRigaTabella = /^\s*\|.*\|\s*$/.test(line)
       const isNotaRange = /^\s*\*[A-Z][\w-]*(-II)?:\s.*\*\s*$/.test(line)
+      const isNotaCommento = /^\s*\*Nota su .+:\s.*\*\s*$/.test(line)
       const isTitoloGruppoSecondario = /^\s*\*\*.*\*\*\s*$/.test(line)
-      if (line.trim() && !isRigaTabella && !isNotaRange && !isTitoloGruppoSecondario) {
+      if (line.trim() && !isRigaTabella && !isNotaRange && !isNotaCommento && !isTitoloGruppoSecondario) {
         dinamicaNarrativaLines.push(line)
       }
       i++

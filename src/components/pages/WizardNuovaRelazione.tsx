@@ -11,7 +11,7 @@ import {
   OSSERVAZIONE_ADATTAMENTO_VOCI, OSSERVAZIONE_ATTEGGIAMENTO_VOCI,
 } from '../constants/anamnesiVoci'
 import { getTestTemplatesAttivi } from '../../data/testTemplatesData'
-import { calcolaFascia, getScalaApplicabile, migraWizardSnapshotLegacy, valutaFormule } from '../../services/testTemplateEngine'
+import { calcolaFascia, getScalaApplicabile, getColonneEffettive, getValorePerColonna, migraWizardSnapshotLegacy, valutaFormule } from '../../services/testTemplateEngine'
 import type { TestTemplate, RisultatoTest } from '../../core/testTemplate'
 
 // ─────────────────────────────────────────────────────────────
@@ -413,16 +413,23 @@ function StepTestGenerico({ template, data, dispatch }: { template: TestTemplate
 
   // Helper per dispatch con supporto a colonne multiple e formule
   function setPunteggio(key: string, v: string, colName?: string) {
-    const colList = template.colonne || ['Punteggio']
-    const isPrimaCol = !colName || colName === colList[0]
+    const colonne = getColonneEffettive(template)
+    const isPrimaCol = !colName || colName === colonne[0].nome
     const destKey = isPrimaCol ? key : `${key}_${colName}`
+    // Se il campo è il target di una formula, modificarlo a mano lo sovrascrive:
+    // valutaFormule() non lo ricalcola più finché non si torna al calcolo automatico.
+    const haFormulaTarget = isPrimaCol && template.formule?.some(f => f.targetKey === key)
 
     const nuovoRisultato = {
       ...risultato,
-      punteggi: { ...risultato.punteggi, [destKey]: v }
+      punteggi: { ...risultato.punteggi, [destKey]: v },
+      formuleManuali: haFormulaTarget ? { ...risultato.formuleManuali, [key]: true } : risultato.formuleManuali,
     }
     const punteggiCalcolati = valutaFormule(template, nuovoRisultato)
 
+    if (haFormulaTarget) {
+      dispatch({ type: 'SET_TEST_RISULTATO', templateId: template.id, group: 'formuleManuali', k: key, v: true })
+    }
     dispatch({
       type: 'SET_TEST_RISULTATO',
       templateId: template.id,
@@ -430,6 +437,23 @@ function StepTestGenerico({ template, data, dispatch }: { template: TestTemplate
       k: null,
       v: punteggiCalcolati
     })
+  }
+
+  // Torna al calcolo automatico per un campo sovrascritto a mano, e ricalcola subito il suo valore.
+  function revertFormulaAutomatica(key: string) {
+    const { [key]: _rimossa, ...formuleManuali } = risultato.formuleManuali || {}
+    const punteggiCalcolati = valutaFormule(template, { ...risultato, formuleManuali })
+    dispatch({ type: 'SET_TEST_RISULTATO', templateId: template.id, group: 'formuleManuali', k: null, v: formuleManuali })
+    dispatch({ type: 'SET_TEST_RISULTATO', templateId: template.id, group: 'punteggi', k: null, v: punteggiCalcolati })
+  }
+
+  // Commento libero per singolo campo/riga: va sempre a Gemini come contesto grezzo;
+  // commentiVisibili decide se comparire anche come nota di testo dopo la tabella.
+  function setCommento(key: string, v: string) {
+    dispatch({ type: 'SET_TEST_RISULTATO', templateId: template.id, group: 'commenti', k: key, v })
+  }
+  function setCommentoVisibile(key: string, v: boolean) {
+    dispatch({ type: 'SET_TEST_RISULTATO', templateId: template.id, group: 'commentiVisibili', k: key, v })
   }
 
   function setSubtest(key: string, v: string) {
@@ -510,16 +534,16 @@ function StepTestGenerico({ template, data, dispatch }: { template: TestTemplate
       {/* Campi principali (indici/scale principali) */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         {/* Intestazione colonne (se ci sono colonne multiple) */}
-        {template.colonne && template.colonne.length > 1 && (
+        {getColonneEffettive(template).length > 1 && (
           <div style={{
             display: 'grid',
-            gridTemplateColumns: '1fr ' + template.colonne.map(() => '90px').join(' ') + ' 140px' + (haInterpretabilita ? ' 30px' : ''),
+            gridTemplateColumns: '1fr ' + getColonneEffettive(template).map(() => '90px').join(' ') + ' 140px' + (haInterpretabilita ? ' 30px' : ''),
             gap: 10, alignItems: 'center',
             padding: '4px 10px', fontWeight: 600, fontSize: 11, color: 'var(--text-muted)',
             borderBottom: '1px solid var(--border-md, #ddd)', marginBottom: 4
           }}>
             <span>Scala</span>
-            {template.colonne.map(col => <span key={col} style={{ textAlign: 'center' }}>{col}</span>)}
+            {getColonneEffettive(template).map(col => <span key={col.nome} style={{ textAlign: 'center' }}>{col.nome}</span>)}
             <span>Fascia</span>
             {haInterpretabilita && <span style={{ textAlign: 'center' }}>Interp.</span>}
           </div>
@@ -530,60 +554,108 @@ function StepTestGenerico({ template, data, dispatch }: { template: TestTemplate
           const val = risultato.punteggi[campo.key] || ''
           const fascia = val ? (calcolaFascia(val, scala) || '—') : '—'
           const interpretabile = risultato.interpretabilita?.[campo.key] !== false
-          const colList = template.colonne || ['Punteggio']
+          const colonne = getColonneEffettive(template)
           const haFormula = template.formule?.some(f => f.targetKey === campo.key)
+          const sovrascrittaAMano = !!risultato.formuleManuali?.[campo.key]
+          const commento = risultato.commenti?.[campo.key] || ''
+          const commentoVisibile = !!risultato.commentiVisibili?.[campo.key]
 
           return (
             <div key={campo.key} style={{
-              display: 'grid',
-              gridTemplateColumns: '1fr ' + colList.map(() => '90px').join(' ') + ' 140px' + (haInterpretabilita ? ' 30px' : ''),
-              gap: 10, alignItems: 'center',
-              padding: '8px 10px', borderRadius: 'var(--radius)',
+              borderRadius: 'var(--radius)',
               background: 'transparent',
             }}>
-              <span style={{ fontSize: 12.5, fontWeight: haFormula ? 600 : 400 }}>{campo.label}</span>
-              
-              {/* Rendering input per ciascuna colonna di punteggio */}
-              {colList.map((colName, idx) => {
-                const isPrima = idx === 0
-                const inputKey = isPrima ? campo.key : `${campo.key}_${colName}`
-                const inputVal = risultato.punteggi[inputKey] || ''
-                const isReadOnly = haFormula && isPrima // Solo il punteggio principale della formula è calcolato/read-only
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: '1fr ' + colonne.map(() => '90px').join(' ') + ' 140px' + (haInterpretabilita ? ' 30px' : ''),
+                gap: 10, alignItems: 'center',
+                padding: '8px 10px',
+              }}>
+                <span style={{ fontSize: 12.5, fontWeight: haFormula ? 600 : 400 }}>{campo.label}</span>
 
-                return (
-                  <input
-                    key={colName}
-                    className="form-input"
-                    type="number"
-                    placeholder="—"
-                    value={inputVal}
-                    onChange={e => setPunteggio(campo.key, e.target.value, colName)}
-                    readOnly={isReadOnly}
-                    style={{
-                      textAlign: 'center',
-                      padding: '6px 8px',
-                      background: isReadOnly ? 'var(--bg-light, #f5f5f5)' : undefined,
-                      color: isReadOnly ? 'var(--text-muted, #777)' : undefined,
-                      border: isReadOnly ? '1px dashed var(--border-md, #ccc)' : undefined,
-                    }}
-                  />
-                )
-              })}
+                {/* Rendering input (ed eventuale fascia dedicata) per ciascuna colonna di punteggio */}
+                {colonne.map((col, idx) => {
+                  const isPrima = idx === 0
+                  const inputVal = getValorePerColonna(risultato, campo.key, col, isPrima) || ''
+                  // Calcolato automaticamente finché non lo si modifica a mano (formuleManuali)
+                  const isCalcolata = haFormula && isPrima && !sovrascrittaAMano
+                  const fasciaColonna = col.scala && inputVal ? (calcolaFascia(inputVal, col.scala) || '—') : null
 
-              <span style={{ fontSize: 11.5, color: fascia !== '—' ? 'var(--accent-dk)' : 'var(--text-muted)', fontWeight: fascia !== '—' ? 500 : 400 }}>
-                {fascia}
-              </span>
-              
-              {haInterpretabilita && (
-                <label title="Interpretabile (Sì/No)" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
+                  return (
+                    <div key={col.nome} style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                      <div style={{ position: 'relative' }}>
+                        <input
+                          className="form-input"
+                          type="number"
+                          placeholder="—"
+                          value={inputVal}
+                          onChange={e => setPunteggio(campo.key, e.target.value, col.nome)}
+                          readOnly={isCalcolata}
+                          title={isCalcolata ? 'Calcolato automaticamente. Scrivi un valore per sovrascriverlo a mano.' : undefined}
+                          style={{
+                            textAlign: 'center',
+                            padding: '6px 8px',
+                            width: '100%',
+                            background: isCalcolata ? 'var(--bg-light, #f5f5f5)' : undefined,
+                            color: isCalcolata ? 'var(--text-muted, #777)' : undefined,
+                            border: isCalcolata ? '1px dashed var(--border-md, #ccc)' : undefined,
+                          }}
+                        />
+                        {haFormula && isPrima && sovrascrittaAMano && (
+                          <button
+                            type="button"
+                            title="Torna al calcolo automatico"
+                            onClick={() => revertFormulaAutomatica(campo.key)}
+                            style={{ position: 'absolute', right: -2, top: -8, border: 'none', background: 'var(--accent)', color: '#fff', borderRadius: '50%', width: 16, height: 16, fontSize: 10, lineHeight: '16px', cursor: 'pointer', padding: 0 }}
+                          >↺</button>
+                        )}
+                      </div>
+                      {col.scala && (
+                        <span style={{ fontSize: 9.5, textAlign: 'center', color: 'var(--text-muted)' }}>
+                          {fasciaColonna || '—'}
+                        </span>
+                      )}
+                    </div>
+                  )
+                })}
+
+                <span style={{ fontSize: 11.5, color: fascia !== '—' ? 'var(--accent-dk)' : 'var(--text-muted)', fontWeight: fascia !== '—' ? 500 : 400 }}>
+                  {fascia}
+                </span>
+                
+                {haInterpretabilita && (
+                  <label title="Interpretabile (Sì/No)" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={interpretabile}
+                      onChange={e => setInterp(campo.key, e.target.checked)}
+                      style={{ width: 16, height: 16, cursor: 'pointer' }}
+                    />
+                  </label>
+                )}
+              </div>
+
+              {/* Commento libero per questo indice: va sempre a Gemini come contesto; la checkbox
+                  decide se comparire anche come nota di testo dopo la tabella nel documento finale. */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '0 10px 4px' }}>
+                <input
+                  className="form-input"
+                  placeholder="Commento su questo indice (facoltativo, usato solo per orientare l'interpretazione)"
+                  value={commento}
+                  onChange={e => setCommento(campo.key, e.target.value)}
+                  style={{ fontSize: 11.5, padding: '5px 10px', flex: 1 }}
+                />
+                <label title="Se selezionato, il commento compare anche come nota di testo dopo la tabella nel documento finale" style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 10.5, color: 'var(--text-muted)', whiteSpace: 'nowrap', cursor: commento ? 'pointer' : 'default', opacity: commento ? 1 : 0.5 }}>
                   <input
                     type="checkbox"
-                    checked={interpretabile}
-                    onChange={e => setInterp(campo.key, e.target.checked)}
-                    style={{ width: 16, height: 16, cursor: 'pointer' }}
+                    checked={commentoVisibile}
+                    disabled={!commento}
+                    onChange={e => setCommentoVisibile(campo.key, e.target.checked)}
+                    style={{ width: 13, height: 13, cursor: commento ? 'pointer' : 'default' }}
                   />
+                  mostra in tabella
                 </label>
-              )}
+              </div>
             </div>
           )
         })}

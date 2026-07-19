@@ -10,12 +10,30 @@ export function toSlug(s: string): string {
 }
 
 // ── Form state types ──────────────────────────────────────────
+// Una colonna nel form: come ColonnaTest ma scala sempre presente come
+// chiave (anche se undefined), più comodo da aggiornare nel reducer.
+export type FormColonna = { nome: string; scala?: ScalaPunteggio; mostraFasciaInTabella?: boolean; evidenziato?: boolean }
+
+// Configurazione di un campo "calcolato" (Totale): modo 'somma'/'media' genera
+// automaticamente l'espressione dalle parti selezionate; 'avanzata' lascia
+// scrivere l'espressione a mano (medie pesate, sottrazioni...).
+export type FormFormula = {
+  modo: 'somma' | 'media' | 'avanzata'
+  parti: string[]
+  espressioneAvanzata: string
+  descrizione: string
+}
+
+export type FormCampo = { key: string; label: string; descr: string; evidenziato?: boolean; formula?: FormFormula }
+
 export type FormState = {
   nome: string
   categoria: TestTemplate['categoria']
   scalaDefault: ScalaPunteggio
-  campiPrincipali: Array<{ key: string; label: string; descr: string }>
+  mostraCategoriaDescrittiva: boolean
+  campiPrincipali: FormCampo[]
   gruppiSecondari: Array<{ key: string; label: string; campi: Array<{ key: string; label: string }> }>
+  colonne: FormColonna[]
   notaRange: string
   richiedeEtaValutazione: boolean
   richiedeStrumentiUtilizzati: boolean
@@ -25,8 +43,10 @@ export const INIT_FORM: FormState = {
   nome: '',
   categoria: 'altro',
   scalaDefault: { tipo: 'scalare' },
+  mostraCategoriaDescrittiva: true,
   campiPrincipali: [{ key: '', label: '', descr: '' }],
   gruppiSecondari: [],
+  colonne: [{ nome: 'Punteggio' }],
   notaRange: '',
   richiedeEtaValutazione: false,
   richiedeStrumentiUtilizzati: false,
@@ -52,6 +72,18 @@ export type FormTemplateAction =
   | { type: 'ADD_CAMPO_GRUPPO'; payload: number }
   | { type: 'REMOVE_CAMPO_GRUPPO'; payload: { gi: number; ci: number } }
   | { type: 'UPDATE_CAMPO_GRUPPO'; payload: { gi: number; ci: number; field: string; value: string } }
+  | { type: 'ADD_COLONNA' }
+  | { type: 'REMOVE_COLONNA'; payload: number }
+  | { type: 'UPDATE_COLONNA_NOME'; payload: { idx: number; value: string } }
+  | { type: 'SET_COLONNA_SCALA_TIPO'; payload: { idx: number; tipo: ScalaPunteggio['tipo'] | null } }
+  | { type: 'SET_COLONNA_SOGLIE'; payload: { idx: number; soglie: SogliaCustom[] } }
+  | { type: 'SET_COLONNA_MOSTRA_FASCIA'; payload: { idx: number; value: boolean } }
+  | { type: 'SET_COLONNA_EVIDENZIATO'; payload: { idx: number; value: boolean } }
+  | { type: 'SET_CAMPO_EVIDENZIATO'; payload: { idx: number; value: boolean } }
+  | { type: 'SET_CAMPO_FORMULA_MODO'; payload: { idx: number; modo: 'somma' | 'media' | 'avanzata' | null } }
+  | { type: 'TOGGLE_CAMPO_FORMULA_PARTE'; payload: { idx: number; chiave: string } }
+  | { type: 'SET_CAMPO_FORMULA_ESPRESSIONE'; payload: { idx: number; value: string } }
+  | { type: 'SET_CAMPO_FORMULA_DESCRIZIONE'; payload: { idx: number; value: string } }
   | { type: 'SET_SOGLIE_CUSTOM'; payload: SogliaCustom[] }
   | { type: 'TOGGLE_PREVIEW' }
   | { type: 'START_SAVE' }
@@ -166,6 +198,100 @@ export function formTemplateReducer(state: FormTemplateState, action: FormTempla
           scalaDefault: { tipo: 'soglie_custom', soglie: action.payload }
         }
       }
+    case 'ADD_COLONNA':
+      // Nessun range di default: colonne diverse nello stesso test hanno quasi sempre
+      // unità diverse (percentile, punteggio scalato, conteggio errori...) e applicare
+      // automaticamente la scala del template produrrebbe fasce sbagliate/fuorvianti su
+      // colonne che non la usano davvero. Impostarlo resta un click quando serve davvero.
+      return {
+        ...state,
+        form: { ...state.form, colonne: [...state.form.colonne, { nome: '' }] }
+      }
+    case 'REMOVE_COLONNA':
+      return {
+        ...state,
+        form: { ...state.form, colonne: state.form.colonne.filter((_, idx) => idx !== action.payload) }
+      }
+    case 'UPDATE_COLONNA_NOME': {
+      const next = state.form.colonne.map((c, idx) =>
+        idx === action.payload.idx ? { ...c, nome: action.payload.value } : c
+      )
+      return { ...state, form: { ...state.form, colonne: next } }
+    }
+    case 'SET_COLONNA_SCALA_TIPO': {
+      const { idx, tipo } = action.payload
+      const next = state.form.colonne.map((c, i) => {
+        if (i !== idx) return c
+        if (tipo === null) return { nome: c.nome } // nessun range: colonna solo informativa
+        if (tipo === 'soglie_custom') {
+          return { ...c, scala: { tipo: 'soglie_custom' as const, soglie: c.scala?.tipo === 'soglie_custom' ? c.scala.soglie : [] } }
+        }
+        return { ...c, scala: { tipo } }
+      })
+      return { ...state, form: { ...state.form, colonne: next } }
+    }
+    case 'SET_COLONNA_SOGLIE': {
+      const { idx, soglie } = action.payload
+      const next = state.form.colonne.map((c, i) =>
+        i === idx ? { ...c, scala: { tipo: 'soglie_custom' as const, soglie } } : c
+      )
+      return { ...state, form: { ...state.form, colonne: next } }
+    }
+    case 'SET_COLONNA_MOSTRA_FASCIA': {
+      const next = state.form.colonne.map((c, i) => i === action.payload.idx ? { ...c, mostraFasciaInTabella: action.payload.value } : c)
+      return { ...state, form: { ...state.form, colonne: next } }
+    }
+    case 'SET_COLONNA_EVIDENZIATO': {
+      const next = state.form.colonne.map((c, i) => i === action.payload.idx ? { ...c, evidenziato: action.payload.value } : c)
+      return { ...state, form: { ...state.form, colonne: next } }
+    }
+    case 'SET_CAMPO_EVIDENZIATO': {
+      const next = state.form.campiPrincipali.map((c, i) => i === action.payload.idx ? { ...c, evidenziato: action.payload.value } : c)
+      return { ...state, form: { ...state.form, campiPrincipali: next } }
+    }
+    case 'SET_CAMPO_FORMULA_MODO': {
+      const { idx, modo } = action.payload
+      const next = state.form.campiPrincipali.map((c, i) => {
+        if (i !== idx) return c
+        if (modo === null) { const { formula: _formula, ...senzaFormula } = c; return senzaFormula }
+        const precedente = c.formula
+        return {
+          ...c,
+          formula: {
+            modo,
+            parti: precedente?.parti || [],
+            espressioneAvanzata: precedente?.espressioneAvanzata || '',
+            descrizione: precedente?.descrizione || '',
+          },
+        }
+      })
+      return { ...state, form: { ...state.form, campiPrincipali: next } }
+    }
+    case 'TOGGLE_CAMPO_FORMULA_PARTE': {
+      const { idx, chiave } = action.payload
+      const next = state.form.campiPrincipali.map((c, i) => {
+        if (i !== idx || !c.formula) return c
+        const parti = c.formula.parti.includes(chiave)
+          ? c.formula.parti.filter(k => k !== chiave)
+          : [...c.formula.parti, chiave]
+        return { ...c, formula: { ...c.formula, parti } }
+      })
+      return { ...state, form: { ...state.form, campiPrincipali: next } }
+    }
+    case 'SET_CAMPO_FORMULA_ESPRESSIONE': {
+      const { idx, value } = action.payload
+      const next = state.form.campiPrincipali.map((c, i) =>
+        i === idx && c.formula ? { ...c, formula: { ...c.formula, espressioneAvanzata: value } } : c
+      )
+      return { ...state, form: { ...state.form, campiPrincipali: next } }
+    }
+    case 'SET_CAMPO_FORMULA_DESCRIZIONE': {
+      const { idx, value } = action.payload
+      const next = state.form.campiPrincipali.map((c, i) =>
+        i === idx && c.formula ? { ...c, formula: { ...c.formula, descrizione: value } } : c
+      )
+      return { ...state, form: { ...state.form, campiPrincipali: next } }
+    }
     case 'TOGGLE_PREVIEW':
       return {
         ...state,

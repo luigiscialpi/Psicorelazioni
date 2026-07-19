@@ -566,6 +566,7 @@ Qui sono descritti i test clinici identificati nelle relazioni, con le relative 
 ### Test: BVSCO-2 (Batteria per la Valutazione della Scrittura e della Competenza Ortografica)
 - **Categoria**: apprendimenti
 - **Struttura Colonne**: Subtest, Punteggio Grezzo, Percentile, Fascia di Prestazione (es. "Richiesta di Intervento", "Attenzione", "Sufficiente", "Ottimale")
+- **Esempio Valori**: Dettato di brano — Punteggio Grezzo: 14, Percentile: 8, Fascia: Richiesta di Intervento
 - **Campi e Subtest**:
   - Dettato di brano (competenze ortografiche generali)
   - Scrittura di parole (ortografia lessicale)
@@ -578,6 +579,7 @@ Qui sono descritti i test clinici identificati nelle relazioni, con le relative 
 ### Test: MT-3 (Prove di Lettura MT per la Scuola Primaria e Secondaria)
 - **Categoria**: apprendimenti
 - **Struttura Colonne**: Prova, Tempo (secondi), Sillabe/Secondo, Errori, Percentile, Fascia di Prestazione
+- **Esempio Valori**: Lettura di brano - Rapidità — Tempo: 95, Sillabe/Secondo: 3.2, Percentile: 22, Fascia: Prestazione Sufficiente
 - **Campi e Subtest**:
   - Lettura di brano - Correttezza (numero di errori commessi)
   - Lettura di brano - Rapidità (sillabe al secondo lette)
@@ -629,13 +631,14 @@ Qui sono descritti i test clinici identificati nelle relazioni, con le relative 
 Per ciascun test o batteria individuato, crea una sottosezione:
 ### Test: [Nome del Test] (es. BVSCO-2)
 - **Categoria**: [categoria clinica tra: cognitivo, nepsy, apprendimenti, questionari, altro]
-- **Struttura Colonne**: [le colonne presenti nelle tabelle di scoring di questo test, es. Punteggio Grezzo, Percentile, Fascia di prestazione. Fai attenzione a specificare tutte le colonne reali viste in tabella]
+- **Struttura Colonne**: [elenca i NOMI ESATTI delle colonne presenti nelle tabelle di scoring di questo test, nell'ordine in cui compaiono, es. "Punteggio Grezzo, Percentile, Fascia di prestazione". Una colonna per ogni valore numerico/qualitativo riportato per riga: non riassumere, non unire colonne diverse in una sola]
+- **Esempio Valori**: [riporta un esempio REALE (anonimizzato) di una riga di dati come compare in una delle relazioni, con i valori affiancati ai nomi colonna, es. "Dettato di brano — Punteggio Grezzo: 12, Percentile: 8, Fascia: Richiesta di Intervento". Se il test ha più subtest con range diversi, riporta un esempio per ciascuno. Questo serve a dedurre correttamente il range/scala di ogni colonna in fase di creazione automatica del template, quindi riporta numeri realistici, non placeholder]
 - **Campi e Subtest**: [elenco degli indici primari e dei subtest secondari che compongono il test]
 - **Commenti e Note Range**:
   - *Nota range*: [le note metodologiche sulle fasce di punteggio o i cut-off usati, es. <5° percentile come deficit]
   - *Commenti qualitativi*: [descrizione del comportamento, degli errori tipici o dei commenti qualitativi commentati nella relazione per questo test]
 
-Sii estremamente preciso ed esaustivo nell'estrarre le colonne, i subtest e le note di range.
+Sii estremamente preciso ed esaustivo nell'estrarre le colonne (nomi esatti, mai riassunti), gli esempi di valori reali, i subtest e le note di range.
 Rispondi SOLO con la sezione 7 in formato Markdown, senza introduzioni.`
 
   const resultTest = await callGeminiWithFinishReason(
@@ -1093,7 +1096,8 @@ Hai una sezione esistente con l'analisi dei test rilevati nell'archivio.
 Il tuo compito è AGGIORNARE questa sezione integrando i dettagli di eventuali nuovi test clinici o subtest individuati nelle relazioni aggiunte (escludendo WISC-IV e NEPSY-II).
 Per ciascun test mantieni o aggiorna la struttura:
 - Nome del test e Categoria clinica.
-- Struttura Colonne (le colonne presenti nelle tabelle di scoring).
+- Struttura Colonne: i NOMI ESATTI delle colonne nelle tabelle di scoring, nell'ordine in cui compaiono, una per ogni valore riportato per riga.
+- Esempio Valori: un esempio REALE (anonimizzato) di una riga di dati con i valori affiancati ai nomi colonna, per dedurre correttamente il range di ciascuna in fase di creazione automatica del template.
 - Campi e Subtest (indici primari e subtest).
 - Commenti e Note Range (soglie, cut-off, commenti qualitativi).
 Se i test nelle nuove relazioni sono già descritti accuratamente nella sezione esistente, rispondi con il testo esistente invariato.
@@ -1151,10 +1155,10 @@ export async function rilevaNomiTestDaProfilo(profiloStile: string, templateEsis
     if (typeof process === 'undefined' || process.env.NODE_ENV !== 'test') {
       await new Promise<void>(resolve => setTimeout(resolve, 800))
     }
-    const mock = [
+    const mock: z.infer<typeof NomiTestSchema> = [
       { nome: 'BVSCO-3', categoria: 'apprendimenti' },
       { nome: 'AC-MT', categoria: 'apprendimenti' },
-      { nome: 'APL Medea', categoria: 'linguaggio' }
+      { nome: 'APL Medea', categoria: 'altro' }
     ]
     return mock.filter(m => !templateEsistenti.some(ex => ex.toLowerCase() === m.nome.toLowerCase()))
   }
@@ -1163,7 +1167,7 @@ export async function rilevaNomiTestDaProfilo(profiloStile: string, templateEsis
 Analizza il profilo di stile fornito e individua tutti i test clinici o batterie menzionati nella sezione 7 o in altre parti del profilo (escludi WISC-IV e NEPSY-II).
 Non includere i test già esistenti: [${templateEsistenti.join(', ')}].`
 
-  return callGeministructured(promptSystem, profiloStile, NomiTestSchema, { maxOutputTokens: 1500, temperature: 0.1 })
+  return callGeminiStructured(promptSystem, profiloStile, NomiTestSchema, { maxOutputTokens: 1500, temperature: 0.1 })
 }
 
 export async function generaTemplateTest(testNome: string, profiloStile: string): Promise<GeneratedTestTemplate> {
@@ -1199,7 +1203,8 @@ export async function generaTemplateTest(testNome: string, profiloStile: string)
         ],
         notaRange: '*BVSCO-3: percentili <5° indicano Richiesta di Intervento, tra 5° e 15° indicano Attenzione, >15° indicano prestazione Sufficiente.*',
         richiedeEtaValutazione: false,
-        richiedeStrumentiUtilizzati: true
+        richiedeStrumentiUtilizzati: true,
+        colonne: ['Punteggio grezzo', 'Percentile']
       }
     }
     return {
@@ -1221,9 +1226,10 @@ Il tuo compito è analizzare la descrizione del test "${testNome}" presente nel 
 
 Sii estremamente accurato nel mappare tutti i subtest, gli indici, le colonne e le soglie descritte nel profilo per questo specifico test.
 Per "scalaDefault": usa "qi_wisc" o "scalare" solo se il test dichiara esplicitamente di riusare quelle scale standard; altrimenti usa "soglie_custom" con le soglie realmente descritte nel profilo (max null se non c'è limite superiore).
+Per "colonne": elenca solo i NOMI delle colonne di punteggio che il test riporta per ciascun indice, nell'ordine in cui compaiono nel profilo (es. ["Punti T", "Percentile"] se per ogni indice sono riportati entrambi i valori). Guarda sia "Struttura Colonne" sia "Esempio Valori" nel profilo, se presenti: il secondo mostra dati reali e aiuta a capire quante colonne servono davvero e in che ordine. Se il test riporta un solo valore per indice, ometti il campo oppure usa un array con un solo elemento. NON includere qui soglie, range o fasce: quelle restano sempre una scelta manuale successiva, non tua.
 Il campo "nome" deve essere esattamente "${testNome}".`
 
-  return callGeministructured(promptSystem, profiloStile, GeneratedTestTemplateSchema, { maxOutputTokens: 2500, temperature: 0.1 })
+  return callGeminiStructured(promptSystem, profiloStile, GeneratedTestTemplateSchema, { maxOutputTokens: 2500, temperature: 0.1 })
 }
 
 export { USE_MOCK_AI }

@@ -54,7 +54,7 @@ export const MOCK_WISC_IV_TEMPLATE: TestTemplate = {
       ]
     }
   ],
-  colonne: ['Punteggio'],
+  colonne: [{ nome: 'Punteggio' }],
 }
 
 export const MOCK_NEPSY_II_TEMPLATE: TestTemplate = {
@@ -84,7 +84,7 @@ export const MOCK_NEPSY_II_TEMPLATE: TestTemplate = {
     { key: 'copia_figure', label: 'Copia di Figure (Visuospaziale)' },
     { key: 'orientamento_linee', label: 'Giudizio di Orientamento delle Linee (Visuospaziale)' },
   ],
-  colonne: ['Punteggio'],
+  colonne: [{ nome: 'Punteggio' }],
 }
 
 export const MOCK_TEST_TEMPLATES = [

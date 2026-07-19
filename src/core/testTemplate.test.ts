@@ -38,7 +38,7 @@ describe('GeneratedTestTemplateSchema', () => {
     expect(() => GeneratedTestTemplateSchema.parse({ ...validoBase, categoria: 'inventata' })).toThrow()
   })
 
-  it('non richiede i campi gestiti dall\'app (id, builtIn, attivo, colonne, formule)', () => {
+  it('non richiede i campi gestiti dall\'app (id, builtIn, attivo, formule)', () => {
     // GeneratedTestTemplateSchema deriva da .omit(): questi campi non devono
     // essere nella forma, altrimenti generaTemplateTest chiederebbe a Gemini
     // di inventare id/flag che dovrebbero restare responsabilità del codice.
@@ -46,8 +46,20 @@ describe('GeneratedTestTemplateSchema', () => {
     expect(shape.id).toBeUndefined()
     expect(shape.builtIn).toBeUndefined()
     expect(shape.attivo).toBeUndefined()
-    expect(shape.colonne).toBeUndefined()
     expect(shape.formule).toBeUndefined()
+  })
+
+  it('accetta colonne come semplice array di nomi (mai il range/scala)', () => {
+    // Le colonne sono reintrodotte in GeneratedTestTemplateSchema ma semplificate:
+    // l'LLM può suggerire i NOMI delle colonne (es. 'Punti T', 'Percentile'), mai
+    // il range/scala di ciascuna, che resta sempre configurazione manuale.
+    const risultato = GeneratedTestTemplateSchema.parse({ ...validoBase, colonne: ['Punti T', 'Percentile'] })
+    expect(risultato.colonne).toEqual(['Punti T', 'Percentile'])
+  })
+
+  it('funziona anche senza colonne (opzionale)', () => {
+    const risultato = GeneratedTestTemplateSchema.parse(validoBase)
+    expect(risultato.colonne).toBeUndefined()
   })
 
   it('è convertibile in JSON Schema (stesso percorso usato da callGeminiStructured)', () => {
@@ -56,6 +68,46 @@ describe('GeneratedTestTemplateSchema', () => {
     expect(() => z.toJSONSchema(GeneratedTestTemplateSchema, { target: 'openapi-3.0' })).not.toThrow()
     const jsonSchema = z.toJSONSchema(GeneratedTestTemplateSchema, { target: 'openapi-3.0' }) as { required?: string[] }
     expect(jsonSchema.required).not.toContain('id')
+  })
+})
+
+describe('TestTemplateSchema.colonne', () => {
+  const base = {
+    id: 'test-1',
+    nome: 'Test Custom',
+    categoria: 'altro' as const,
+    scalaDefault: { tipo: 'scalare' as const },
+    campiPrincipali: [{ key: 'indice', label: 'Indice' }],
+  }
+
+  it('di default vale [{ nome: "Punteggio" }] se assente', () => {
+    const risultato = TestTemplateSchema.parse(base)
+    expect(risultato.colonne).toEqual([{ nome: 'Punteggio' }])
+  })
+
+  it('normalizza le vecchie colonne salvate come stringa semplice', () => {
+    // Retrocompatibilità con i template esistenti in Supabase (built-in e custom),
+    // salvati prima dell'introduzione del range per colonna.
+    const risultato = TestTemplateSchema.parse({ ...base, colonne: ['Punteggio', 'Percentile'] })
+    expect(risultato.colonne).toEqual([{ nome: 'Punteggio' }, { nome: 'Percentile' }])
+  })
+
+  it('accetta una colonna con range/scala propria', () => {
+    const risultato = TestTemplateSchema.parse({
+      ...base,
+      colonne: [
+        { nome: 'Punti T', scala: { tipo: 'qi_wisc' } },
+        'Percentile',
+      ],
+    })
+    expect(risultato.colonne).toEqual([
+      { nome: 'Punti T', scala: { tipo: 'qi_wisc' } },
+      { nome: 'Percentile' },
+    ])
+  })
+
+  it('rifiuta una colonna con nome vuoto', () => {
+    expect(() => TestTemplateSchema.parse({ ...base, colonne: [''] })).toThrow()
   })
 })
 

@@ -11,7 +11,7 @@ vi.mock('../core/supabase', () => ({
     }),
   },
 }))
-import { calcolaFascia, generaTabella, generaNarrativa, generaSezioneTest, valutaFormule, migraWizardSnapshotLegacy, buildGeminiPayload } from './testTemplateEngine'
+import { calcolaFascia, generaTabella, generaNarrativa, generaSezioneTest, valutaFormule, migraWizardSnapshotLegacy, buildGeminiPayload, buildFormulaSemplice, parseFormulaSemplice, generaCommentiVisibili } from './testTemplateEngine'
 import { MOCK_WISC_IV_TEMPLATE, MOCK_NEPSY_II_TEMPLATE } from '../data/mockTemplates'
 import type { RisultatoTest, TestTemplate } from '../core/testTemplate'
 import { rilevaNomiTestDaProfilo, generaTemplateTest } from './geminiService'
@@ -35,7 +35,7 @@ describe('testTemplateEngine', () => {
           { targetKey: 'somma', espressione: '{a} + {b}' },
           { targetKey: 'media', espressione: '({somma}) / 2' }
         ],
-        colonne: ['Punteggio'],
+        colonne: [{ nome: 'Punteggio' }],
         schemaVersion: 1,
         builtIn: false,
         attivo: true,
@@ -50,6 +50,59 @@ describe('testTemplateEngine', () => {
       const punteggiCalcolati = valutaFormule(templateMock, risultato)
       expect(punteggiCalcolati.somma).toBe(30)
       expect(punteggiCalcolati.media).toBe(15)
+    })
+
+    it('non ricalcola un target sovrascritto a mano (formuleManuali), ma lo rende disponibile alle formule a valle', () => {
+      const templateMock: TestTemplate = {
+        id: 'test-formule',
+        nome: 'Test Formule',
+        categoria: 'altro',
+        scalaDefault: { tipo: 'scalare' },
+        campiPrincipali: [
+          { key: 'a', label: 'Campo A' },
+          { key: 'b', label: 'Campo B' },
+          { key: 'somma', label: 'Somma' },
+          { key: 'media', label: 'Media' },
+        ],
+        formule: [
+          { targetKey: 'somma', espressione: '{a} + {b}' },
+          { targetKey: 'media', espressione: '({somma}) / 2' }
+        ],
+        colonne: [{ nome: 'Punteggio' }],
+        schemaVersion: 1,
+        builtIn: false,
+        attivo: true,
+        richiedeEtaValutazione: false,
+        richiedeStrumentiUtilizzati: false
+      }
+      // L'utente ha scritto 99 a mano al posto del 30 calcolato: deve restare 99,
+      // e la media (che dipende da 'somma') deve usare 99, non ricalcolare 'somma'.
+      const risultato: RisultatoTest = {
+        punteggi: { a: '10', b: '20', somma: 99 },
+        formuleManuali: { somma: true },
+      }
+
+      const punteggiCalcolati = valutaFormule(templateMock, risultato)
+      expect(punteggiCalcolati.somma).toBe(99)
+      expect(punteggiCalcolati.media).toBe(49.5)
+    })
+  })
+
+  describe('buildFormulaSemplice / parseFormulaSemplice', () => {
+    it('somma e media fanno un round-trip identico tra UI a checkbox e stringa motore', () => {
+      const espSomma = buildFormulaSemplice('somma', ['icv', 'irp'])
+      expect(espSomma).toBe('{icv} + {irp}')
+      expect(parseFormulaSemplice(espSomma)).toEqual({ operazione: 'somma', parti: ['icv', 'irp'] })
+
+      const espMedia = buildFormulaSemplice('media', ['icv', 'irp', 'ivl'])
+      expect(espMedia).toBe('({icv} + {irp} + {ivl}) / 3')
+      expect(parseFormulaSemplice(espMedia)).toEqual({ operazione: 'media', parti: ['icv', 'irp', 'ivl'] })
+    })
+
+    it('ritorna null per espressioni complesse non riconducibili a somma/media semplice', () => {
+      expect(parseFormulaSemplice('({icv} + {irp}) / 3')).toBeNull() // media dichiarata ma conteggio non coerente
+      expect(parseFormulaSemplice('{icv} - {irp}')).toBeNull()
+      expect(parseFormulaSemplice('{icv} * 2')).toBeNull()
     })
   })
 
@@ -201,6 +254,156 @@ describe('testTemplateEngine', () => {
     it('generaSezioneTest non include nota range se disabilitata', () => {
       const testo = generaSezioneTest(MOCK_NEPSY_II_TEMPLATE, risultatoMock)
       expect(testo).not.toContain('*NEPSY-II: punteggi scalari')
+    })
+  })
+
+  describe('mostraCategoriaDescrittiva', () => {
+    const template: TestTemplate = {
+      id: 'test-categoria',
+      nome: 'Test Categoria',
+      categoria: 'altro',
+      scalaDefault: { tipo: 'qi_wisc' },
+      builtIn: false,
+      attivo: true,
+      schemaVersion: 1,
+      richiedeEtaValutazione: false,
+      richiedeStrumentiUtilizzati: false,
+      campiPrincipali: [{ key: 'indice_a', label: 'Indice A' }],
+      colonne: [{ nome: 'Punteggio' }],
+    }
+    const risultato: RisultatoTest = { somministrato: true, punteggi: { indice_a: '65' } }
+
+    it('di default (campo assente) la colonna Categoria descrittiva compare, comportamento storico invariato', () => {
+      const table = generaTabella(template, risultato)
+      expect(table).toContain('| Test Categoria scale | Punteggio | Categoria descrittiva | Interpretabilità |')
+      expect(table).toContain('| Indice A | 65 | Molto inferiore alla norma | Sì |')
+    })
+
+    it('con mostraCategoriaDescrittiva: false la colonna sparisce dalla tabella', () => {
+      const t2: TestTemplate = { ...template, mostraCategoriaDescrittiva: false }
+      const table = generaTabella(t2, risultato)
+      expect(table).toContain('| Test Categoria scale | Punteggio | Interpretabilità |')
+      expect(table).toContain('| Indice A | 65 | Sì |')
+      expect(table).not.toContain('Categoria descrittiva')
+    })
+
+    it('anche con la colonna nascosta, la fascia resta disponibile per Gemini in buildGeminiPayload', () => {
+      const t2: TestTemplate = { ...template, mostraCategoriaDescrittiva: false }
+      const payload = buildGeminiPayload(t2, risultato)
+      expect(payload).toContain('Indice A: 65, fascia Molto inferiore alla norma')
+    })
+  })
+
+  describe('Commenti per riga: visibili in tabella o solo contesto per Gemini', () => {
+    const template: TestTemplate = {
+      id: 'test-commenti',
+      nome: 'Test Commenti',
+      categoria: 'altro',
+      scalaDefault: { tipo: 'scalare' },
+      builtIn: false,
+      attivo: true,
+      schemaVersion: 1,
+      richiedeEtaValutazione: false,
+      richiedeStrumentiUtilizzati: false,
+      campiPrincipali: [{ key: 'indice_a', label: 'Indice A' }],
+      colonne: [{ nome: 'Punteggio' }],
+    }
+
+    it('senza commentiVisibili, il commento non compare nel documento ma va a Gemini con istruzione di non citarlo', () => {
+      const risultato: RisultatoTest = {
+        somministrato: true,
+        punteggi: { indice_a: '10' },
+        commenti: { indice_a: 'Nota privata sul bambino.' },
+      }
+      const testo = generaSezioneTest(template, risultato)
+      expect(testo).not.toContain('Nota privata sul bambino.')
+      const payload = buildGeminiPayload(template, risultato)
+      expect(payload).toContain('(tienine conto nel commento, non citarla testualmente): Nota privata sul bambino.')
+    })
+
+    it('con commentiVisibili, il commento compare come nota dopo la tabella e Gemini viene istruito a non ripeterlo', () => {
+      const risultato: RisultatoTest = {
+        somministrato: true,
+        punteggi: { indice_a: '10' },
+        commenti: { indice_a: 'Punteggio sottostimato per stanchezza.' },
+        commentiVisibili: { indice_a: true },
+      }
+      expect(generaCommentiVisibili(template, risultato)).toBe('*Nota su Indice A: Punteggio sottostimato per stanchezza.*\n\n')
+      const testo = generaSezioneTest(template, risultato)
+      expect(testo).toContain('*Nota su Indice A: Punteggio sottostimato per stanchezza.*')
+      const payload = buildGeminiPayload(template, risultato)
+      expect(payload).toContain('comparirà GIÀ come nota separata nel documento: non ripeterla né citarla')
+    })
+  })
+
+  describe('Colonne con range proprio (Fascia dedicata, solo se richiesta esplicitamente)', () => {
+    const template: TestTemplate = {
+      id: 'multi-col',
+      nome: 'Test Multi-Colonna',
+      categoria: 'altro',
+      scalaDefault: { tipo: 'scalare' },
+      builtIn: false,
+      attivo: true,
+      schemaVersion: 1,
+      richiedeEtaValutazione: false,
+      richiedeStrumentiUtilizzati: false,
+      campiPrincipali: [{ key: 'indice_a', label: 'Indice A', scala: { tipo: 'qi_wisc' } }],
+      colonne: [
+        { nome: 'Punti T', scala: { tipo: 'qi_wisc' }, mostraFasciaInTabella: true }, // range + opt-in esplicito: fascia dedicata in tabella
+        { nome: 'Percentile' }, // nessun range: resta dato grezzo, come oggi
+      ],
+    }
+    const risultato: RisultatoTest = {
+      somministrato: true,
+      punteggi: { indice_a: '65', indice_a_Percentile: '93' },
+      commenti: { indice_a: 'Bambino molto stanco durante la prova.' },
+    }
+
+    it('generaTabella aggiunge "Fascia <nome>" solo per le colonne con range E mostraFasciaInTabella attivo', () => {
+      const table = generaTabella(template, risultato)
+      expect(table).toContain('| Test Multi-Colonna scale | Punti T | Fascia Punti T | Percentile | Categoria descrittiva | Interpretabilità |')
+      expect(table).toContain('| Indice A | 65 | Molto inferiore alla norma | 93 | Molto inferiore alla norma | Sì |')
+    })
+
+    it('una colonna con range ma senza mostraFasciaInTabella (default) NON compare come colonna in tabella', () => {
+      // Caso reale segnalato: aggiungere un range a una colonna non deve far apparire
+      // automaticamente "Fascia <nome>" in tabella finché non lo si spunta esplicitamente.
+      // La colonna con range è qui la seconda (come Errori/PS/%ile in un caso reale multi-colonna),
+      // per verificare che la sua fascia raggiunga comunque Gemini tramite "Altre colonne".
+      const templateSenzaOptIn: TestTemplate = {
+        ...template,
+        colonne: [
+          { nome: 'Accuratezza' }, // colonna principale, nessun range
+          { nome: 'PS', scala: { tipo: 'qi_wisc' } }, // range presente, ma mostraFasciaInTabella assente
+        ],
+      }
+      const risultatoSenzaOptIn: RisultatoTest = {
+        somministrato: true,
+        punteggi: { indice_a: '65', indice_a_PS: '65' },
+      }
+      const table = generaTabella(templateSenzaOptIn, risultatoSenzaOptIn)
+      expect(table).toContain('| Test Multi-Colonna scale | Accuratezza | PS | Categoria descrittiva | Interpretabilità |')
+      expect(table).not.toContain('Fascia PS')
+      // La fascia resta comunque calcolata e inviata a Gemini, solo non stampata in tabella
+      const payload = buildGeminiPayload(templateSenzaOptIn, risultatoSenzaOptIn)
+      expect(payload).toContain('Altre colonne: PS 65 (fascia Molto inferiore alla norma)')
+    })
+
+    it('buildGeminiPayload riporta le colonne aggiuntive con la loro fascia e il commento come nota grezza, mai come tabella', () => {
+      const payload = buildGeminiPayload(template, risultato)
+      expect(payload).toContain('Indice A: 65, fascia Molto inferiore alla norma')
+      expect(payload).toContain('Altre colonne: Percentile 93')
+      expect(payload).toContain('Nota del professionista su questo indice (tienine conto nel commento, non citarla testualmente): Bambino molto stanco durante la prova.')
+      expect(payload).not.toContain('|')
+    })
+
+    it('senza colonne extra né commento, buildGeminiPayload resta identico al formato storico', () => {
+      const templateSemplice: TestTemplate = { ...template, colonne: [{ nome: 'Punteggio' }] }
+      const risultatoSemplice: RisultatoTest = { somministrato: true, punteggi: { indice_a: '65' } }
+      const payload = buildGeminiPayload(templateSemplice, risultatoSemplice)
+      expect(payload).toContain('Indice A: 65, fascia Molto inferiore alla norma\n')
+      expect(payload).not.toContain('Altre colonne')
+      expect(payload).not.toContain('Nota del professionista')
     })
   })
 

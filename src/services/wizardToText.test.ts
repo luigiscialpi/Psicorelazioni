@@ -66,7 +66,7 @@ describe('assemblaDocumentoMarkdown — dedup test dinamici vs sezioni legacy', 
     builtIn: false,
     attivo: true,
     schemaVersion: 1,
-    colonne: ['Punteggio'],
+    colonne: [{ nome: 'Punteggio' }],
   }
 
   const risultatoQuestionarioCustom: RisultatoTest = {

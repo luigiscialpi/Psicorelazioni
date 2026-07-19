@@ -1,19 +1,19 @@
-import { useState, useEffect, useReducer } from 'react'
+import { useState, useEffect, useReducer, type Dispatch } from 'react'
 import {
   formTemplateReducer,
   gestioneTestReducer,
   GESTIONE_TEST_INIT,
   INIT_FORM,
 } from '../state/gestioneTestState'
-import type { FormState } from '../state/gestioneTestState'
-import { Plus, Trash2, ChevronDown, ChevronUp, Eye, Save, AlertTriangle, Lock, FlaskConical, X, Check, Sparkles, Pencil } from 'lucide-react'
+import type { FormState, FormCampo, FormColonna, FormTemplateAction } from '../state/gestioneTestState'
+import { Plus, Trash2, ChevronDown, ChevronUp, Eye, Save, AlertTriangle, Lock, Unlock, FlaskConical, X, Check, Sparkles, Pencil, Copy } from 'lucide-react'
 import {
-  getTestTemplates, insertTestTemplate, updateTestTemplate, disattivaTestTemplate, deleteTestTemplate
+  getTestTemplates, insertTestTemplate, updateTestTemplate, disattivaTestTemplate, deleteTestTemplate, duplicaTestTemplate
 } from '../../data/testTemplatesData'
-import { validaSoglieCustom } from '../../services/testTemplateEngine'
+import { validaSoglieCustom, buildFormulaSemplice, parseFormulaSemplice } from '../../services/testTemplateEngine'
 import { rilevaNomiTestDaProfilo, generaTemplateTest } from '../../services/geminiService'
 import { getProfiloProfessionista, getProfiloStile, getTemplateRilevati, saveTemplateRilevati, clearTemplateRilevati } from '../../data/profiloData'
-import type { TestTemplate, CampoTest, GruppoTest, SogliaCustom, ScalaPunteggio } from '../../core/testTemplate'
+import type { TestTemplate, CampoTest, GruppoTest, SogliaCustom, ScalaPunteggio, ColonnaTest, FormulaCalcolo } from '../../core/testTemplate'
 import { USE_MOCK } from '../../core/config'
 
 // ── Sanitizzazione input ──────────────────────────────────────
@@ -33,11 +33,24 @@ function templateToForm(t: TestTemplate): FormState {
     nome: t.nome,
     categoria: t.categoria,
     scalaDefault: t.scalaDefault,
-    campiPrincipali: (t.campiPrincipali || []).map((c) => ({
-      key: c.key,
-      label: c.label,
-      descr: c.descr || '',
-    })),
+    mostraCategoriaDescrittiva: t.mostraCategoriaDescrittiva !== false,
+    campiPrincipali: (t.campiPrincipali || []).map((c) => {
+      const formulaTemplate = t.formule?.find(f => f.targetKey === c.key)
+      let formula: FormCampo['formula']
+      if (formulaTemplate) {
+        const semplice = parseFormulaSemplice(formulaTemplate.espressione)
+        formula = semplice
+          ? { modo: semplice.operazione, parti: semplice.parti, espressioneAvanzata: '', descrizione: formulaTemplate.descrizione || '' }
+          : { modo: 'avanzata', parti: [], espressioneAvanzata: formulaTemplate.espressione, descrizione: formulaTemplate.descrizione || '' }
+      }
+      return {
+        key: c.key,
+        label: c.label,
+        descr: c.descr || '',
+        evidenziato: c.evidenziato,
+        formula,
+      }
+    }),
     gruppiSecondari: (t.gruppiSecondari || []).map((g) => ({
       key: g.key,
       label: g.label,
@@ -46,6 +59,7 @@ function templateToForm(t: TestTemplate): FormState {
         label: c.label,
       })),
     })),
+    colonne: (t.colonne && t.colonne.length > 0 ? t.colonne : [{ nome: 'Punteggio' }]).map(c => ({ ...c })),
     notaRange: t.notaRange || '',
     richiedeEtaValutazione: t.richiedeEtaValutazione,
     richiedeStrumentiUtilizzati: t.richiedeStrumentiUtilizzati,
@@ -150,6 +164,10 @@ function Anteprima({ form }: { form: FormState }) {
   const val = form.scalaDefault.tipo === 'qi_wisc' ? 100 : form.scalaDefault.tipo === 'scalare' ? 10 : 5
   const fascia = anteprimaFascia(form.scalaDefault, val)
   const campo = form.campiPrincipali[0]
+  const colonne = form.colonne.length > 0 ? form.colonne : [{ nome: 'Punteggio' }]
+  const mostraCategoria = form.mostraCategoriaDescrittiva !== false
+  const thStyle = { padding: '5px 8px', border: '1px solid var(--border)' }
+  const tdStyle = { padding: '5px 8px', border: '1px solid var(--border)', textAlign: 'center' as const }
 
   return (
     <div style={{ background: 'var(--bg-page)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '14px 16px' }}>
@@ -158,27 +176,38 @@ function Anteprima({ form }: { form: FormState }) {
       </div>
       {/* Tabella */}
       <div style={{ fontSize: 12.5, fontWeight: 600, marginBottom: 6 }}>Tabella</div>
-      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, marginBottom: 14 }}>
-        <thead>
-          <tr style={{ background: 'var(--accent-lt)' }}>
-            <th style={{ textAlign: 'left', padding: '5px 8px', border: '1px solid var(--border)' }}>{form.nome || 'Test'} scale</th>
-            <th style={{ padding: '5px 8px', border: '1px solid var(--border)' }}>Punteggio</th>
-            <th style={{ padding: '5px 8px', border: '1px solid var(--border)' }}>Categoria descrittiva</th>
-          </tr>
-        </thead>
-        <tbody>
-          {form.campiPrincipali.slice(0, 3).filter(c => c.label).map((c, i) => (
-            <tr key={i}>
-              <td style={{ padding: '5px 8px', border: '1px solid var(--border)' }}>{c.label}</td>
-              <td style={{ padding: '5px 8px', border: '1px solid var(--border)', textAlign: 'center' }}>{val + i * 3}</td>
-              <td style={{ padding: '5px 8px', border: '1px solid var(--border)', textAlign: 'center' }}>{anteprimaFascia(form.scalaDefault, val + i * 3)}</td>
+      <div style={{ overflowX: 'auto', marginBottom: 14 }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+          <thead>
+            <tr style={{ background: 'var(--accent-lt)' }}>
+              <th style={{ textAlign: 'left', ...thStyle }}>{form.nome || 'Test'} scale</th>
+              {colonne.flatMap((col, ci) => [
+                <th key={`h-${ci}`} style={thStyle}>{col.nome || `Colonna ${ci + 1}`}</th>,
+                ...(col.scala && col.mostraFasciaInTabella ? [<th key={`hf-${ci}`} style={thStyle}>{`Fascia ${col.nome || ci + 1}`}</th>] : []),
+              ])}
+              {mostraCategoria && <th style={thStyle}>Categoria descrittiva</th>}
             </tr>
-          ))}
-          {!form.campiPrincipali.some(c => c.label) && (
-            <tr><td colSpan={3} style={{ padding: '5px 8px', border: '1px solid var(--border)', color: 'var(--text-muted)', textAlign: 'center' }}>Aggiungi campi per vedere l'anteprima</td></tr>
-          )}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {form.campiPrincipali.slice(0, 3).filter(c => c.label).map((c, i) => (
+              <tr key={i}>
+                <td style={{ padding: '5px 8px', border: '1px solid var(--border)' }}>{c.label}</td>
+                {colonne.flatMap((col, ci) => {
+                  const v = val + i * 3 + ci
+                  return [
+                    <td key={`v-${ci}`} style={tdStyle}>{v}</td>,
+                    ...(col.scala && col.mostraFasciaInTabella ? [<td key={`vf-${ci}`} style={tdStyle}>{anteprimaFascia(col.scala, v)}</td>] : []),
+                  ]
+                })}
+                {mostraCategoria && <td style={tdStyle}>{anteprimaFascia(form.scalaDefault, val + i * 3)}</td>}
+              </tr>
+            ))}
+            {!form.campiPrincipali.some(c => c.label) && (
+              <tr><td colSpan={colonne.length + (mostraCategoria ? 2 : 1)} style={{ padding: '5px 8px', border: '1px solid var(--border)', color: 'var(--text-muted)', textAlign: 'center' }}>Aggiungi campi per vedere l'anteprima</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
       {/* Narrativa */}
       <div style={{ fontSize: 12.5, fontWeight: 600, marginBottom: 6 }}>Narrativa (esempio)</div>
       <p style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.6, margin: 0 }}>
@@ -188,6 +217,247 @@ function Anteprima({ form }: { form: FormState }) {
               : `Il punteggio ottenuto al test ${campo.label} è ${val}, fascia ${fascia.toLowerCase()}.`)
           : 'Aggiungi un campo con descrizione per vedere la narrativa generata.'}
       </p>
+    </div>
+  )
+}
+
+// ── Griglia unificata: righe (campi principali) × colonne, cliccabili per configurarle ──
+function GrigliaTemplate({ form, dispatch, tipiScala }: {
+  form: FormState
+  dispatch: Dispatch<FormTemplateAction>
+  tipiScala: { tipo: ScalaPunteggio['tipo']; label: string; desc: string }[]
+}) {
+  const [colonnaAperta, setColonnaAperta] = useState<number | null>(null)
+  const [campoAperto, setCampoAperto] = useState<number | null>(null)
+  const colW = 108
+  const labelW = 168
+
+  function apriColonna(i: number) { setColonnaAperta(colonnaAperta === i ? null : i); setCampoAperto(null) }
+  function apriCampo(i: number) { setCampoAperto(campoAperto === i ? null : i); setColonnaAperta(null) }
+
+  return (
+    <div>
+      <div style={{ overflowX: 'auto', border: '1px solid var(--border)', borderRadius: 'var(--radius)' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: `${labelW}px repeat(${form.colonne.length}, ${colW}px) 36px`, minWidth: 'fit-content' }}>
+          <div style={{ background: 'var(--bg-panel)', borderBottom: '1px solid var(--border)', borderRight: '1px solid var(--border)' }} />
+          {form.colonne.map((col, ci) => (
+            <button key={ci} type="button" onClick={() => apriColonna(ci)} title={col.nome || `Colonna ${ci + 1}`} style={{
+              background: colonnaAperta === ci ? 'var(--accent-lt)' : (col.evidenziato ? 'var(--bg-page)' : 'var(--bg-panel)'),
+              border: 'none', borderBottom: '1px solid var(--border)', borderRight: '1px solid var(--border)',
+              padding: '8px 6px', fontSize: 12, fontWeight: 600, cursor: 'pointer',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4, minWidth: 0,
+            }}>
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{col.nome || `Colonna ${ci + 1}`}</span>
+              {col.scala && <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--accent)', background: 'var(--accent-lt)', borderRadius: 8, padding: '1px 5px', flexShrink: 0 }}>range</span>}
+            </button>
+          ))}
+          <button type="button" onClick={() => { dispatch({ type: 'ADD_COLONNA' }); apriColonna(form.colonne.length) }} title="Aggiungi colonna" style={{ background: 'var(--bg-panel)', border: 'none', borderBottom: '1px solid var(--border)', color: 'var(--accent)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <Plus size={14} />
+          </button>
+
+          {form.campiPrincipali.map((campo, ri) => (
+            <FragmentRiga key={ri}>
+              <button type="button" onClick={() => apriCampo(ri)} title={campo.label || `Riga ${ri + 1}`} style={{
+                background: campoAperto === ri ? 'var(--accent-lt)' : (campo.evidenziato ? 'var(--bg-page)' : 'var(--bg-panel)'),
+                border: 'none', borderBottom: '1px solid var(--border)', borderRight: '1px solid var(--border)',
+                padding: '8px 10px', fontSize: 12, textAlign: 'left', cursor: 'pointer', minWidth: 0,
+                display: 'flex', alignItems: 'center', gap: 6,
+              }}>
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{campo.label || `Riga ${ri + 1}`}</span>
+                {campo.formula && <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--accent)', background: 'var(--accent-lt)', borderRadius: 8, padding: '1px 5px', flexShrink: 0 }}>calcolato</span>}
+              </button>
+              {form.colonne.map((_, ci) => (
+                <div key={ci} style={{ background: 'var(--bg-page)', borderBottom: '1px solid var(--border)', borderRight: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, color: 'var(--text-muted)' }}>—</div>
+              ))}
+              <div style={{ background: 'var(--bg-page)', borderBottom: '1px solid var(--border)' }} />
+            </FragmentRiga>
+          ))}
+          <button type="button" onClick={() => { dispatch({ type: 'ADD_CAMPO' }); apriCampo(form.campiPrincipali.length) }} title="Aggiungi riga" style={{ background: 'var(--bg-panel)', border: 'none', color: 'var(--accent)', cursor: 'pointer', padding: 6, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <Plus size={14} />
+          </button>
+          {form.colonne.map((_, ci) => <div key={ci} style={{ background: 'var(--bg-panel)' }} />)}
+          <div style={{ background: 'var(--bg-panel)' }} />
+        </div>
+      </div>
+
+      {colonnaAperta !== null && form.colonne[colonnaAperta] && (
+        <PannelloColonna
+          colonna={form.colonne[colonnaAperta]} idx={colonnaAperta} dispatch={dispatch} tipiScala={tipiScala}
+          onClose={() => setColonnaAperta(null)}
+          onRemove={form.colonne.length > 1 ? () => { dispatch({ type: 'REMOVE_COLONNA', payload: colonnaAperta }); setColonnaAperta(null) } : undefined}
+        />
+      )}
+      {campoAperto !== null && form.campiPrincipali[campoAperto] && (
+        <PannelloCampo
+          campo={form.campiPrincipali[campoAperto]} idx={campoAperto}
+          altriCampi={form.campiPrincipali.filter((_, i) => i !== campoAperto)}
+          dispatch={dispatch}
+          onClose={() => setCampoAperto(null)}
+          onRemove={form.campiPrincipali.length > 1 ? () => { dispatch({ type: 'REMOVE_CAMPO', payload: campoAperto }); setCampoAperto(null) } : undefined}
+        />
+      )}
+    </div>
+  )
+}
+
+// Le celle della griglia sono generate da due .map() distinti (riga-etichetta + colonne dati)
+// che devono restare fratelli diretti nella stessa CSS grid: un div wrapper romperebbe il
+// layout a colonne. FragmentRiga isola comunque la key per riga senza introdurre wrapper.
+function FragmentRiga({ children }: { children: React.ReactNode }) {
+  return <>{children}</>
+}
+
+function PannelloColonna({ colonna, idx, dispatch, tipiScala, onClose, onRemove }: {
+  colonna: FormColonna
+  idx: number
+  dispatch: Dispatch<FormTemplateAction>
+  tipiScala: { tipo: ScalaPunteggio['tipo']; label: string; desc: string }[]
+  onClose: () => void
+  onRemove?: () => void
+}) {
+  return (
+    <div style={{ marginTop: 10, padding: '12px 14px', border: '1px solid var(--accent)', borderRadius: 'var(--radius)', background: 'var(--bg-panel)' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+        <span style={{ fontSize: 12, fontWeight: 600 }}>Colonna</span>
+        <div style={{ display: 'flex', gap: 4 }}>
+          {onRemove && <button type="button" onClick={onRemove} title="Elimina colonna" style={{ background: 'none', border: 'none', color: 'var(--danger)', cursor: 'pointer', padding: 4 }}><Trash2 size={14} /></button>}
+          <button type="button" onClick={onClose} title="Chiudi" style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: 4 }}><X size={14} /></button>
+        </div>
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <div>
+          <label style={{ fontSize: 11, color: 'var(--text-muted)' }}>Nome colonna *</label>
+          <input className="form-input" placeholder="es. Punti T, Percentile..." value={colonna.nome}
+            onChange={e => dispatch({ type: 'UPDATE_COLONNA_NOME', payload: { idx, value: e.target.value } })} style={{ marginTop: 3 }} autoFocus />
+        </div>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, cursor: 'pointer' }}>
+          <input type="checkbox" checked={!!colonna.evidenziato} onChange={e => dispatch({ type: 'SET_COLONNA_EVIDENZIATO', payload: { idx, value: e.target.checked } })} />
+          Evidenzia questa colonna nel documento (colore neutro)
+        </label>
+        <div>
+          <label style={{ fontSize: 11, color: 'var(--text-muted)' }}>Range di questa colonna</label>
+          <select className="form-input" value={colonna.scala?.tipo || ''}
+            onChange={e => dispatch({ type: 'SET_COLONNA_SCALA_TIPO', payload: { idx, tipo: e.target.value ? e.target.value as ScalaPunteggio['tipo'] : null } })}
+            style={{ marginTop: 3, cursor: 'pointer' }}>
+            <option value="">Nessuno (solo dato informativo)</option>
+            {tipiScala.map(t => <option key={t.tipo} value={t.tipo}>{t.label}</option>)}
+          </select>
+          <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '4px 0 0' }}>Il range calcola comunque la fascia (visibile dal vivo nel wizard, sempre inviata a Gemini): la colonna qui sotto decide solo se comparire anche come colonna a sé nella tabella del documento finale.</p>
+        </div>
+        {colonna.scala && (
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, cursor: 'pointer' }}>
+            <input type="checkbox" checked={!!colonna.mostraFasciaInTabella} onChange={e => dispatch({ type: 'SET_COLONNA_MOSTRA_FASCIA', payload: { idx, value: e.target.checked } })} />
+            Mostra "Fascia {colonna.nome || 'colonna'}" come colonna nella tabella del documento
+          </label>
+        )}
+        {colonna.scala?.tipo === 'soglie_custom' && (
+          <div style={{ padding: '10px', border: '1px solid var(--border)', borderRadius: 'var(--radius)', background: 'var(--bg-page)' }}>
+            <div style={{ fontSize: 11.5, fontWeight: 600, marginBottom: 6 }}>Fasce di "{colonna.nome || 'questa colonna'}"</div>
+            <EditorSoglieCustom soglie={colonna.scala.soglie} onChange={soglie => dispatch({ type: 'SET_COLONNA_SOGLIE', payload: { idx, soglie } })} />
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function PannelloCampo({ campo, idx, altriCampi, dispatch, onClose, onRemove }: {
+  campo: FormCampo
+  idx: number
+  altriCampi: FormCampo[]
+  dispatch: Dispatch<FormTemplateAction>
+  onClose: () => void
+  onRemove?: () => void
+}) {
+  const formula = campo.formula
+  return (
+    <div style={{ marginTop: 10, padding: '12px 14px', border: '1px solid var(--accent)', borderRadius: 'var(--radius)', background: 'var(--bg-panel)' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+        <span style={{ fontSize: 12, fontWeight: 600 }}>Riga</span>
+        <div style={{ display: 'flex', gap: 4 }}>
+          {onRemove && <button type="button" onClick={onRemove} title="Elimina riga" style={{ background: 'none', border: 'none', color: 'var(--danger)', cursor: 'pointer', padding: 4 }}><Trash2 size={14} /></button>}
+          <button type="button" onClick={onClose} title="Chiudi" style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: 4 }}><X size={14} /></button>
+        </div>
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+          <div>
+            <label style={{ fontSize: 11, color: 'var(--text-muted)' }}>Etichetta *</label>
+            <input className="form-input" placeholder="es. Comprensione Verbale (ICV)" value={campo.label}
+              onChange={e => dispatch({ type: 'UPDATE_CAMPO', payload: { idx, field: 'label', value: e.target.value } })} style={{ marginTop: 3 }} autoFocus />
+          </div>
+          <div>
+            <label style={{ fontSize: 11, color: 'var(--text-muted)' }}>Chiave (slug auto)</label>
+            <input className="form-input" value={campo.key}
+              onChange={e => dispatch({ type: 'UPDATE_CAMPO', payload: { idx, field: 'key', value: e.target.value } })} style={{ marginTop: 3, fontFamily: 'monospace', fontSize: 12 }} />
+          </div>
+        </div>
+        <div>
+          <label style={{ fontSize: 11, color: 'var(--text-muted)' }}>Frase descrittiva narrativa (facoltativa)</label>
+          <input className="form-input" placeholder="es. La prestazione nell'ambito della comprensione verbale è risultata..." value={campo.descr}
+            onChange={e => dispatch({ type: 'UPDATE_CAMPO', payload: { idx, field: 'descr', value: e.target.value } })} style={{ marginTop: 3 }} />
+        </div>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, cursor: 'pointer' }}>
+          <input type="checkbox" checked={!!campo.evidenziato} onChange={e => dispatch({ type: 'SET_CAMPO_EVIDENZIATO', payload: { idx, value: e.target.checked } })} />
+          Evidenzia questa riga nel documento (colore neutro)
+        </label>
+
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, cursor: 'pointer' }}>
+          <input type="checkbox" checked={!!formula} onChange={e => dispatch({ type: 'SET_CAMPO_FORMULA_MODO', payload: { idx, modo: e.target.checked ? 'somma' : null } })} />
+          Riga calcolata (es. un Totale)
+        </label>
+
+        {formula && (
+          <div style={{ padding: '10px', border: '1px solid var(--border)', borderRadius: 'var(--radius)', background: 'var(--bg-page)' }}>
+            <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
+              {(['somma', 'media', 'avanzata'] as const).map(modo => (
+                <button key={modo} type="button" onClick={() => dispatch({ type: 'SET_CAMPO_FORMULA_MODO', payload: { idx, modo } })} style={{
+                  fontSize: 11.5, padding: '4px 10px', borderRadius: 'var(--radius)', cursor: 'pointer',
+                  border: `1px solid ${formula.modo === modo ? 'var(--accent)' : 'var(--border-md)'}`,
+                  background: formula.modo === modo ? 'var(--accent-lt)' : 'transparent',
+                }}>
+                  {modo === 'somma' ? 'Somma' : modo === 'media' ? 'Media' : 'Avanzata'}
+                </button>
+              ))}
+            </div>
+
+            {formula.modo !== 'avanzata' ? (
+              <div>
+                <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '0 0 6px' }}>
+                  {formula.modo === 'somma' ? 'Somma di:' : 'Media di:'}
+                </p>
+                {altriCampi.length === 0 ? (
+                  <p style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>Aggiungi altre righe per poterle selezionare qui.</p>
+                ) : altriCampi.map(altro => (
+                  <label key={altro.key || altro.label} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, marginBottom: 4, cursor: 'pointer' }}>
+                    <input type="checkbox" checked={formula.parti.includes(altro.key)}
+                      onChange={() => dispatch({ type: 'TOGGLE_CAMPO_FORMULA_PARTE', payload: { idx, chiave: altro.key } })} />
+                    {altro.label || altro.key || '(senza etichetta)'}
+                  </label>
+                ))}
+              </div>
+            ) : (
+              <div>
+                <label style={{ fontSize: 11, color: 'var(--text-muted)' }}>Espressione (usa {'{chiave}'} per riferirti alle altre righe)</label>
+                <input className="form-input" placeholder="es. ({icv} + {irp}) / 2" value={formula.espressioneAvanzata}
+                  onChange={e => dispatch({ type: 'SET_CAMPO_FORMULA_ESPRESSIONE', payload: { idx, value: e.target.value } })}
+                  style={{ marginTop: 3, fontFamily: 'monospace', fontSize: 12.5 }} />
+                {altriCampi.length > 0 && (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 6 }}>
+                    {altriCampi.filter(a => a.key).map(altro => (
+                      <button key={altro.key} type="button"
+                        onClick={() => dispatch({ type: 'SET_CAMPO_FORMULA_ESPRESSIONE', payload: { idx, value: `${formula.espressioneAvanzata}{${altro.key}}` } })}
+                        style={{ fontSize: 11, padding: '2px 8px', borderRadius: 'var(--radius)', border: '1px solid var(--border-md)', background: 'var(--bg-panel)', cursor: 'pointer', fontFamily: 'monospace' }}>
+                        {'{' + altro.key + '}'}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   )
 }
@@ -214,17 +484,10 @@ function FormTemplate({
     dispatch({ type: 'SET_FIELD', payload: { key: k, value: v } })
   }
 
-  function addCampo() {
-    dispatch({ type: 'ADD_CAMPO' })
-  }
-  function removeCampo(i: number) {
-    dispatch({ type: 'REMOVE_CAMPO', payload: i })
-  }
-  function updateCampo(i: number, field: string, v: string) {
-    dispatch({ type: 'UPDATE_CAMPO', payload: { idx: i, field, value: v } })
-  }
+  const [gruppiAperti, setGruppiAperti] = useState<Record<number, boolean>>({})
 
   function addGruppo() {
+    setGruppiAperti(prev => ({ ...prev, [form.gruppiSecondari.length]: true }))
     dispatch({ type: 'ADD_GRUPPO' })
   }
   function removeGruppo(i: number) {
@@ -259,6 +522,32 @@ function FormTemplate({
       const v = validaSoglieCustom(soglieCustom)
       if (!v.valida) return `Soglie custom non valide: ${v.errore}`
     }
+    if (form.colonne.length === 0) return 'Serve almeno una colonna punteggio.'
+    if (form.colonne.some(c => !c.nome.trim())) return 'Tutte le colonne devono avere un nome.'
+    if (new Set(form.colonne.map(c => c.nome.trim().toLowerCase())).size !== form.colonne.length) return 'I nomi delle colonne devono essere univoci.'
+    for (const c of form.colonne) {
+      if (c.scala?.tipo === 'soglie_custom') {
+        const v = validaSoglieCustom(c.scala.soglie)
+        if (!v.valida) return `Soglie della colonna "${c.nome}" non valide: ${v.errore}`
+      }
+    }
+    const chiaviTutte = new Set(form.campiPrincipali.map(c => c.key))
+    for (const c of form.campiPrincipali) {
+      if (!c.formula) continue
+      const etichetta = c.label || c.key || 'senza nome'
+      if (c.formula.modo === 'avanzata') {
+        const tokens = c.formula.espressioneAvanzata.match(/\{([a-zA-Z0-9_-]+)\}/g) || []
+        if (tokens.length === 0) return `La riga calcolata "${etichetta}" ha un'espressione vuota o senza riferimenti a {chiave}.`
+        for (const t of tokens) {
+          const chiave = t.slice(1, -1)
+          if (chiave === c.key) return `La riga calcolata "${etichetta}" non può riferirsi a se stessa.`
+          if (!chiaviTutte.has(chiave)) return `La riga calcolata "${etichetta}" fa riferimento a "${chiave}", che non corrisponde a nessuna riga esistente.`
+        }
+      } else {
+        if (c.formula.parti.length === 0) return `La riga calcolata "${etichetta}" non ha nessuna riga selezionata da sommare/mediare.`
+        if (c.formula.parti.includes(c.key)) return `La riga calcolata "${etichetta}" non può riferirsi a se stessa.`
+      }
+    }
     return ''
   }
 
@@ -286,6 +575,7 @@ function FormTemplate({
           label: sanitizzaStringa(g.label),
           campi: g.campi.map(c => ({ ...c, label: sanitizzaStringa(c.label) })),
         })),
+        colonne: form.colonne.map(c => ({ ...c, nome: sanitizzaStringa(c.nome) })),
       }
       await onSave(sanitized)
       dispatch({ type: 'SAVE_SUCCESS' })
@@ -358,40 +648,19 @@ function FormTemplate({
             }} />
           </div>
         )}
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, cursor: 'pointer', marginTop: 10 }}>
+          <input type="checkbox" checked={form.mostraCategoriaDescrittiva} onChange={e => setField('mostraCategoriaDescrittiva', e.target.checked)} />
+          Mostra "Categoria descrittiva" (fascia di riga, da questa scala) come colonna nella tabella
+        </label>
       </div>
 
-      {/* Campi principali */}
+      {/* Griglia: righe (campi principali) x colonne, con impostazioni per riga/colonna */}
       <div className="form-group" style={{ marginBottom: 16 }}>
-        <label className="form-label">Campi principali (indici / scale) *</label>
+        <label className="form-label">Tabella dei punteggi *</label>
         <p style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: -4, marginBottom: 10 }}>
-          Questi campi genereranno le righe della tabella nella relazione.
+          Clicca una riga o una colonna per configurarla. Le righe diventano le righe della tabella nella relazione, le colonne i valori da inserire per ciascuna.
         </p>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {form.campiPrincipali.map((campo, i) => (
-            <div key={i} style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '10px 12px', background: 'var(--bg-panel)' }}>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 28px', gap: 8, marginBottom: 6 }}>
-                <div>
-                  <label style={{ fontSize: 11, color: 'var(--text-muted)' }}>Etichetta *</label>
-                  <input className="form-input" placeholder="es. Comprensione Verbale (ICV)" value={campo.label} onChange={e => updateCampo(i, 'label', e.target.value)} style={{ marginTop: 3 }} />
-                </div>
-                <div>
-                  <label style={{ fontSize: 11, color: 'var(--text-muted)' }}>Chiave (slug auto)</label>
-                  <input className="form-input" placeholder="es. icv" value={campo.key} onChange={e => updateCampo(i, 'key', e.target.value)} style={{ marginTop: 3, fontFamily: 'monospace', fontSize: 12 }} />
-                </div>
-                <button type="button" onClick={() => removeCampo(i)} disabled={form.campiPrincipali.length <= 1} style={{ alignSelf: 'flex-end', padding: 5, background: 'none', border: 'none', cursor: form.campiPrincipali.length > 1 ? 'pointer' : 'not-allowed', color: form.campiPrincipali.length > 1 ? 'var(--danger)' : 'var(--text-muted)' }}>
-                  <Trash2 size={14} />
-                </button>
-              </div>
-              <div>
-                <label style={{ fontSize: 11, color: 'var(--text-muted)' }}>Frase descrittiva narrativa (facoltativa)</label>
-                <input className="form-input" placeholder="es. La prestazione nell'ambito della comprensione verbale è risultata..." value={campo.descr} onChange={e => updateCampo(i, 'descr', e.target.value)} style={{ marginTop: 3 }} />
-              </div>
-            </div>
-          ))}
-        </div>
-        <button type="button" onClick={addCampo} style={{ marginTop: 8, fontSize: 12, color: 'var(--accent)', background: 'none', border: '1px dashed var(--accent)', borderRadius: 'var(--radius)', padding: '5px 12px', cursor: 'pointer', width: '100%' }}>
-          + Aggiungi campo principale
-        </button>
+        <GrigliaTemplate form={form} dispatch={dispatch} tipiScala={tipiScala} />
       </div>
 
       {/* Gruppi secondari (subtest) */}
@@ -401,9 +670,16 @@ function FormTemplate({
           Questi compariranno <strong>solo come testo narrativo</strong>, mai in tabella.
         </p>
         {form.gruppiSecondari.map((gruppo, gi) => (
-          <details key={gi} open style={{ marginBottom: 8, border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '2px 12px' }}>
+          <details
+            key={gi}
+            open={!!gruppiAperti[gi]}
+            onToggle={e => setGruppiAperti(prev => ({ ...prev, [gi]: (e.target as HTMLDetailsElement).open }))}
+            style={{ marginBottom: 8, border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '2px 12px' }}
+          >
             <summary style={{ cursor: 'pointer', padding: '8px 0', display: 'flex', alignItems: 'center', gap: 8, listStyle: 'none' }}>
+              <ChevronDown size={13} style={{ color: 'var(--text-muted)', transform: gruppiAperti[gi] ? 'rotate(0deg)' : 'rotate(-90deg)', transition: 'transform .15s', flexShrink: 0 }} />
               <span style={{ fontSize: 13, fontWeight: 500 }}>{gruppo.label || `Gruppo ${gi + 1}`}</span>
+              <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{gruppo.campi.length} sottotest</span>
               <button type="button" onClick={() => removeGruppo(gi)} style={{ marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--danger)', padding: 4 }}>
                 <X size={13} />
               </button>
@@ -496,7 +772,7 @@ function FormTemplate({
 }
 
 // ── Card singolo template ─────────────────────────────────────
-function TemplateCard({ template, onDisattiva, onDelete, onEditSave, onEditCancel, onRiattiva }: { template: TestTemplate, onDisattiva?: () => void, onDelete?: () => void, onEditSave?: (id: string, form: FormState) => Promise<void>, onEditCancel?: () => void, onRiattiva?: () => void }) {
+function TemplateCard({ template, onDisattiva, onDelete, onEditSave, onEditCancel, onRiattiva, onDuplica, onTogglePredefinito }: { template: TestTemplate, onDisattiva?: () => void, onDelete?: () => void, onEditSave?: (form: FormState, id: string) => Promise<void>, onEditCancel?: () => void, onRiattiva?: () => void, onDuplica?: () => void, onTogglePredefinito?: () => void }) {
   const [expanded, setExpanded] = useState<'none' | 'details' | 'edit'>('none')
 
   return (
@@ -506,7 +782,7 @@ function TemplateCard({ template, onDisattiva, onDelete, onEditSave, onEditCance
       background: template.builtIn ? 'var(--accent-lt)' : 'var(--bg-panel)',
       opacity: template.attivo ? 1 : 0.5,
     }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         <div style={{ flex: 1 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 2 }}>
             <span style={{ fontSize: 14, fontWeight: 600 }}>{template.nome}</span>
@@ -524,7 +800,7 @@ function TemplateCard({ template, onDisattiva, onDelete, onEditSave, onEditCance
             {template.categoria} · {template.campiPrincipali.length === 1 ? '1 campo principale' : `${template.campiPrincipali.length} campi principali`}
             {template.gruppiSecondari?.length ? ` · ${template.gruppiSecondari.length} ${template.gruppiSecondari.length === 1 ? 'gruppo secondario' : 'gruppi secondari'}` : ''}
         </div>
-        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
           <button type="button" onClick={() => setExpanded(v => v === 'details' ? 'none' : 'details')} style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 6, padding: '4px 8px', cursor: 'pointer', fontSize: 12, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 4 }}>
             {expanded === 'details' ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
             {expanded === 'details' ? 'Chiudi' : 'Dettagli'}
@@ -532,6 +808,16 @@ function TemplateCard({ template, onDisattiva, onDelete, onEditSave, onEditCance
           {onEditSave && (
             <button type="button" onClick={() => setExpanded(v => v === 'edit' ? 'none' : 'edit')} style={{ background: 'none', border: `1px solid ${expanded === 'edit' ? 'var(--accent)' : 'var(--border)'}`, borderRadius: 6, padding: '4px 8px', cursor: 'pointer', fontSize: 12, color: expanded === 'edit' ? 'var(--accent)' : 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 4 }}>
               <Pencil size={13} /> {expanded === 'edit' ? 'Annulla modifica' : 'Modifica'}
+            </button>
+          )}
+          {onDuplica && (
+            <button type="button" onClick={onDuplica} title="Crea una copia personalizzata" style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 6, padding: '4px 8px', cursor: 'pointer', fontSize: 12, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 4 }}>
+              <Copy size={13} /> Duplica
+            </button>
+          )}
+          {onTogglePredefinito && (
+            <button type="button" onClick={onTogglePredefinito} title={template.builtIn ? 'Rimuove lo stato di predefinito: resta un template normale' : 'Lo rende predefinito, come WISC-IV/NEPSY-II'} style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 6, padding: '4px 8px', cursor: 'pointer', fontSize: 12, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 4 }}>
+              {template.builtIn ? <><Unlock size={13} /> Rimuovi da predefiniti</> : <><Lock size={13} /> Rendi predefinito</>}
             </button>
           )}
           {onRiattiva && (
@@ -544,7 +830,7 @@ function TemplateCard({ template, onDisattiva, onDelete, onEditSave, onEditCance
               Disattiva
             </button>
           )}
-          {!template.builtIn && onDelete && (
+          {onDelete && (
             <button type="button" onClick={onDelete} style={{ background: 'none', border: '1px solid var(--danger)', borderRadius: 6, padding: '4px 8px', cursor: 'pointer', fontSize: 12, color: 'var(--danger)', display: 'flex', alignItems: 'center', gap: 4 }}>
               <Trash2 size={13} /> Elimina
             </button>
@@ -580,6 +866,9 @@ function TemplateCard({ template, onDisattiva, onDelete, onEditSave, onEditCance
               Nota range: {template.notaRange.substring(0, 120)}{template.notaRange.length > 120 ? '…' : ''}
             </div>
           )}
+          <div style={{ marginTop: 14 }}>
+            <Anteprima form={templateToForm(template)} />
+          </div>
         </div>
       )}
 
@@ -711,8 +1000,10 @@ export default function GestioneTest() {
         nome: t.nome || nome,
         categoria: t.categoria || 'altro',
         scalaDefault: t.scalaDefault || { tipo: 'scalare' },
+        mostraCategoriaDescrittiva: true,
         campiPrincipali: (t.campiPrincipali || []).map((c: any) => ({ key: c.key, label: c.label, descr: c.descr || '' })),
         gruppiSecondari: (t.gruppiSecondari || []).map((g: any) => ({ key: g.key, label: g.label, campi: (g.campi || []).map((c: any) => ({ key: c.key, label: c.label })) })),
+        colonne: t.colonne && t.colonne.length > 0 ? t.colonne.map((nome: string) => ({ nome })) : [{ nome: 'Punteggio' }],
         notaRange: t.notaRange || '',
         richiedeEtaValutazione: t.richiedeEtaValutazione ?? false,
         richiedeStrumentiUtilizzati: t.richiedeStrumentiUtilizzati ?? false,
@@ -733,19 +1024,40 @@ export default function GestioneTest() {
     }
   }
 
+  // Separa i campiPrincipali "puliti" (senza il sotto-oggetto formula, che è solo
+  // rappresentazione del form) dalle formule compilate in TestTemplate['formule'].
+  function costruisciCampiEFormule(campiPrincipali: FormCampo[]): { campiPrincipali: CampoTest[]; formule: FormulaCalcolo[] } {
+    const formule: FormulaCalcolo[] = []
+    const campi: CampoTest[] = campiPrincipali.map(({ formula, ...c }) => {
+      if (formula) {
+        formule.push({
+          targetKey: c.key,
+          espressione: formula.modo === 'avanzata' ? formula.espressioneAvanzata : buildFormulaSemplice(formula.modo, formula.parti),
+          descrizione: formula.descrizione || undefined,
+        })
+      }
+      return c
+    })
+    return { campiPrincipali: campi, formule }
+  }
+
   async function handleSave(form: FormState, editingId: string | null = null) {
     const id = editingId ?? editingTemplateId
+    const { campiPrincipali, formule } = costruisciCampiEFormule(form.campiPrincipali)
     if (id) {
       // Modalità modifica
       await updateTestTemplate(id, {
         nome: sanitizzaStringa(form.nome),
         categoria: form.categoria,
         scalaDefault: form.scalaDefault,
-        campiPrincipali: form.campiPrincipali as CampoTest[],
+        mostraCategoriaDescrittiva: form.mostraCategoriaDescrittiva,
+        campiPrincipali,
         gruppiSecondari: form.gruppiSecondari.length > 0 ? form.gruppiSecondari as GruppoTest[] : undefined,
+        colonne: form.colonne as ColonnaTest[],
         notaRange: form.notaRange || undefined,
         richiedeEtaValutazione: form.richiedeEtaValutazione,
         richiedeStrumentiUtilizzati: form.richiedeStrumentiUtilizzati,
+        formule: formule.length > 0 ? formule : undefined,
       })
       const updated = await getTestTemplates()
       dispatch({
@@ -761,14 +1073,16 @@ export default function GestioneTest() {
       nome: sanitizzaStringa(form.nome),
       categoria: form.categoria,
       scalaDefault: form.scalaDefault,
-      campiPrincipali: form.campiPrincipali as CampoTest[],
+      mostraCategoriaDescrittiva: form.mostraCategoriaDescrittiva,
+      campiPrincipali,
       gruppiSecondari: form.gruppiSecondari.length > 0 ? form.gruppiSecondari as GruppoTest[] : undefined,
       notaRange: form.notaRange || undefined,
       richiedeEtaValutazione: form.richiedeEtaValutazione,
       richiedeStrumentiUtilizzati: form.richiedeStrumentiUtilizzati,
       attivo: true,
       schemaVersion: 1,
-      colonne: ['Punteggio'],
+      colonne: form.colonne as ColonnaTest[],
+      formule: formule.length > 0 ? formule : undefined,
     })
     const updated = await getTestTemplates()
     dispatch({
@@ -776,6 +1090,32 @@ export default function GestioneTest() {
       payload: { templates: updated, successo: `Template "${nuovoTemplate.nome}" aggiunto con successo.` },
     })
     dispatch({ type: 'CLOSE_FORM' })
+    setTimeout(() => dispatch({ type: 'CLEAR_SUCCESS_MSG' }), 4000)
+  }
+
+  async function handleDuplica(template: TestTemplate) {
+    const copia = await duplicaTestTemplate(template)
+    const updated = await getTestTemplates()
+    dispatch({
+      type: 'OPERATION_SUCCESS',
+      payload: { templates: updated, successo: `"${template.nome}" duplicato in "${copia.nome}", personalizzabile liberamente.` },
+    })
+    dispatch({ type: 'OPEN_EDIT_FORM', payload: { initial: templateToForm(copia), id: copia.id } })
+    setTimeout(() => dispatch({ type: 'CLEAR_SUCCESS_MSG' }), 4000)
+  }
+
+  async function handleTogglePredefinito(template: TestTemplate) {
+    await updateTestTemplate(template.id, { builtIn: !template.builtIn })
+    const updated = await getTestTemplates()
+    dispatch({
+      type: 'OPERATION_SUCCESS',
+      payload: {
+        templates: updated,
+        successo: template.builtIn
+          ? `"${template.nome}" non è più un template predefinito.`
+          : `"${template.nome}" è ora un template predefinito.`,
+      },
+    })
     setTimeout(() => dispatch({ type: 'CLEAR_SUCCESS_MSG' }), 4000)
   }
 
@@ -811,7 +1151,7 @@ export default function GestioneTest() {
     setTimeout(() => dispatch({ type: 'CLEAR_SUCCESS_MSG' }), 4000)
   }
 
-  const attivi = templates.filter(t => t.attivo)
+  const attivi = templates.filter(t => t.attivo).sort((a, b) => (a.builtIn === b.builtIn ? 0 : a.builtIn ? -1 : 1))
   const disattivati = templates.filter(t => !t.attivo)
 
   return (
@@ -1219,9 +1559,9 @@ export default function GestioneTest() {
                   onEditSave={handleSave}
                   onEditCancel={() => dispatch({ type: 'CLOSE_FORM' })}
                   onDisattiva={() => dispatch({ type: 'SET_CONFIRM_DISATTIVA', payload: t.id })}
-                  onDelete={
-                    !t.builtIn ? () => dispatch({ type: 'SET_CONFIRM_DELETE', payload: t.id }) : undefined
-                  }
+                  onDuplica={() => handleDuplica(t)}
+                  onTogglePredefinito={() => handleTogglePredefinito(t)}
+                  onDelete={() => dispatch({ type: 'SET_CONFIRM_DELETE', payload: t.id })}
                 />
               ))}
               {attivi.length === 0 && (
@@ -1260,9 +1600,9 @@ export default function GestioneTest() {
                   key={t.id}
                   template={t}
                   onRiattiva={() => handleRiattiva(t.id)}
-                  onDelete={
-                    !t.builtIn ? () => dispatch({ type: 'SET_CONFIRM_DELETE', payload: t.id }) : undefined
-                  }
+                  onDuplica={() => handleDuplica(t)}
+                  onTogglePredefinito={() => handleTogglePredefinito(t)}
+                  onDelete={() => dispatch({ type: 'SET_CONFIRM_DELETE', payload: t.id })}
                 />
               ))}
             </div>

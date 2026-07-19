@@ -1,4 +1,4 @@
-import type { TestTemplate, CampoTest, RisultatoTest, ScalaPunteggio, SogliaCustom } from '../core/testTemplate'
+import type { TestTemplate, CampoTest, ColonnaTest, RisultatoTest, ScalaPunteggio, SogliaCustom } from '../core/testTemplate'
 
 // Tipi di utilità interni
 type FasciaType = string | null
@@ -121,6 +121,30 @@ export function getScalaApplicabile(campo: CampoTest, template: TestTemplate): S
 }
 
 /**
+ * Colonne "effettive" di un template: se non definite (dato legacy o mai configurato),
+ * si comporta come da sempre con una singola colonna "Punteggio" senza range.
+ * Punto unico di fallback: usato da generaTabella, buildGeminiPayload e makeTestTable
+ * (exportDocx.ts) per evitare che le tre rappresentazioni prendano strade diverse.
+ */
+export function getColonneEffettive(template: TestTemplate): ColonnaTest[] {
+  return template.colonne && template.colonne.length > 0 ? template.colonne : [{ nome: 'Punteggio' }]
+}
+
+/**
+ * Legge il valore di un campo per una specifica colonna. La prima colonna (index 0)
+ * usa la chiave standard campoKey; le colonne successive usano campoKey_nomeColonna
+ * (convenzione condivisa con lo step di compilazione test nel wizard).
+ */
+export function getValorePerColonna(
+  risultato: RisultatoTest,
+  campoKey: string,
+  colonna: ColonnaTest,
+  isPrimaria: boolean
+): string | number | undefined {
+  return isPrimaria ? risultato.punteggi[campoKey] : risultato.punteggi[`${campoKey}_${colonna.nome}`]
+}
+
+/**
  * Valuta un'espressione aritmetica in modo controllato e sicuro.
  */
 export function valutaFormulaSicura(espressione: string, variabili: Record<string, number>): number {
@@ -171,6 +195,14 @@ export function valutaFormule(template: TestTemplate, risultato: RisultatoTest):
 
   // Valuta ogni formula sequenzialmente (in modo che le formule successive possano dipendere da quelle precedenti)
   for (const f of template.formule) {
+    if (risultato.formuleManuali?.[f.targetKey]) {
+      // Sovrascritto a mano per questa relazione: non ricalcolare, ma rendi comunque
+      // disponibile il valore attuale come variabile per eventuali formule a valle
+      // che dipendono da questo target (es. un totale generale sopra due sub-totali).
+      const attuale = parseFloat(String(tuttiPunteggi[f.targetKey]))
+      if (!isNaN(attuale)) variabili[f.targetKey] = attuale
+      continue
+    }
     const val = valutaFormulaSicura(f.espressione, variabili)
     if (!isNaN(val)) {
       const arrotondato = Math.round(val * 10) / 10
@@ -183,8 +215,57 @@ export function valutaFormule(template: TestTemplate, risultato: RisultatoTest):
 }
 
 /**
- * Genera la tabella Markdown per i risultati di un test, supportando colonne multiple.
+ * Costruisce l'espressione per il motore a partire dalla UI semplice (somma/media di righe scelte).
+ * Es. buildFormulaSemplice('media', ['icv','irp']) => '({icv} + {irp}) / 2'
  */
+export function buildFormulaSemplice(operazione: 'somma' | 'media', parti: string[]): string {
+  const somma = parti.map(k => `{${k}}`).join(' + ')
+  return operazione === 'media' ? `(${somma}) / ${parti.length}` : somma
+}
+
+/**
+ * Riconosce se un'espressione corrisponde esattamente a una somma o media semplice di chiavi
+ * (come generata da buildFormulaSemplice), per poter ripopolare la UI a checkbox quando si
+ * riapre un template esistente. Se l'espressione è più complessa (pesature, sottrazioni,
+ * chiavi ripetute...) ritorna null: il form dovrà mostrarla in modalità avanzata così com'è.
+ */
+export function parseFormulaSemplice(espressione: string): { operazione: 'somma' | 'media'; parti: string[] } | null {
+  const expr = espressione.trim()
+
+  const estraiChiaviAddizione = (sub: string): string[] | null => {
+    const chiavi = sub.split('+').map(s => {
+      const m = s.trim().match(/^\{([a-zA-Z0-9_-]+)\}$/)
+      return m ? m[1] : null
+    })
+    if (chiavi.some(k => k === null) || chiavi.length < 2) return null
+    return chiavi as string[]
+  }
+
+  const mediaMatch = expr.match(/^\(([^()]+)\)\s*\/\s*(\d+)$/)
+  if (mediaMatch) {
+    const parti = estraiChiaviAddizione(mediaMatch[1])
+    if (parti && parti.length === parseInt(mediaMatch[2], 10)) return { operazione: 'media', parti }
+    return null
+  }
+
+  const parti = estraiChiaviAddizione(expr)
+  return parti ? { operazione: 'somma', parti } : null
+}
+
+/**
+ * Genera la riga di testo per un commento reso visibile in tabella (checkbox in wizard),
+ * da stampare dopo la tabella e prima della narrativa. I commenti non marcati visibili
+ * (default) restano fuori dal documento: solo contesto per Gemini in buildGeminiPayload.
+ */
+export function generaCommentiVisibili(template: TestTemplate, risultato: RisultatoTest): string {
+  if (!risultato.commenti) return ''
+  const righe = template.campiPrincipali
+    .filter(c => risultato.commentiVisibili?.[c.key] && risultato.commenti![c.key])
+    .map(c => `*Nota su ${c.label}: ${risultato.commenti![c.key]}*`)
+  return righe.length > 0 ? righe.join('\n') + '\n\n' : ''
+}
+
+
 export function generaTabella(template: TestTemplate, risultato: RisultatoTest): string {
   let table = ''
   
@@ -193,11 +274,22 @@ export function generaTabella(template: TestTemplate, risultato: RisultatoTest):
   )
   
   if (campiPrincipaliValidi.length > 0) {
-    const colList = template.colonne || ['Punteggio']
-    
+    const colonne = getColonneEffettive(template)
+    const mostraCategoria = template.mostraCategoriaDescrittiva !== false
+
+    // Per ogni colonna con una scala propria aggiungiamo una colonna "Fascia <nome>"
+    // dedicata, subito dopo. Le colonne senza scala restano dati grezzi, come sempre.
+    const intestazioni: string[] = []
+    for (const col of colonne) {
+      intestazioni.push(col.nome)
+      if (col.scala && col.mostraFasciaInTabella) intestazioni.push(`Fascia ${col.nome}`)
+    }
+    if (mostraCategoria) intestazioni.push('Categoria descrittiva')
+    intestazioni.push('Interpretabilità')
+
     // Intestazione tabella
-    table += `| ${template.nome} scale | ` + colList.join(' | ') + ` | Categoria descrittiva | Interpretabilità |\n`
-    table += `|---|` + colList.map(() => '---').join('|') + `|---|---|\n`
+    table += `| ${template.nome} scale | ` + intestazioni.join(' | ') + ` |\n`
+    table += `|---|` + intestazioni.map(() => '---').join('|') + `|\n`
     
     for (const c of campiPrincipaliValidi) {
       const p = risultato.punteggi[c.key]
@@ -205,14 +297,17 @@ export function generaTabella(template: TestTemplate, risultato: RisultatoTest):
       const fascia = calcolaFascia(p, scala) ?? '-'
       const interpret = risultato.interpretabilita?.[c.key] !== false ? 'Sì' : 'No'
       
-      // Estrae i punteggi per ciascuna colonna definita nel template
-      const rowScores = colList.map((colName, index) => {
-        if (index === 0) return p // Prima colonna: chiave campoKey standard
-        const extraKey = `${c.key}_${colName}`
-        return risultato.punteggi[extraKey] !== undefined ? risultato.punteggi[extraKey] : '—'
+      // Estrae i punteggi (ed eventuale fascia dedicata) per ciascuna colonna del template
+      const celle: (string | number)[] = []
+      colonne.forEach((col, index) => {
+        const valore = getValorePerColonna(risultato, c.key, col, index === 0) ?? '—'
+        celle.push(valore)
+        if (col.scala && col.mostraFasciaInTabella) celle.push(calcolaFascia(valore, col.scala) ?? '-')
       })
+      if (mostraCategoria) celle.push(fascia)
+      celle.push(interpret)
       
-      table += `| ${c.label} | ` + rowScores.join(' | ') + ` | ${fascia} | ${interpret} |\n`
+      table += `| ${c.label} | ` + celle.join(' | ') + ` |\n`
     }
     table += '\n'
   }
@@ -284,6 +379,7 @@ export function generaSezioneTest(template: TestTemplate, risultato: RisultatoTe
   }
   
   out += generaTabella(template, risultato)
+  out += generaCommentiVisibili(template, risultato)
   out += generaNarrativa(template, risultato)
   out += calcolaNarrativaGruppi(template, risultato)
   
@@ -345,11 +441,33 @@ export function buildGeminiPayload(template: TestTemplate, risultato: RisultatoT
   )
   if (campiPrincipaliValidi.length > 0) {
     out += 'Punteggi (solo dati: NON riprodurre come tabella o elenco, usali solo per scrivere il commento in prosa):\n'
+    const colonne = getColonneEffettive(template)
     for (const c of campiPrincipaliValidi) {
       const p = risultato.punteggi[c.key]
       const fascia = calcolaFascia(p, getScalaApplicabile(c, template)) ?? '-'
       const interpretabile = risultato.interpretabilita?.[c.key] !== false
-      out += `${c.label}: ${p}, fascia ${fascia}${interpretabile ? '' : ' (NON interpretabile: dispersione eccessiva nei subtest)'}\n`
+      out += `${c.label}: ${p}, fascia ${fascia}${interpretabile ? '' : ' (NON interpretabile: dispersione eccessiva nei subtest)'}`
+
+      // Colonne aggiuntive oltre alla principale (es. Percentile accanto a Punti T),
+      // con la loro fascia se la colonna definisce un range proprio.
+      const extra = colonne.slice(1)
+        .map(col => {
+          const valore = getValorePerColonna(risultato, c.key, col, false)
+          if (valore === undefined || valore === '') return null
+          const fasciaColonna = col.scala ? calcolaFascia(valore, col.scala) : null
+          return `${col.nome} ${valore}${fasciaColonna ? ` (fascia ${fasciaColonna})` : ''}`
+        })
+        .filter((v): v is string => v !== null)
+      if (extra.length > 0) out += `. Altre colonne: ${extra.join(', ')}`
+
+      const commento = risultato.commenti?.[c.key]
+      if (commento) {
+        out += risultato.commentiVisibili?.[c.key]
+          ? `. Nota del professionista su questo indice (comparirà GIÀ come nota separata nel documento: non ripeterla né citarla, tienine solo conto per l'interpretazione): ${commento}`
+          : `. Nota del professionista su questo indice (tienine conto nel commento, non citarla testualmente): ${commento}`
+      }
+
+      out += '\n'
     }
   } else {
     out += 'Punteggi: nessuno\n'
