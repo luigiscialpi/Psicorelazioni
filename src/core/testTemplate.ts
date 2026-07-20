@@ -48,8 +48,26 @@ export const CategoriaTestSchema = z.enum(['cognitivo', 'nepsy', 'apprendimenti'
 // come semplice stringa (es. 'Punteggio') vengono normalizzate automaticamente in
 // { nome: 'Punteggio' } senza scala. La scala è opzionale: se assente, la colonna resta
 // puramente informativa come oggi (nessuna fascia dedicata calcolata per lei).
+// ⚠️ Tollerante anche a dati salvati imperfetti (es. un oggetto senza "nome", o con
+// "nome" vuoto/non stringa): normalizza con un fallback su "name"/"label" o su un
+// nome di default invece di far fallire la validazione. Un singolo template con un
+// dato imperfetto in produzione ha già bloccato il caricamento dell'INTERA lista in
+// Gestione Test (data.map + TestTemplateSchema.parse in getTestTemplates() interrompe
+// tutto al primo errore) — vedi anche il fallback per-riga in getTestTemplates().
 export const ColonnaTestSchema = z.preprocess(
-  (val) => (typeof val === 'string' ? { nome: val } : val),
+  (val) => {
+    if (typeof val === 'string') return { nome: val }
+    if (val && typeof val === 'object' && !Array.isArray(val)) {
+      const obj = val as Record<string, unknown>
+      if (typeof obj.nome !== 'string' || !obj.nome.trim()) {
+        const fallback = typeof obj.name === 'string' && obj.name.trim() ? obj.name
+          : typeof obj.label === 'string' && obj.label.trim() ? obj.label
+          : 'Colonna'
+        return { ...obj, nome: fallback }
+      }
+    }
+    return val
+  },
   z.object({
     nome: z.string().min(1),
     scala: ScalaPunteggioSchema.optional(),

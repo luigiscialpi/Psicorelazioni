@@ -1,5 +1,10 @@
 /// <reference types="vite/client" />
 
+// Iniettato a build-time da vite.config.ts (vedi commento lì): commit/timestamp
+// della build corrente, per distinguere a colpo d'occhio in console quale codice
+// è realmente in esecuzione (produzione vs locale, deploy vecchio vs nuovo).
+declare const __BUILD_INFO__: { commit: string; time: string }
+
 declare module '*.css'
 
 declare module 'turndown' {

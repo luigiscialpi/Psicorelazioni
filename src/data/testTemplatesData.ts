@@ -2,33 +2,69 @@ import { supabase } from '../core/supabase'
 import { USE_MOCK } from '../core/config'
 import { TestTemplateSchema, type TestTemplate } from '../core/testTemplate'
 import { MOCK_TEST_TEMPLATES } from './mockTemplates'
+import { z } from 'zod'
 
 export async function getTestTemplates(): Promise<TestTemplate[]> {
   if (USE_MOCK) return MOCK_TEST_TEMPLATES
   
   const { data, error } = await supabase.from('test_templates').select('*')
   if (error) throw error
-  
-  return data.map(d => TestTemplateSchema.parse({
-    id: d.id,
-    nome: d.nome,
-    categoria: d.categoria,
-    scalaDefault: d.scala_default,
-    mostraCategoriaDescrittiva: d.mostra_categoria_descrittiva ?? undefined,
-    layoutTabelleSecondarie: d.layout_tabelle_secondarie ?? undefined,
-    campiPrincipali: d.campi_principali,
-    gruppiSecondari: d.gruppi_secondari ?? undefined,
-    notaRange: d.nota_range ?? undefined,
-    richiedeEtaValutazione: d.richiede_eta_valutazione,
-    richiedeStrumentiUtilizzati: d.richiede_strumenti_utilizzati,
-    builtIn: d.built_in,
-    attivo: d.attivo,
-    schemaVersion: d.schema_version,
-    createdAt: d.created_at ?? undefined,
-    updatedAt: d.updated_at ?? undefined,
-    colonne: d.colonne ?? undefined,
-    formule: d.formule ?? undefined
-  }))
+
+  // 🔎 Log diagnostico: visibile in console ad ogni caricamento (non solo in caso di
+  // errore), per confermare a colpo d'occhio quante righe arrivano da Supabase e con
+  // quali id/nome — utile per verificare che produzione e locale stiano davvero
+  // leggendo lo stesso set di righe quando si confronta un comportamento diverso tra i due.
+  console.info(`[getTestTemplates] ${data.length} righe ricevute da Supabase:`,
+    data.map(d => ({ id: d.id, nome: d.nome, attivo: d.attivo, builtIn: d.built_in })))
+
+  // ⚠️ Resilienza per-riga: un solo template con un dato non conforme allo schema
+  // (es. un vecchio record salvato prima di una migrazione, o un valore imperfetto)
+  // NON deve impedire il caricamento di TUTTI gli altri template validi. In precedenza
+  // un solo `TestTemplateSchema.parse()` fallito dentro `data.map(...)` faceva fallire
+  // l'intero `Promise.all` in GestioneTest.tsx, con spinner di caricamento bloccato a
+  // vita e nessun template mostrato — bug osservato realmente in produzione. Il template
+  // scartato non è quindi visibile finché non viene corretto/reinserito manualmente.
+  const risultati: TestTemplate[] = []
+  for (const d of data) {
+    try {
+      risultati.push(TestTemplateSchema.parse({
+        id: d.id,
+        nome: d.nome,
+        categoria: d.categoria,
+        scalaDefault: d.scala_default,
+        mostraCategoriaDescrittiva: d.mostra_categoria_descrittiva ?? undefined,
+        layoutTabelleSecondarie: d.layout_tabelle_secondarie ?? undefined,
+        campiPrincipali: d.campi_principali,
+        gruppiSecondari: d.gruppi_secondari ?? undefined,
+        notaRange: d.nota_range ?? undefined,
+        richiedeEtaValutazione: d.richiede_eta_valutazione,
+        richiedeStrumentiUtilizzati: d.richiede_strumenti_utilizzati,
+        builtIn: d.built_in,
+        attivo: d.attivo,
+        schemaVersion: d.schema_version,
+        createdAt: d.created_at ?? undefined,
+        updatedAt: d.updated_at ?? undefined,
+        colonne: d.colonne ?? undefined,
+        formule: d.formule ?? undefined
+      }))
+    } catch (e) {
+      // 🔎 Log diagnostico esteso: oltre al messaggio, riporta la lista completa
+      // delle issue Zod (campo per campo) E il valore grezzo della riga così com'è
+      // arrivato da Supabase — per vedere ESATTAMENTE cosa non torna senza doverlo
+      // indovinare da un altro ambiente (v. richiesta esplicita di log di debug).
+      console.error(
+        `[getTestTemplates] Template "${d?.nome || d?.id}" SCARTATO: dati non conformi allo schema. ` +
+        `Verifica/correggi la riga in Supabase (tabella test_templates, id=${d?.id}).`,
+        {
+          issues: e instanceof z.ZodError ? e.issues : undefined,
+          message: e instanceof Error ? e.message : String(e),
+          rigaGrezza: d,
+        }
+      )
+    }
+  }
+  console.info(`[getTestTemplates] ${risultati.length}/${data.length} template validati con successo.`)
+  return risultati
 }
 
 export async function getTestTemplatesAttivi(): Promise<TestTemplate[]> {
