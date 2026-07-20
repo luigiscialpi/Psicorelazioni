@@ -633,12 +633,16 @@ Per ciascun test o batteria individuato, crea una sottosezione:
 - **Categoria**: [categoria clinica tra: cognitivo, nepsy, apprendimenti, questionari, altro]
 - **Struttura Colonne**: [elenca i NOMI ESATTI delle colonne presenti nelle tabelle di scoring di questo test, nell'ordine in cui compaiono, es. "Punteggio Grezzo, Percentile, Fascia di prestazione". Una colonna per ogni valore numerico/qualitativo riportato per riga: non riassumere, non unire colonne diverse in una sola]
 - **Esempio Valori**: [riporta un esempio REALE (anonimizzato) di una riga di dati come compare in una delle relazioni, con i valori affiancati ai nomi colonna, es. "Dettato di brano — Punteggio Grezzo: 12, Percentile: 8, Fascia: Richiesta di Intervento". Se il test ha più subtest con range diversi, riporta un esempio per ciascuno. Questo serve a dedurre correttamente il range/scala di ogni colonna in fase di creazione automatica del template, quindi riporta numeri realistici, non placeholder]
+- **Direzione punteggio**: [per ciascuna colonna numerica indica se un valore PIÙ ALTO corrisponde a una prestazione MIGLIORE o PEGGIORE, es. "Percentile: alto = migliore; Numero errori: alto = peggiore; Tempo in secondi: alto = peggiore". Se tutte le colonne del test condividono la stessa direzione, dillo una sola volta. Questo è indispensabile per costruire correttamente l'ordine delle soglie/fasce nel template, non ometterlo mai se il test ha almeno una colonna numerica]
+- **Tipo Valori per Colonna**: [per ciascuna colonna elencata in Struttura Colonne, indica se contiene numeri interi, numeri decimali, percentuali (0-100) o etichette testuali/categoriche, es. "Punteggio Grezzo: intero; Percentile: intero 0-100; Fascia: testuale/categorica"]
 - **Campi e Subtest**: [elenco degli indici primari e dei subtest secondari che compongono il test]
 - **Commenti e Note Range**:
   - *Nota range*: [le note metodologiche sulle fasce di punteggio o i cut-off usati, es. <5° percentile come deficit]
   - *Commenti qualitativi*: [descrizione del comportamento, degli errori tipici o dei commenti qualitativi commentati nella relazione per questo test]
+- **Frequenza nel corpus**: [in quante delle relazioni fornite compare questo test, es. "3 relazioni su 13". Se compare in una sola relazione, segnalalo esplicitamente (dato meno affidabile per generare un template accurato)]
+- **Nomi alternativi rilevati**: [eventuali varianti di scrittura dello stesso test trovate nel corpus (spaziatura, trattini, maiuscole/minuscole, abbreviazioni), es. "WAIS-IV" vs "WAIS IV". Se lo stesso test compare con nomi leggermente diversi in relazioni diverse, NON creare due sottosezioni: trattalo come un solo test con un nome canonico coerente e riporta qui le varianti trovate. Lascia vuoto se non ce ne sono]
 
-Sii estremamente preciso ed esaustivo nell'estrarre le colonne (nomi esatti, mai riassunti), gli esempi di valori reali, i subtest e le note di range.
+Sii estremamente preciso ed esaustivo nell'estrarre le colonne (nomi esatti, mai riassunti), gli esempi di valori reali, la direzione dei punteggi, i subtest e le note di range.
 Rispondi SOLO con la sezione 7 in formato Markdown, senza introduzioni.`
 
   const resultTest = await callGeminiWithFinishReason(
@@ -1098,8 +1102,12 @@ Per ciascun test mantieni o aggiorna la struttura:
 - Nome del test e Categoria clinica.
 - Struttura Colonne: i NOMI ESATTI delle colonne nelle tabelle di scoring, nell'ordine in cui compaiono, una per ogni valore riportato per riga.
 - Esempio Valori: un esempio REALE (anonimizzato) di una riga di dati con i valori affiancati ai nomi colonna, per dedurre correttamente il range di ciascuna in fase di creazione automatica del template.
+- Direzione punteggio: se un valore più alto è una prestazione migliore o peggiore, per ciascuna colonna numerica (indispensabile per ordinare correttamente le soglie del template).
+- Tipo Valori per Colonna: se ciascuna colonna è un numero intero, decimale, percentuale o un'etichetta testuale/categorica.
 - Campi e Subtest (indici primari e subtest).
 - Commenti e Note Range (soglie, cut-off, commenti qualitativi).
+- Frequenza nel corpus: aggiorna il conteggio di relazioni che citano questo test includendo anche le nuove.
+- Nomi alternativi rilevati: se le nuove relazioni usano una grafia leggermente diversa per un test già presente (spaziatura, trattini, maiuscole), NON creare una nuova sottosezione duplicata: aggiungi la variante qui e mantieni un solo nome canonico.
 Se i test nelle nuove relazioni sono già descritti accuratamente nella sezione esistente, rispondi con il testo esistente invariato.
 Rispondi SOLO con la sezione 7 in formato Markdown, senza introduzioni.`,
     `=== ANALISI TEST ESISTENTE (SEZIONE 7) ===
@@ -1165,7 +1173,7 @@ export async function rilevaNomiTestDaProfilo(profiloStile: string, templateEsis
 
   const promptSystem = `Sei un assistente clinico.
 Analizza il profilo di stile fornito e individua tutti i test clinici o batterie menzionati nella sezione 7 o in altre parti del profilo (escludi WISC-IV e NEPSY-II).
-Non includere i test già esistenti: [${templateEsistenti.join(', ')}].`
+Non includere i test già esistenti: [${templateEsistenti.join(', ')}]. Se il profilo riporta "Nomi alternativi rilevati" per un test, considera quelle varianti (spaziatura, trattini, maiuscole/minuscole, abbreviazioni) come lo stesso test: non segnalarlo come nuovo se una qualunque delle sue varianti corrisponde (anche parzialmente) a un test già esistente.`
 
   return callGeminiStructured(promptSystem, profiloStile, NomiTestSchema, { maxOutputTokens: 1500, temperature: 0.1 })
 }
@@ -1225,8 +1233,10 @@ export async function generaTemplateTest(testNome: string, profiloStile: string)
 Il tuo compito è analizzare la descrizione del test "${testNome}" presente nel Profilo di Stile fornito e strutturarlo in un template del test.
 
 Sii estremamente accurato nel mappare tutti i subtest, gli indici, le colonne e le soglie descritte nel profilo per questo specifico test.
-Per "scalaDefault": usa "qi_wisc" o "scalare" solo se il test dichiara esplicitamente di riusare quelle scale standard; altrimenti usa "soglie_custom" con le soglie realmente descritte nel profilo (max null se non c'è limite superiore).
-Per "colonne": elenca solo i NOMI delle colonne di punteggio che il test riporta per ciascun indice, nell'ordine in cui compaiono nel profilo (es. ["Punti T", "Percentile"] se per ogni indice sono riportati entrambi i valori). Guarda sia "Struttura Colonne" sia "Esempio Valori" nel profilo, se presenti: il secondo mostra dati reali e aiuta a capire quante colonne servono davvero e in che ordine. Se il test riporta un solo valore per indice, ometti il campo oppure usa un array con un solo elemento. NON includere qui soglie, range o fasce: quelle restano sempre una scelta manuale successiva, non tua.
+Per "scalaDefault": usa "qi_wisc" o "scalare" solo se il test dichiara esplicitamente di riusare quelle scale standard; altrimenti usa "soglie_custom" con le soglie realmente descritte nel profilo (max null se non c'è limite superiore). Usa il campo "Direzione punteggio" del profilo, se presente, per ordinare correttamente le soglie: se un valore più alto è una prestazione MIGLIORE, la soglia più critica va sul "min" più basso; se un valore più alto è una prestazione PEGGIORE (es. numero di errori, tempi in secondi), inverti la logica. Non dedurre la direzione solo dall'ordine del testo del profilo: verifica sempre se è dichiarata esplicitamente.
+Per "colonne": elenca solo i NOMI delle colonne di punteggio che il test riporta per ciascun indice, nell'ordine in cui compaiono nel profilo (es. ["Punti T", "Percentile"] se per ogni indice sono riportati entrambi i valori). Guarda sia "Struttura Colonne" sia "Esempio Valori" nel profilo, se presenti: il secondo mostra dati reali e aiuta a capire quante colonne servono davvero e in che ordine. Usa anche "Tipo Valori per Colonna", se presente, per distinguere colonne numeriche da colonne puramente testuali/categoriche. Se il test riporta un solo valore per indice, ometti il campo oppure usa un array con un solo elemento. NON includere qui soglie, range o fasce: quelle restano sempre una scelta manuale successiva, non tua.
+Se il profilo indica che un subtest/indice specifico ha una scala o un cut-off diverso dal resto del test, imposta la scala di quel singolo campo dentro "campiPrincipali" invece di forzarla nella "scalaDefault" comune a tutto il template.
+Se "Frequenza nel corpus" indica che il test compare in una sola relazione, procedi comunque ma senza inventare subtest o colonne non menzionati esplicitamente nel profilo: in caso di dati insufficienti, limitati a ciò che è davvero descritto.
 Il campo "nome" deve essere esattamente "${testNome}".`
 
   return callGeminiStructured(promptSystem, profiloStile, GeneratedTestTemplateSchema, { maxOutputTokens: 2500, temperature: 0.1 })

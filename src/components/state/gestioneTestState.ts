@@ -24,7 +24,10 @@ export type FormFormula = {
   descrizione: string
 }
 
-export type FormCampo = { key: string; label: string; descr: string; evidenziato?: boolean; formula?: FormFormula }
+// scala?: range personalizzato per questa riga, che sostituisce la Scala di default
+// del test solo per lei (es. un subtest con un cut-off diverso dal resto del test).
+// Assente = eredita scalaDefault, comportamento storico invariato.
+export type FormCampo = { key: string; label: string; descr: string; evidenziato?: boolean; scala?: ScalaPunteggio; formula?: FormFormula }
 
 // ── Righe che referenziano una chiave in una formula ──────────
 // Usato per non rompere silenziosamente un calcolo quando si rinomina una riga: una
@@ -139,6 +142,8 @@ export type FormTemplateAction =
   | { type: 'SET_COLONNA_MOSTRA_FASCIA'; payload: { idx: number; value: boolean } }
   | { type: 'SET_COLONNA_EVIDENZIATO'; payload: { idx: number; value: boolean } }
   | { type: 'SET_CAMPO_EVIDENZIATO'; payload: { idx: number; value: boolean } }
+  | { type: 'SET_CAMPO_SCALA_TIPO'; payload: { idx: number; tipo: ScalaPunteggio['tipo'] | null } }
+  | { type: 'SET_CAMPO_SOGLIE'; payload: { idx: number; soglie: SogliaCustom[] } }
   | { type: 'SET_CAMPO_FORMULA_MODO'; payload: { idx: number; modo: 'somma' | 'media' | 'avanzata' | null } }
   | { type: 'TOGGLE_CAMPO_FORMULA_PARTE'; payload: { idx: number; chiave: string } }
   | { type: 'SET_CAMPO_FORMULA_ESPRESSIONE'; payload: { idx: number; value: string } }
@@ -319,6 +324,25 @@ export function formTemplateReducer(state: FormTemplateState, action: FormTempla
     }
     case 'SET_CAMPO_EVIDENZIATO': {
       const next = state.form.campiPrincipali.map((c, i) => i === action.payload.idx ? { ...c, evidenziato: action.payload.value } : c)
+      return { ...state, form: { ...state.form, campiPrincipali: next } }
+    }
+    case 'SET_CAMPO_SCALA_TIPO': {
+      const { idx, tipo } = action.payload
+      const next = state.form.campiPrincipali.map((c, i) => {
+        if (i !== idx) return c
+        if (tipo === null) { const { scala: _scala, ...senzaScala } = c; return senzaScala } // eredita di nuovo la scalaDefault del test
+        if (tipo === 'soglie_custom') {
+          return { ...c, scala: { tipo: 'soglie_custom' as const, soglie: c.scala?.tipo === 'soglie_custom' ? c.scala.soglie : [] } }
+        }
+        return { ...c, scala: { tipo } }
+      })
+      return { ...state, form: { ...state.form, campiPrincipali: next } }
+    }
+    case 'SET_CAMPO_SOGLIE': {
+      const { idx, soglie } = action.payload
+      const next = state.form.campiPrincipali.map((c, i) =>
+        i === idx ? { ...c, scala: { tipo: 'soglie_custom' as const, soglie } } : c
+      )
       return { ...state, form: { ...state.form, campiPrincipali: next } }
     }
     case 'SET_CAMPO_FORMULA_MODO': {

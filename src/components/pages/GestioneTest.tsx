@@ -350,6 +350,7 @@ function GrigliaTemplate({ form, dispatch, tipiScala }: {
           campo={form.campiPrincipali[campoAperto]} idx={campoAperto}
           altriCampi={form.campiPrincipali.filter((_, i) => i !== campoAperto)}
           dispatch={dispatch}
+          tipiScala={tipiScala}
           onClose={() => setCampoAperto(null)}
           onRemove={form.campiPrincipali.length > 1 ? () => { dispatch({ type: 'REMOVE_CAMPO', payload: campoAperto }); setCampoAperto(null) } : undefined}
         />
@@ -430,11 +431,12 @@ function formulaLeggibile(espressione: string, campi: FormCampo[]): string {
   return `= ${risolta.replace(/\//g, ' ÷ ').replace(/\*/g, ' × ')}`
 }
 
-function PannelloCampo({ campo, idx, altriCampi, dispatch, onClose, onRemove }: {
+function PannelloCampo({ campo, idx, altriCampi, dispatch, tipiScala, onClose, onRemove }: {
   campo: FormCampo
   idx: number
   altriCampi: FormCampo[]
   dispatch: Dispatch<FormTemplateAction>
+  tipiScala: { tipo: ScalaPunteggio['tipo']; label: string; desc: string }[]
   onClose: () => void
   onRemove?: () => void
 }) {  const formula = campo.formula
@@ -484,6 +486,29 @@ function PannelloCampo({ campo, idx, altriCampi, dispatch, onClose, onRemove }: 
           <input type="checkbox" checked={!!campo.evidenziato} onChange={e => dispatch({ type: 'SET_CAMPO_EVIDENZIATO', payload: { idx, value: e.target.checked } })} />
           Evidenzia questa riga nel documento (colore neutro)
         </label>
+
+        <details style={{ fontSize: 11.5 }}>
+          <summary style={{ cursor: 'pointer', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 4, listStyle: 'none' }}>
+            <Info size={12} /> Range personalizzato per questa riga (opzionale)
+          </summary>
+          <div style={{ marginTop: 8, paddingLeft: 2 }}>
+            <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '0 0 6px', lineHeight: 1.5 }}>
+              Solo se questa riga usa un range diverso dalla Scala di default del test (es. un subtest con un cut-off proprio). Se non impostato, questa riga eredita la Scala di default.
+            </p>
+            <select className="form-input" value={campo.scala?.tipo || ''}
+              onChange={e => dispatch({ type: 'SET_CAMPO_SCALA_TIPO', payload: { idx, tipo: e.target.value ? e.target.value as ScalaPunteggio['tipo'] : null } })}
+              style={{ cursor: 'pointer' }}>
+              <option value="">Eredita la Scala di default del test</option>
+              {tipiScala.map(t => <option key={t.tipo} value={t.tipo}>{t.label}</option>)}
+            </select>
+            {campo.scala?.tipo === 'soglie_custom' && (
+              <div style={{ marginTop: 8, padding: '10px', border: '1px solid var(--border)', borderRadius: 'var(--radius)', background: 'var(--bg-page)' }}>
+                <div style={{ fontSize: 11.5, fontWeight: 600, marginBottom: 6 }}>Fasce di questa riga</div>
+                <EditorSoglieCustom soglie={campo.scala.soglie} onChange={soglie => dispatch({ type: 'SET_CAMPO_SOGLIE', payload: { idx, soglie } })} />
+              </div>
+            )}
+          </div>
+        </details>
 
         <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, cursor: 'pointer' }}>
           <input type="checkbox" checked={!!formula} onChange={e => dispatch({ type: 'SET_CAMPO_FORMULA_MODO', payload: { idx, modo: e.target.checked ? 'somma' : null } })} />
@@ -1175,7 +1200,7 @@ export default function GestioneTest() {
         scalaDefault: t.scalaDefault || { tipo: 'scalare' },
         mostraCategoriaDescrittiva: true,
         layoutTabelleSecondarie: 'interleaved',
-        campiPrincipali: (t.campiPrincipali || []).map((c: any) => ({ key: c.key, label: c.label, descr: c.descr || '' })),
+        campiPrincipali: (t.campiPrincipali || []).map((c: any) => ({ key: c.key, label: c.label, descr: c.descr || '', scala: c.scala })),
         gruppiSecondari: (t.gruppiSecondari || []).map((g: any) => ({ key: g.key, label: g.label, campi: (g.campi || []).map((c: any) => ({ key: c.key, label: c.label })) })),
         colonne: t.colonne && t.colonne.length > 0 ? t.colonne.map((nome: string) => ({ nome })) : [{ nome: 'Punteggio' }],
         notaRange: t.notaRange || '',
