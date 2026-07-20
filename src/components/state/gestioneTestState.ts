@@ -26,6 +26,19 @@ export type FormFormula = {
 
 export type FormCampo = { key: string; label: string; descr: string; evidenziato?: boolean; formula?: FormFormula }
 
+// ── Righe che referenziano una chiave in una formula ──────────
+// Usato per non rompere silenziosamente un calcolo quando si rinomina una riga: una
+// chiave già usata dalla formula di un'altra riga va "congelata" (v. UPDATE_CAMPO)
+// invece di essere rigenerata dallo slug dell'etichetta a ogni modifica del testo.
+export function righeCheReferenzianoChiave(chiave: string, altriCampi: FormCampo[]): FormCampo[] {
+  if (!chiave) return []
+  return altriCampi.filter(c => {
+    if (!c.formula) return false
+    if (c.formula.modo === 'avanzata') return c.formula.espressioneAvanzata.includes(`{${chiave}}`)
+    return c.formula.parti.includes(chiave)
+  })
+}
+
 export type FormState = {
   nome: string
   categoria: TestTemplate['categoria']
@@ -53,6 +66,50 @@ export const INIT_FORM: FormState = {
   richiedeEtaValutazione: false,
   richiedeStrumentiUtilizzati: false,
 }
+
+// ── Punti di partenza guidati per un nuovo template ────────────
+// Sono solo valori iniziali diversi per FormState: nessun vincolo, tutto resta
+// modificabile liberamente dopo la scelta. Nessuna chiamata Gemini, nessuna modifica
+// allo schema: puro precompilamento lato client (v. piano UX Fase 4).
+export type PresetTemplate = { id: string; nome: string; descrizione: string; form: FormState }
+
+export const PRESET_TEMPLATES: PresetTemplate[] = [
+  {
+    id: 'punteggio-singolo',
+    nome: 'Un solo punteggio principale',
+    descrizione: 'Una sola riga con la sua fascia (es. un QI totale, un punteggio standard).',
+    form: INIT_FORM,
+  },
+  {
+    id: 'piu-punteggi',
+    nome: 'Più punteggi/subtest',
+    descrizione: 'Una tabella con 4 righe già pronte da rinominare (es. gli indici di un test cognitivo).',
+    form: {
+      ...INIT_FORM,
+      campiPrincipali: [
+        { key: '', label: '', descr: '' },
+        { key: '', label: '', descr: '' },
+        { key: '', label: '', descr: '' },
+        { key: '', label: '', descr: '' },
+      ],
+    },
+  },
+  {
+    id: 'questionario-scale',
+    nome: 'Questionario con più scale',
+    descrizione: 'Più righe principali e un gruppo secondario già abbozzato (es. un questionario tipo CBCL).',
+    form: {
+      ...INIT_FORM,
+      campiPrincipali: [
+        { key: '', label: '', descr: '' },
+        { key: '', label: '', descr: '' },
+      ],
+      gruppiSecondari: [
+        { key: '', label: '', campi: [{ key: '', label: '' }, { key: '', label: '' }] },
+      ],
+    },
+  },
+]
 
 // ── Reducer FormTemplate ──────────────────────────────────────
 export type FormTemplateState = {
@@ -119,7 +176,15 @@ export function formTemplateReducer(state: FormTemplateState, action: FormTempla
       const next = state.form.campiPrincipali.map((c, idx) => {
         if (idx !== action.payload.idx) return c
         const updated = { ...c, [action.payload.field]: action.payload.value }
-        if (action.payload.field === 'label') updated.key = toSlug(action.payload.value)
+        if (action.payload.field === 'label') {
+          // Non rigenerare l'identificativo se è già usato dalla formula di un'altra riga:
+          // cambierebbe silenziosamente la chiave e romperebbe quel calcolo mentre si sta solo
+          // correggendo il testo dell'etichetta. Chi vuole davvero cambiarlo può farlo a mano
+          // dal campo "Identificativo interno".
+          const altriCampi = state.form.campiPrincipali.filter((_, i2) => i2 !== idx)
+          const congelata = righeCheReferenzianoChiave(c.key, altriCampi).length > 0
+          if (!congelata) updated.key = toSlug(action.payload.value)
+        }
         return updated
       })
       return {
@@ -181,7 +246,12 @@ export function formTemplateReducer(state: FormTemplateState, action: FormTempla
         const nuoviCampi = g.campi.map((c, cidx) => {
           if (cidx !== ci) return c
           const updated = { ...c, [field]: value }
-          if (field === 'label') updated.key = toSlug(value)
+          if (field === 'label') {
+            // Stessa protezione di UPDATE_CAMPO: un sottotest può essere referenziato da una
+            // formula di un campo principale (es. "Totale" = somma di più subtest).
+            const congelata = righeCheReferenzianoChiave(c.key, state.form.campiPrincipali).length > 0
+            if (!congelata) updated.key = toSlug(value)
+          }
           return updated
         })
         return { ...g, campi: nuoviCampi }

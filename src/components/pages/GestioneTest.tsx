@@ -4,9 +4,11 @@ import {
   gestioneTestReducer,
   GESTIONE_TEST_INIT,
   INIT_FORM,
+  righeCheReferenzianoChiave,
+  PRESET_TEMPLATES,
 } from '../state/gestioneTestState'
 import type { FormState, FormCampo, FormColonna, FormTemplateAction } from '../state/gestioneTestState'
-import { Plus, Trash2, ChevronDown, ChevronUp, Eye, Save, AlertTriangle, Lock, Unlock, FlaskConical, X, Check, Sparkles, Pencil, Copy } from 'lucide-react'
+import { Plus, Trash2, ChevronDown, ChevronUp, Eye, Save, AlertTriangle, Lock, Unlock, FlaskConical, X, Check, Sparkles, Pencil, Copy, MoreVertical, Info } from 'lucide-react'
 import {
   getTestTemplates, insertTestTemplate, updateTestTemplate, disattivaTestTemplate, deleteTestTemplate, duplicaTestTemplate
 } from '../../data/testTemplatesData'
@@ -248,21 +250,22 @@ function GrigliaTemplate({ form, dispatch, tipiScala }: {
 
   return (
     <div>
-      <div style={{ overflowX: 'auto', border: '1px solid var(--border)', borderRadius: 'var(--radius)' }}>
+      <div className="griglia-template-desktop" style={{ overflowX: 'auto', border: '1px solid var(--border)', borderRadius: 'var(--radius)' }}>
         <div style={{ display: 'grid', gridTemplateColumns: `${labelW}px repeat(${form.colonne.length}, ${colW}px) 36px`, minWidth: 'fit-content' }}>
           <div style={{ background: 'var(--bg-panel)', borderBottom: '1px solid var(--border)', borderRight: '1px solid var(--border)' }} />
           {form.colonne.map((col, ci) => (
             <button key={ci} type="button" onClick={() => apriColonna(ci)} title={col.nome || `Colonna ${ci + 1}`} style={{
               background: colonnaAperta === ci ? 'var(--accent-lt)' : (col.evidenziato ? 'var(--bg-page)' : 'var(--bg-panel)'),
               border: 'none', borderBottom: '1px solid var(--border)', borderRight: '1px solid var(--border)',
-              padding: '8px 6px', fontSize: 12, fontWeight: 600, cursor: 'pointer',
+              padding: '8px 6px', fontSize: 12, fontWeight: 600, cursor: 'pointer', minHeight: 44,
               display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4, minWidth: 0,
             }}>
-              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{col.nome || `Colonna ${ci + 1}`}</span>
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: col.nome ? undefined : 'var(--danger)', fontStyle: col.nome ? undefined : 'italic' }}>{col.nome || 'manca il nome'}</span>
               {col.scala && <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--accent)', background: 'var(--accent-lt)', borderRadius: 8, padding: '1px 5px', flexShrink: 0 }}>range</span>}
+              <Pencil size={10} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
             </button>
           ))}
-          <button type="button" onClick={() => { dispatch({ type: 'ADD_COLONNA' }); apriColonna(form.colonne.length) }} title="Aggiungi colonna" style={{ background: 'var(--bg-panel)', border: 'none', borderBottom: '1px solid var(--border)', color: 'var(--accent)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <button type="button" onClick={() => { dispatch({ type: 'ADD_COLONNA' }); apriColonna(form.colonne.length) }} title="Aggiungi colonna" aria-label="Aggiungi colonna" style={{ background: 'var(--bg-panel)', border: 'none', borderBottom: '1px solid var(--border)', color: 'var(--accent)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <Plus size={14} />
           </button>
 
@@ -271,11 +274,12 @@ function GrigliaTemplate({ form, dispatch, tipiScala }: {
               <button type="button" onClick={() => apriCampo(ri)} title={campo.label || `Riga ${ri + 1}`} style={{
                 background: campoAperto === ri ? 'var(--accent-lt)' : (campo.evidenziato ? 'var(--bg-page)' : 'var(--bg-panel)'),
                 border: 'none', borderBottom: '1px solid var(--border)', borderRight: '1px solid var(--border)',
-                padding: '8px 10px', fontSize: 12, textAlign: 'left', cursor: 'pointer', minWidth: 0,
+                padding: '8px 10px', fontSize: 12, textAlign: 'left', cursor: 'pointer', minWidth: 0, minHeight: 44,
                 display: 'flex', alignItems: 'center', gap: 6,
               }}>
-                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{campo.label || `Riga ${ri + 1}`}</span>
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: campo.label ? undefined : 'var(--danger)', fontStyle: campo.label ? undefined : 'italic' }}>{campo.label || 'manca l’etichetta'}</span>
                 {campo.formula && <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--accent)', background: 'var(--accent-lt)', borderRadius: 8, padding: '1px 5px', flexShrink: 0 }}>calcolato</span>}
+                <Pencil size={10} style={{ color: 'var(--text-muted)', flexShrink: 0, marginLeft: 'auto' }} />
               </button>
               {form.colonne.map((_, ci) => (
                 <div key={ci} style={{ background: 'var(--bg-page)', borderBottom: '1px solid var(--border)', borderRight: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, color: 'var(--text-muted)' }}>—</div>
@@ -283,11 +287,54 @@ function GrigliaTemplate({ form, dispatch, tipiScala }: {
               <div style={{ background: 'var(--bg-page)', borderBottom: '1px solid var(--border)' }} />
             </FragmentRiga>
           ))}
-          <button type="button" onClick={() => { dispatch({ type: 'ADD_CAMPO' }); apriCampo(form.campiPrincipali.length) }} title="Aggiungi riga" style={{ background: 'var(--bg-panel)', border: 'none', color: 'var(--accent)', cursor: 'pointer', padding: 6, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <button type="button" onClick={() => { dispatch({ type: 'ADD_CAMPO' }); apriCampo(form.campiPrincipali.length) }} title="Aggiungi riga" aria-label="Aggiungi riga" style={{ background: 'var(--bg-panel)', border: 'none', color: 'var(--accent)', cursor: 'pointer', padding: 6, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <Plus size={14} />
           </button>
           {form.colonne.map((_, ci) => <div key={ci} style={{ background: 'var(--bg-panel)' }} />)}
           <div style={{ background: 'var(--bg-panel)' }} />
+        </div>
+      </div>
+
+      {/* Vista mobile: sotto i 700px sostituisce la griglia con scroll orizzontale con un
+          elenco verticale (stessa interazione: tocca per configurare riga/colonna). */}
+      <div className="griglia-template-mobile" style={{ flexDirection: 'column', gap: 14 }}>
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', marginBottom: 6 }}>Colonne (punteggi)</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {form.colonne.map((col, ci) => (
+              <button key={ci} type="button" onClick={() => apriColonna(ci)} style={{
+                minHeight: 44, background: colonnaAperta === ci ? 'var(--accent-lt)' : 'var(--bg-panel)',
+                border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '8px 12px',
+                fontSize: 13, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, textAlign: 'left', width: '100%',
+              }}>
+                <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: col.nome ? undefined : 'var(--danger)', fontStyle: col.nome ? undefined : 'italic' }}>{col.nome || 'manca il nome'}</span>
+                {col.scala && <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--accent)', background: 'var(--accent-lt)', borderRadius: 8, padding: '1px 5px', flexShrink: 0 }}>range</span>}
+                <Pencil size={12} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
+              </button>
+            ))}
+            <button type="button" onClick={() => { dispatch({ type: 'ADD_COLONNA' }); apriColonna(form.colonne.length) }} aria-label="Aggiungi colonna" style={{ minHeight: 44, background: 'none', border: '1px dashed var(--accent)', borderRadius: 'var(--radius)', color: 'var(--accent)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, fontSize: 13 }}>
+              <Plus size={14} /> Aggiungi colonna
+            </button>
+          </div>
+        </div>
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', marginBottom: 6 }}>Righe</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {form.campiPrincipali.map((campo, ri) => (
+              <button key={ri} type="button" onClick={() => apriCampo(ri)} style={{
+                minHeight: 44, background: campoAperto === ri ? 'var(--accent-lt)' : 'var(--bg-panel)',
+                border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '8px 12px',
+                fontSize: 13, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, textAlign: 'left', width: '100%',
+              }}>
+                <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: campo.label ? undefined : 'var(--danger)', fontStyle: campo.label ? undefined : 'italic' }}>{campo.label || 'manca l’etichetta'}</span>
+                {campo.formula && <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--accent)', background: 'var(--accent-lt)', borderRadius: 8, padding: '1px 5px', flexShrink: 0 }}>calcolato</span>}
+                <Pencil size={12} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
+              </button>
+            ))}
+            <button type="button" onClick={() => { dispatch({ type: 'ADD_CAMPO' }); apriCampo(form.campiPrincipali.length) }} aria-label="Aggiungi riga" style={{ minHeight: 44, background: 'none', border: '1px dashed var(--accent)', borderRadius: 'var(--radius)', color: 'var(--accent)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, fontSize: 13 }}>
+              <Plus size={14} /> Aggiungi riga
+            </button>
+          </div>
         </div>
       </div>
 
@@ -372,6 +419,17 @@ function PannelloColonna({ colonna, idx, dispatch, tipiScala, onClose, onRemove 
   )
 }
 
+// Traduce un'espressione avanzata ({icv} + {irp}) / 2 nelle etichette corrispondenti,
+// per una preview leggibile senza dover interpretare le chiavi (v. piano UX Fase 6).
+// Pura trasformazione di visualizzazione: la stringa salvata non viene mai toccata.
+function formulaLeggibile(espressione: string, campi: FormCampo[]): string {
+  const risolta = espressione.replace(/\{([a-zA-Z0-9_-]+)\}/g, (_match, chiave) => {
+    const trovato = campi.find(c => c.key === chiave)
+    return trovato?.label || `{${chiave}}`
+  })
+  return `= ${risolta.replace(/\//g, ' ÷ ').replace(/\*/g, ' × ')}`
+}
+
 function PannelloCampo({ campo, idx, altriCampi, dispatch, onClose, onRemove }: {
   campo: FormCampo
   idx: number
@@ -379,8 +437,8 @@ function PannelloCampo({ campo, idx, altriCampi, dispatch, onClose, onRemove }: 
   dispatch: Dispatch<FormTemplateAction>
   onClose: () => void
   onRemove?: () => void
-}) {
-  const formula = campo.formula
+}) {  const formula = campo.formula
+  const referenziataDa = righeCheReferenzianoChiave(campo.key, altriCampi)
   return (
     <div style={{ marginTop: 10, padding: '12px 14px', border: '1px solid var(--accent)', borderRadius: 'var(--radius)', background: 'var(--bg-panel)' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
@@ -391,18 +449,32 @@ function PannelloCampo({ campo, idx, altriCampi, dispatch, onClose, onRemove }: 
         </div>
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-          <div>
-            <label style={{ fontSize: 11, color: 'var(--text-muted)' }}>Etichetta *</label>
-            <input className="form-input" placeholder="es. Comprensione Verbale (ICV)" value={campo.label}
-              onChange={e => dispatch({ type: 'UPDATE_CAMPO', payload: { idx, field: 'label', value: e.target.value } })} style={{ marginTop: 3 }} autoFocus />
-          </div>
-          <div>
-            <label style={{ fontSize: 11, color: 'var(--text-muted)' }}>Chiave (slug auto)</label>
+        <div>
+          <label style={{ fontSize: 11, color: 'var(--text-muted)' }}>Etichetta *</label>
+          <input className="form-input" placeholder="es. Comprensione Verbale (ICV)" value={campo.label}
+            onChange={e => dispatch({ type: 'UPDATE_CAMPO', payload: { idx, field: 'label', value: e.target.value } })} style={{ marginTop: 3 }} autoFocus />
+        </div>
+        {/* L'identificativo interno è un dettaglio tecnico (serve solo alle formule): resta
+            nascosto di default, non un campo da compilare come l'etichetta. */}
+        <details style={{ fontSize: 11.5 }}>
+          <summary style={{ cursor: 'pointer', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 4, listStyle: 'none' }}>
+            <Info size={12} /> Impostazioni avanzate (identificativo interno)
+          </summary>
+          <div style={{ marginTop: 8, paddingLeft: 2 }}>
+            <label style={{ fontSize: 11, color: 'var(--text-muted)' }}>Identificativo interno (automatico)</label>
             <input className="form-input" value={campo.key}
               onChange={e => dispatch({ type: 'UPDATE_CAMPO', payload: { idx, field: 'key', value: e.target.value } })} style={{ marginTop: 3, fontFamily: 'monospace', fontSize: 12 }} />
+            <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '6px 0 0', lineHeight: 1.5 }}>
+              Generato automaticamente dall'etichetta e usato solo internamente (es. dalle formule di calcolo). Modificalo a mano solo se sai perché ti serve.
+            </p>
+            {referenziataDa.length > 0 && (
+              <p style={{ fontSize: 11, color: 'var(--accent-dk)', margin: '6px 0 0', lineHeight: 1.5, display: 'flex', alignItems: 'flex-start', gap: 5 }}>
+                <AlertTriangle size={12} style={{ flexShrink: 0, marginTop: 2 }} />
+                Questa riga è usata nel calcolo di «{referenziataDa.map(r => r.label || '(senza etichetta)').join(', ')}»: puoi correggere l'etichetta liberamente, l'identificativo resta invariato. Se lo cambi tu a mano, quel calcolo smette di funzionare finché non lo aggiorni anche lì.
+              </p>
+            )}
           </div>
-        </div>
+        </details>
         <div>
           <label style={{ fontSize: 11, color: 'var(--text-muted)' }}>Frase descrittiva narrativa (facoltativa)</label>
           <input className="form-input" placeholder="es. La prestazione nell'ambito della comprensione verbale è risultata..." value={campo.descr}
@@ -415,6 +487,7 @@ function PannelloCampo({ campo, idx, altriCampi, dispatch, onClose, onRemove }: 
 
         <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, cursor: 'pointer' }}>
           <input type="checkbox" checked={!!formula} onChange={e => dispatch({ type: 'SET_CAMPO_FORMULA_MODO', payload: { idx, modo: e.target.checked ? 'somma' : null } })} />
+
           Riga calcolata (es. un Totale)
         </label>
 
@@ -453,6 +526,13 @@ function PannelloCampo({ campo, idx, altriCampi, dispatch, onClose, onRemove }: 
                 <input className="form-input" placeholder="es. ({icv} + {irp}) / 2" value={formula.espressioneAvanzata}
                   onChange={e => dispatch({ type: 'SET_CAMPO_FORMULA_ESPRESSIONE', payload: { idx, value: e.target.value } })}
                   style={{ marginTop: 3, fontFamily: 'monospace', fontSize: 12.5 }} />
+                {/* Traduzione di sola lettura: {chiave} → etichetta corrispondente, per capire
+                    a colpo d'occhio cosa calcola l'espressione senza decifrare le chiavi. */}
+                {formula.espressioneAvanzata.trim() && (
+                  <p style={{ fontSize: 11.5, color: 'var(--text-muted)', fontStyle: 'italic', margin: '6px 0 0' }}>
+                    {formulaLeggibile(formula.espressioneAvanzata, altriCampi)}
+                  </p>
+                )}
                 {altriCampi.length > 0 && (
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 6 }}>
                     {altriCampi.filter(a => a.key).map(altro => (
@@ -484,7 +564,10 @@ function FormTemplate({
   const [state, dispatch] = useReducer(formTemplateReducer, {
     form: initial || INIT_FORM,
     soglieCustom: initial?.scalaDefault.tipo === 'soglie_custom' ? initial.scalaDefault.soglie : [],
-    showPreview: false,
+    // Anteprima aperta di default solo in creazione: è lo strumento principale per capire
+    // "cosa sto costruendo" senza dover interpretare griglia/scala a mente. In modifica di un
+    // template esistente resta chiusa per non aggiungere ingombro a chi già lo conosce.
+    showPreview: !initial,
     saving: false,
     error: '',
   })
@@ -496,6 +579,10 @@ function FormTemplate({
   }
 
   const [gruppiAperti, setGruppiAperti] = useState<Record<number, boolean>>({})
+  // Sezioni facoltative collassate di default: si aprono da sole solo se il template che si
+  // sta modificando le usa già, così in modifica non si nasconde dato già presente.
+  const [sezioneGruppiAperta, setSezioneGruppiAperta] = useState(!!initial && initial.gruppiSecondari.length > 0)
+  const [sezioneOpzioniAperta, setSezioneOpzioniAperta] = useState(!!initial && (!!initial.notaRange.trim() || initial.richiedeEtaValutazione || initial.richiedeStrumentiUtilizzati))
 
   function addGruppo() {
     setGruppiAperti(prev => ({ ...prev, [form.gruppiSecondari.length]: true }))
@@ -674,9 +761,17 @@ function FormTemplate({
         <GrigliaTemplate form={form} dispatch={dispatch} tipiScala={tipiScala} />
       </div>
 
-      {/* Gruppi secondari (subtest) */}
-      <div className="form-group" style={{ marginBottom: 16 }}>
-        <label className="form-label">Gruppi secondari / subtest <span>(facoltativo)</span></label>
+      {/* Gruppi secondari (subtest): facoltativo, collassato di default per non appesantire
+          il percorso minimo di creazione di un test semplice (v. piano UX Fase 3). */}
+      <details
+        open={sezioneGruppiAperta}
+        onToggle={e => setSezioneGruppiAperta((e.target as HTMLDetailsElement).open)}
+        style={{ marginBottom: 16, border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '2px 14px' }}
+      >
+        <summary style={{ cursor: 'pointer', padding: '10px 0', display: 'flex', alignItems: 'center', gap: 8, listStyle: 'none' }}>
+          <ChevronDown size={13} style={{ color: 'var(--text-muted)', transform: sezioneGruppiAperta ? 'rotate(0deg)' : 'rotate(-90deg)', transition: 'transform .15s', flexShrink: 0 }} />
+          <span className="form-label" style={{ margin: 0 }}>Gruppi secondari / subtest <span>(facoltativo{form.gruppiSecondari.length ? ` \u00b7 ${form.gruppiSecondari.length}` : ''})</span></span>
+        </summary>
         <p style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: -4, marginBottom: 10 }}>
           Ognuno genera una propria tabella nel DOCX (es. CBCL: "Scale Sindromiche", "Scale DSM Oriented"), oltre alla tabella principale. Non compaiono mai nella tabella principale stessa.
         </p>
@@ -705,26 +800,16 @@ function FormTemplate({
               </button>
             </summary>
             <div style={{ paddingBottom: 10 }}>
-              <div className="meta-row" style={{ marginBottom: 8 }}>
-                <div className="form-group">
-                  <label style={{ fontSize: 11, color: 'var(--text-muted)' }}>Nome gruppo</label>
-                  <input className="form-input" placeholder="es. Comprensione Verbale" value={gruppo.label} onChange={e => updateGruppo(gi, 'label', e.target.value)} style={{ marginTop: 3 }} />
-                </div>
-                <div className="form-group">
-                  <label style={{ fontSize: 11, color: 'var(--text-muted)' }}>Chiave</label>
-                  <input className="form-input" value={gruppo.key} onChange={e => updateGruppo(gi, 'key', e.target.value)} style={{ marginTop: 3, fontFamily: 'monospace', fontSize: 12 }} />
-                </div>
+              <div className="form-group" style={{ marginBottom: 8 }}>
+                <label style={{ fontSize: 11, color: 'var(--text-muted)' }}>Nome gruppo</label>
+                <input className="form-input" placeholder="es. Comprensione Verbale" value={gruppo.label} onChange={e => updateGruppo(gi, 'label', e.target.value)} style={{ marginTop: 3 }} />
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 5, marginBottom: 8 }}>
                 {gruppo.campi.map((c, ci) => (
-                  <div key={ci} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 28px', gap: 6, alignItems: 'flex-end' }}>
+                  <div key={ci} style={{ display: 'grid', gridTemplateColumns: '1fr 28px', gap: 6, alignItems: 'flex-end' }}>
                     <div>
                       {ci === 0 && <label style={{ fontSize: 11, color: 'var(--text-muted)' }}>Etichetta</label>}
                       <input className="form-input" placeholder="es. Vocabolario" value={c.label} onChange={e => updateCampoGruppo(gi, ci, 'label', e.target.value)} style={{ marginTop: ci === 0 ? 3 : 0 }} />
-                    </div>
-                    <div>
-                      {ci === 0 && <label style={{ fontSize: 11, color: 'var(--text-muted)' }}>Chiave</label>}
-                      <input className="form-input" placeholder="slug" value={c.key} onChange={e => updateCampoGruppo(gi, ci, 'key', e.target.value)} style={{ marginTop: ci === 0 ? 3 : 0, fontFamily: 'monospace', fontSize: 12 }} />
                     </div>
                     <button type="button" onClick={() => removeCampoGruppo(gi, ci)} disabled={gruppo.campi.length <= 1} style={{ padding: 5, background: 'none', border: 'none', cursor: gruppo.campi.length > 1 ? 'pointer' : 'not-allowed', color: gruppo.campi.length > 1 ? 'var(--danger)' : 'var(--text-muted)', marginBottom: 2 }}>
                       <X size={12} />
@@ -735,35 +820,66 @@ function FormTemplate({
               <button type="button" onClick={() => addCampoGruppo(gi)} style={{ fontSize: 11.5, color: 'var(--accent)', background: 'none', border: '1px dashed var(--accent)', borderRadius: 6, padding: '3px 10px', cursor: 'pointer' }}>
                 + Subtest
               </button>
+              {/* Identificativi interni: dettaglio tecnico per le formule, nascosto di default. */}
+              <details style={{ marginTop: 10, fontSize: 11.5 }}>
+                <summary style={{ cursor: 'pointer', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 4, listStyle: 'none' }}>
+                  <Info size={12} /> Impostazioni avanzate (identificativi interni)
+                </summary>
+                <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 6, paddingLeft: 2 }}>
+                  <div>
+                    <label style={{ fontSize: 11, color: 'var(--text-muted)' }}>Identificativo del gruppo</label>
+                    <input className="form-input" value={gruppo.key} onChange={e => updateGruppo(gi, 'key', e.target.value)} style={{ marginTop: 3, fontFamily: 'monospace', fontSize: 12 }} />
+                  </div>
+                  {gruppo.campi.map((c, ci) => (
+                    <div key={ci}>
+                      <label style={{ fontSize: 11, color: 'var(--text-muted)' }}>{c.label || `Sottotest ${ci + 1}`}</label>
+                      <input className="form-input" placeholder="generato dall'etichetta" value={c.key} onChange={e => updateCampoGruppo(gi, ci, 'key', e.target.value)} style={{ marginTop: 3, fontFamily: 'monospace', fontSize: 12 }} />
+                    </div>
+                  ))}
+                </div>
+              </details>
             </div>
           </details>
         ))}
         <button type="button" onClick={addGruppo} style={{ marginTop: 4, fontSize: 12, color: 'var(--accent)', background: 'none', border: '1px dashed var(--accent)', borderRadius: 'var(--radius)', padding: '5px 12px', cursor: 'pointer', width: '100%' }}>
           + Aggiungi gruppo secondario
         </button>
-      </div>
+      </details>
 
-      {/* Opzioni */}
-      <div className="form-group" style={{ marginBottom: 14 }}>
-        <label className="form-label">Nota range <span>(facoltativo)</span></label>
-        <input
-          className="form-input"
-          placeholder="Testo della nota metodologica sui range (es. 'Il range medio corrisponde a…')"
-          value={form.notaRange}
-          onChange={e => setField('notaRange', e.target.value)}
-        />
-      </div>
-
-      <div style={{ display: 'flex', gap: 16, marginBottom: 20 }}>
-        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer' }}>
-          <input type="checkbox" checked={form.richiedeEtaValutazione} onChange={e => setField('richiedeEtaValutazione', e.target.checked)} />
-          Richiede età al momento della valutazione
-        </label>
-        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer' }}>
-          <input type="checkbox" checked={form.richiedeStrumentiUtilizzati} onChange={e => setField('richiedeStrumentiUtilizzati', e.target.checked)} />
-          Richiede strumenti utilizzati
-        </label>
-      </div>
+      {/* Opzioni facoltative: nota metodologica e requisiti aggiuntivi del wizard, anch'esse
+          collassate di default (v. piano UX Fase 3). */}
+      <details
+        open={sezioneOpzioniAperta}
+        onToggle={e => setSezioneOpzioniAperta((e.target as HTMLDetailsElement).open)}
+        style={{ marginBottom: 16, border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '2px 14px' }}
+      >
+        <summary style={{ cursor: 'pointer', padding: '10px 0', display: 'flex', alignItems: 'center', gap: 8, listStyle: 'none' }}>
+          <ChevronDown size={13} style={{ color: 'var(--text-muted)', transform: sezioneOpzioniAperta ? 'rotate(0deg)' : 'rotate(-90deg)', transition: 'transform .15s', flexShrink: 0 }} />
+          <span className="form-label" style={{ margin: 0 }}>Opzioni aggiuntive <span>(facoltativo)</span></span>
+        </summary>
+        <div style={{ paddingBottom: 14 }}>
+          <div className="form-group" style={{ marginBottom: 14 }}>
+            <label style={{ fontSize: 11, color: 'var(--text-muted)' }}>Nota range</label>
+            <input
+              className="form-input"
+              placeholder="Testo della nota metodologica sui range (es. 'Il range medio corrisponde a…')"
+              value={form.notaRange}
+              onChange={e => setField('notaRange', e.target.value)}
+              style={{ marginTop: 3 }}
+            />
+          </div>
+          <div style={{ display: 'flex', gap: 16 }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer' }}>
+              <input type="checkbox" checked={form.richiedeEtaValutazione} onChange={e => setField('richiedeEtaValutazione', e.target.checked)} />
+              Richiede età al momento della valutazione
+            </label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer' }}>
+              <input type="checkbox" checked={form.richiedeStrumentiUtilizzati} onChange={e => setField('richiedeStrumentiUtilizzati', e.target.checked)} />
+              Richiede strumenti utilizzati
+            </label>
+          </div>
+        </div>
+      </details>
 
       {/* Anteprima */}
       <button type="button" onClick={() => dispatch({ type: 'TOGGLE_PREVIEW' })} style={{
@@ -794,6 +910,12 @@ function FormTemplate({
 // ── Card singolo template ─────────────────────────────────────
 function TemplateCard({ template, onDisattiva, onDelete, onEditSave, onEditCancel, onRiattiva, onDuplica, onTogglePredefinito }: { template: TestTemplate, onDisattiva?: () => void, onDelete?: () => void, onEditSave?: (form: FormState, id: string) => Promise<void>, onEditCancel?: () => void, onRiattiva?: () => void, onDuplica?: () => void, onTogglePredefinito?: () => void }) {
   const [expanded, setExpanded] = useState<'none' | 'details' | 'edit'>('none')
+  const [menuAperto, setMenuAperto] = useState(false)
+  // Azioni meno frequenti (Duplica, Rendi/Rimuovi predefinito, Elimina) raccolte in un
+  // menu "···": ridurre da 6 a 3 pulsanti sempre visibili per non sovraccaricare la scelta
+  // di chi usa la pagina saltuariamente. Disattiva/Riattiva resta primario perché reversibile
+  // e frequente; Elimina resta nel menu perché raro e irreversibile.
+  const haAzioniSecondarie = !!(onDuplica || onTogglePredefinito || onDelete)
 
   return (
     <div style={{
@@ -820,7 +942,7 @@ function TemplateCard({ template, onDisattiva, onDelete, onEditSave, onEditCance
             {template.categoria} · {template.campiPrincipali.length === 1 ? '1 campo principale' : `${template.campiPrincipali.length} campi principali`}
             {template.gruppiSecondari?.length ? ` · ${template.gruppiSecondari.length} ${template.gruppiSecondari.length === 1 ? 'gruppo secondario' : 'gruppi secondari'}` : ''}
         </div>
-        <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', position: 'relative' }}>
           <button type="button" onClick={() => setExpanded(v => v === 'details' ? 'none' : 'details')} style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 6, padding: '4px 8px', cursor: 'pointer', fontSize: 12, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 4 }}>
             {expanded === 'details' ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
             {expanded === 'details' ? 'Chiudi' : 'Dettagli'}
@@ -830,30 +952,58 @@ function TemplateCard({ template, onDisattiva, onDelete, onEditSave, onEditCance
               <Pencil size={13} /> {expanded === 'edit' ? 'Annulla modifica' : 'Modifica'}
             </button>
           )}
-          {onDuplica && (
-            <button type="button" onClick={onDuplica} title="Crea una copia personalizzata" style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 6, padding: '4px 8px', cursor: 'pointer', fontSize: 12, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 4 }}>
-              <Copy size={13} /> Duplica
-            </button>
-          )}
-          {onTogglePredefinito && (
-            <button type="button" onClick={onTogglePredefinito} title={template.builtIn ? 'Rimuove lo stato di predefinito: resta un template normale' : 'Lo rende predefinito, come WISC-IV/NEPSY-II'} style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 6, padding: '4px 8px', cursor: 'pointer', fontSize: 12, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 4 }}>
-              {template.builtIn ? <><Unlock size={13} /> Rimuovi da predefiniti</> : <><Lock size={13} /> Rendi predefinito</>}
-            </button>
-          )}
           {onRiattiva && (
-            <button type="button" onClick={onRiattiva} style={{ background: 'none', border: '1px solid var(--accent)', borderRadius: 6, padding: '4px 8px', cursor: 'pointer', fontSize: 12, color: 'var(--accent)', display: 'flex', alignItems: 'center', gap: 4 }}>
+            <button type="button" onClick={onRiattiva} title="Torna a comparire nel wizard per le nuove relazioni" style={{ background: 'none', border: '1px solid var(--accent)', borderRadius: 6, padding: '4px 8px', cursor: 'pointer', fontSize: 12, color: 'var(--accent)', display: 'flex', alignItems: 'center', gap: 4 }}>
               Riattiva
             </button>
           )}
           {template.attivo && onDisattiva && (
-            <button type="button" onClick={onDisattiva} style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 6, padding: '4px 8px', cursor: 'pointer', fontSize: 12, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 4 }}>
+            <button type="button" onClick={onDisattiva} title="Reversibile: puoi riattivarlo quando vuoi, non elimina nulla" style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 6, padding: '4px 8px', cursor: 'pointer', fontSize: 12, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 4 }}>
               Disattiva
             </button>
           )}
-          {onDelete && (
-            <button type="button" onClick={onDelete} style={{ background: 'none', border: '1px solid var(--danger)', borderRadius: 6, padding: '4px 8px', cursor: 'pointer', fontSize: 12, color: 'var(--danger)', display: 'flex', alignItems: 'center', gap: 4 }}>
-              <Trash2 size={13} /> Elimina
-            </button>
+
+          {haAzioniSecondarie && (
+            <div style={{ marginLeft: 'auto', position: 'relative' }}>
+              <button
+                type="button"
+                onClick={() => setMenuAperto(v => !v)}
+                title="Altre azioni"
+                aria-label="Altre azioni"
+                aria-haspopup="menu"
+                aria-expanded={menuAperto}
+                style={{ background: menuAperto ? 'var(--accent-lt)' : 'none', border: '1px solid var(--border)', borderRadius: 6, padding: '4px 7px', cursor: 'pointer', color: 'var(--text-muted)', display: 'flex', alignItems: 'center' }}
+              >
+                <MoreVertical size={14} />
+              </button>
+              {menuAperto && (
+                <>
+                  {/* Backdrop invisibile per chiudere il menu cliccando fuori */}
+                  <div onClick={() => setMenuAperto(false)} style={{ position: 'fixed', inset: 0, zIndex: 20 }} />
+                  <div role="menu" style={{
+                    position: 'absolute', top: '100%', right: 0, marginTop: 4, zIndex: 21,
+                    background: 'var(--bg-panel)', border: '1px solid var(--border)', borderRadius: 'var(--radius)',
+                    boxShadow: 'var(--shadow-md, 0 8px 20px rgba(0,0,0,0.12))', minWidth: 200, overflow: 'hidden',
+                  }}>
+                    {onDuplica && (
+                      <button role="menuitem" type="button" onClick={() => { setMenuAperto(false); onDuplica() }} title="Crea una copia personalizzata" style={{ width: '100%', background: 'none', border: 'none', padding: '9px 12px', cursor: 'pointer', fontSize: 12.5, color: 'var(--text)', display: 'flex', alignItems: 'center', gap: 8, textAlign: 'left' }}>
+                        <Copy size={13} /> Duplica
+                      </button>
+                    )}
+                    {onTogglePredefinito && (
+                      <button role="menuitem" type="button" onClick={() => { setMenuAperto(false); onTogglePredefinito() }} title={template.builtIn ? 'Rimuove lo stato di predefinito: resta un template normale' : 'Lo rende predefinito, come WISC-IV/NEPSY-II'} style={{ width: '100%', background: 'none', border: 'none', padding: '9px 12px', cursor: 'pointer', fontSize: 12.5, color: 'var(--text)', display: 'flex', alignItems: 'center', gap: 8, textAlign: 'left' }}>
+                        {template.builtIn ? <><Unlock size={13} /> Rimuovi da predefiniti</> : <><Lock size={13} /> Rendi predefinito</>}
+                      </button>
+                    )}
+                    {onDelete && (
+                      <button role="menuitem" type="button" onClick={() => { setMenuAperto(false); onDelete() }} title="Azione irreversibile: elimina per sempre" style={{ width: '100%', background: 'none', border: 'none', borderTop: '1px solid var(--border)', padding: '9px 12px', cursor: 'pointer', fontSize: 12.5, color: 'var(--danger)', display: 'flex', alignItems: 'center', gap: 8, textAlign: 'left' }}>
+                        <Trash2 size={13} /> Elimina per sempre
+                      </button>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
           )}
         </div>
       </div>
@@ -917,6 +1067,9 @@ function TemplateCard({ template, onDisattiva, onDelete, onEditSave, onEditCance
 // ── Pagina principale ─────────────────────────────────────────
 export default function GestioneTest() {
   const [state, dispatch] = useReducer(gestioneTestReducer, GESTIONE_TEST_INIT)
+  // Punto di partenza guidato per un nuovo template (Fase 4): mostrato prima del form
+  // vuoto, solo per la creazione manuale (non per i flussi già assistiti dall'AI).
+  const [showPresetPicker, setShowPresetPicker] = useState(false)
 
   const {
     templates,
@@ -1309,7 +1462,7 @@ export default function GestioneTest() {
                   </button>
                   <button
                     className="btn btn-primary btn-sm"
-                    onClick={() => dispatch({ type: 'OPEN_CREATE_FORM' })}
+                    onClick={() => setShowPresetPicker(true)}
                     style={{ display: "flex", alignItems: "center", gap: 6 }}
                   >
                     <Plus size={14} /> Nuovo template
@@ -1543,6 +1696,78 @@ export default function GestioneTest() {
               </div>
             )}
 
+            {/* Punto di partenza guidato per un nuovo template (Fase 4): proposto solo per
+                la creazione manuale, prima di mostrare il form vuoto. Ogni opzione è solo
+                un precompilamento di comodo, resta tutto modificabile liberamente dopo. */}
+            {showPresetPicker && !showForm && (
+              <div
+                style={{
+                  marginBottom: 16,
+                  padding: "16px",
+                  border: "1px solid var(--accent)",
+                  borderRadius: "var(--radius)",
+                  background: "var(--accent-lt)",
+                }}
+              >
+                <div style={{ fontSize: 14, fontWeight: 600, color: "var(--accent-dk)", marginBottom: 4 }}>
+                  Da dove parti?
+                </div>
+                <p style={{ fontSize: 12, color: "var(--text-muted)", margin: "0 0 12px" }}>
+                  Sono solo punti di partenza: puoi comunque aggiungere, rinominare o togliere righe e colonne dopo.
+                </p>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {PRESET_TEMPLATES.map(preset => (
+                    <button
+                      key={preset.id}
+                      type="button"
+                      onClick={() => {
+                        dispatch({ type: 'OPEN_EDIT_FORM', payload: { initial: preset.form, id: '' } })
+                        setShowPresetPicker(false)
+                      }}
+                      style={{
+                        textAlign: "left",
+                        background: "var(--bg-panel)",
+                        border: "1px solid var(--border-md)",
+                        borderRadius: "var(--radius)",
+                        padding: "10px 14px",
+                        cursor: "pointer",
+                      }}
+                    >
+                      <div style={{ fontSize: 13, fontWeight: 600 }}>{preset.nome}</div>
+                      <div style={{ fontSize: 11.5, color: "var(--text-muted)", marginTop: 2 }}>{preset.descrizione}</div>
+                    </button>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      dispatch({ type: 'OPEN_CREATE_FORM' })
+                      setShowPresetPicker(false)
+                    }}
+                    style={{
+                      textAlign: "left",
+                      background: "none",
+                      border: "1px dashed var(--border-md)",
+                      borderRadius: "var(--radius)",
+                      padding: "10px 14px",
+                      cursor: "pointer",
+                      color: "var(--text-muted)",
+                      fontSize: 12.5,
+                    }}
+                  >
+                    Parti da zero
+                  </button>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowPresetPicker(false)}
+                  className="btn btn-ghost btn-sm"
+                  style={{ marginTop: 10 }}
+                >
+                  Annulla
+                </button>
+              </div>
+            )}
+
             {/* Form creazione / modifica */}
             {showForm && (
               <div
@@ -1678,7 +1903,8 @@ export default function GestioneTest() {
               >
                 Il template verrà disattivato e non apparirà più nel wizard per
                 le nuove relazioni. Le relazioni già generate non vengono
-                modificate.
+                modificate. È un'azione reversibile: potrai riattivarlo quando
+                vuoi dalla lista dei template disattivati, in fondo alla pagina.
               </p>
               <div style={{ display: "flex", gap: 10 }}>
                 <button
@@ -1759,7 +1985,9 @@ export default function GestioneTest() {
                     }}
                   >
                     {sicuroMsg} Questa azione è irreversibile e rimuoverà
-                    definitivamente il template dal database.
+                    definitivamente il template dal database. Se ti serve solo
+                    smettere di usarlo ma poterlo recuperare in futuro, chiudi
+                    questa finestra e scegli invece "Disattiva".
                   </p>
                   <div style={{ display: "flex", gap: 10 }}>
                     <button

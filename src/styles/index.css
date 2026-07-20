@@ -686,6 +686,12 @@ div.rich-editor-surface:focus { outline: none; }
   display: none;
 }
 
+/* Vista a elenco della tabella dei punteggi per schermi stretti (v. GrigliaTemplate):
+   nascosta di default, sostituisce la griglia con scroll orizzontale sotto i 700px. */
+.griglia-template-mobile {
+  display: none;
+}
+
 /* ── Responsive mobile ── */
 @media (max-width: 700px) {
   /* La sidebar diventa un drawer che scorre da sinistra, sopra il contenuto */
@@ -727,4 +733,9 @@ div.rich-editor-surface:focus { outline: none; }
   .meta-row.three { grid-template-columns: 1fr 1fr; }
 
   .auth-box { margin: 16px; padding: 28px 20px; }
+
+  /* Tabella dei punteggi: sotto i 700px la griglia con scroll orizzontale lascia
+     il posto a un elenco verticale (una card per riga), più adatto al tocco. */
+  .griglia-template-desktop { display: none; }
+  .griglia-template-mobile { display: flex; }
 }

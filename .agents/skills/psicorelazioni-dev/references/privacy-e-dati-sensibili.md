@@ -34,7 +34,7 @@ Durante lo sviluppo, non loggare prompt completi, payload destinati a Gemini, an
 
 ## Autenticazione e RLS
 
-Progettata per utilizzo single-user: le policy RLS permettono l'accesso a chiunque sia autenticato, non isolano per utente. Non esiste una colonna `user_id`/owner su nessuna tabella. Se il progetto dovesse supportare più professionisti, questo è uno dei primi aspetti da riprogettare — non aggiungere funzionalità che assumano implicitamente l'isolamento multi-tenant finché non lo è.
+Progettata per un'unica professionista attiva: l'autenticazione è obbligatoria su tutte le route (`ProtectedRoute`). Tutte le tabelle hanno però una colonna `owner_id` (UUID, valorizzata da `auth.uid()`) e RLS che isola le righe per `owner_id`, non solo per "autenticato sì/no" (vedi `supabase_setup.sql`, README §5): l'eccezione sono i `test_templates` `built_in` (WISC-IV/NEPSY-II), condivisi e senza owner. Se il progetto dovesse supportare più professioniste, l'isolamento dati è già in gran parte presente a livello di schema — resterebbe da verificare che ogni nuova query in `data/*.ts` filtri/scriva sempre coerentemente su `owner_id` e non assuma un singolo utente implicito altrove nel codice applicativo.
 
 ## Checklist prima di completare modifiche che coinvolgono Gemini
 

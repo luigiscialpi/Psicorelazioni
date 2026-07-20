@@ -7,7 +7,7 @@
 `services/geminiService.ts` ha due percorsi di trasporto verso Gemini che **convivono**, scelti in base alla forma della risposta attesa:
 
 - **Testo libero** — `callGemini()` / `callGeminiWithFinishReason()`: `fetch` diretto contro l'endpoint REST `generateContent`, nessuna SDK. Per prosa discorsiva dove uno schema non aiuterebbe (es. analisi di stile).
-- **Output strutturato** — `callGeminiStructured()`: SDK ufficiale `@google/genai`, richiesta con `responseSchema` generato da uno schema Zod, risposta validata di nuovo lato client con `schema.parse(...)` prima di essere usata. Per qualunque risposta che il codice deve poi elaborare (elenco di sezioni, un `TestTemplate`, ecc.).
+- **Output strutturato** — `callGeminiStructured()`: SDK ufficiale `@google/genai`, richiesta con `responseJsonSchema` generato da uno schema Zod (`z.toJSONSchema`), risposta validata di nuovo lato client con `schema.parse(...)` prima di essere usata. Per qualunque risposta che il codice deve poi elaborare (elenco di sezioni, un `TestTemplate`, ecc.).
 
 Nessuno dei due è il percorso "principale": la scelta dipende dalla forma della risposta, non da preferenza. Non introdurre una terza via (es. un fetch diretto che poi fa `JSON.parse` a mano su un output non validato) quando una delle due esistenti già copre il caso.
 
