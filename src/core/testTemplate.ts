@@ -72,6 +72,12 @@ export const TestTemplateSchema = z.object({
   // comportamento storico): non cambia l'aspetto dei template già esistenti finché non lo si
   // disattiva esplicitamente. È indipendente dalle eventuali "Fascia <colonna>" per colonna.
   mostraCategoriaDescrittiva: z.boolean().optional(),
+  // Come vengono impaginate nel DOCX le eventuali tabelle dei gruppi secondari
+  // (es. CBCL: "Scale Sindromiche", "Scale DSM Oriented"). 'interleaved' (default,
+  // assente = comportamento storico): ogni tabella secondaria seguita subito dalla
+  // sua narrativa, una dopo l'altra. 'raggruppato': tutte le tabelle del test (quella
+  // principale + tutte le secondarie) insieme, poi tutte le narrative insieme dopo.
+  layoutTabelleSecondarie: z.enum(['interleaved', 'raggruppato']).optional(),
   campiPrincipali: z.array(CampoTestSchema),
   gruppiSecondari: z.array(GruppoTestSchema).optional(),
   notaRange: z.string().optional(),

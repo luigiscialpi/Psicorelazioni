@@ -34,6 +34,7 @@ function templateToForm(t: TestTemplate): FormState {
     categoria: t.categoria,
     scalaDefault: t.scalaDefault,
     mostraCategoriaDescrittiva: t.mostraCategoriaDescrittiva !== false,
+    layoutTabelleSecondarie: t.layoutTabelleSecondarie === 'raggruppato' ? 'raggruppato' : 'interleaved',
     campiPrincipali: (t.campiPrincipali || []).map((c) => {
       const formulaTemplate = t.formule?.find(f => f.targetKey === c.key)
       let formula: FormCampo['formula']
@@ -217,6 +218,16 @@ function Anteprima({ form }: { form: FormState }) {
               : `Il punteggio ottenuto al test ${campo.label} è ${val}, fascia ${fascia.toLowerCase()}.`)
           : 'Aggiungi un campo con descrizione per vedere la narrativa generata.'}
       </p>
+      {form.gruppiSecondari.some(g => g.label) && (
+        <>
+          <div style={{ fontSize: 12.5, fontWeight: 600, margin: '12px 0 6px' }}>Gruppi secondari (solo testo narrativo, mai in tabella)</div>
+          <p style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.6, margin: 0 }}>
+            {form.gruppiSecondari.filter(g => g.label).map(g =>
+              `Per l'indice ${g.label} sono stati considerati i seguenti subtest: ${g.campi.filter(c => c.label).map(c => c.label).join(', ') || '(nessun subtest ancora)'}.`
+            ).join(' ')}
+          </p>
+        </>
+      )}
     </div>
   )
 }
@@ -667,8 +678,17 @@ function FormTemplate({
       <div className="form-group" style={{ marginBottom: 16 }}>
         <label className="form-label">Gruppi secondari / subtest <span>(facoltativo)</span></label>
         <p style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: -4, marginBottom: 10 }}>
-          Questi compariranno <strong>solo come testo narrativo</strong>, mai in tabella.
+          Ognuno genera una propria tabella nel DOCX (es. CBCL: "Scale Sindromiche", "Scale DSM Oriented"), oltre alla tabella principale. Non compaiono mai nella tabella principale stessa.
         </p>
+        {form.gruppiSecondari.length > 0 && (
+          <div style={{ marginBottom: 10 }}>
+            <label style={{ fontSize: 11, color: 'var(--text-muted)' }}>Impaginazione delle tabelle secondarie nel DOCX</label>
+            <select className="form-input" value={form.layoutTabelleSecondarie} onChange={e => setField('layoutTabelleSecondarie', e.target.value as 'interleaved' | 'raggruppato')} style={{ marginTop: 3, cursor: 'pointer' }}>
+              <option value="interleaved">Ogni tabella seguita dalla sua descrizione (una alla volta)</option>
+              <option value="raggruppato">Tutte le tabelle insieme, poi tutte le descrizioni</option>
+            </select>
+          </div>
+        )}
         {form.gruppiSecondari.map((gruppo, gi) => (
           <details
             key={gi}
@@ -1001,6 +1021,7 @@ export default function GestioneTest() {
         categoria: t.categoria || 'altro',
         scalaDefault: t.scalaDefault || { tipo: 'scalare' },
         mostraCategoriaDescrittiva: true,
+        layoutTabelleSecondarie: 'interleaved',
         campiPrincipali: (t.campiPrincipali || []).map((c: any) => ({ key: c.key, label: c.label, descr: c.descr || '' })),
         gruppiSecondari: (t.gruppiSecondari || []).map((g: any) => ({ key: g.key, label: g.label, campi: (g.campi || []).map((c: any) => ({ key: c.key, label: c.label })) })),
         colonne: t.colonne && t.colonne.length > 0 ? t.colonne.map((nome: string) => ({ nome })) : [{ nome: 'Punteggio' }],
@@ -1051,6 +1072,7 @@ export default function GestioneTest() {
         categoria: form.categoria,
         scalaDefault: form.scalaDefault,
         mostraCategoriaDescrittiva: form.mostraCategoriaDescrittiva,
+        layoutTabelleSecondarie: form.layoutTabelleSecondarie,
         campiPrincipali,
         gruppiSecondari: form.gruppiSecondari.length > 0 ? form.gruppiSecondari as GruppoTest[] : undefined,
         colonne: form.colonne as ColonnaTest[],
@@ -1074,6 +1096,7 @@ export default function GestioneTest() {
       categoria: form.categoria,
       scalaDefault: form.scalaDefault,
       mostraCategoriaDescrittiva: form.mostraCategoriaDescrittiva,
+      layoutTabelleSecondarie: form.layoutTabelleSecondarie,
       campiPrincipali,
       gruppiSecondari: form.gruppiSecondari.length > 0 ? form.gruppiSecondari as GruppoTest[] : undefined,
       notaRange: form.notaRange || undefined,

@@ -31,6 +31,7 @@ export type FormState = {
   categoria: TestTemplate['categoria']
   scalaDefault: ScalaPunteggio
   mostraCategoriaDescrittiva: boolean
+  layoutTabelleSecondarie: 'interleaved' | 'raggruppato'
   campiPrincipali: FormCampo[]
   gruppiSecondari: Array<{ key: string; label: string; campi: Array<{ key: string; label: string }> }>
   colonne: FormColonna[]
@@ -44,6 +45,7 @@ export const INIT_FORM: FormState = {
   categoria: 'altro',
   scalaDefault: { tipo: 'scalare' },
   mostraCategoriaDescrittiva: true,
+  layoutTabelleSecondarie: 'interleaved',
   campiPrincipali: [{ key: '', label: '', descr: '' }],
   gruppiSecondari: [],
   colonne: [{ nome: 'Punteggio' }],

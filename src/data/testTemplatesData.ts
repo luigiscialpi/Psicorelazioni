@@ -15,6 +15,7 @@ export async function getTestTemplates(): Promise<TestTemplate[]> {
     categoria: d.categoria,
     scalaDefault: d.scala_default,
     mostraCategoriaDescrittiva: d.mostra_categoria_descrittiva ?? undefined,
+    layoutTabelleSecondarie: d.layout_tabelle_secondarie ?? undefined,
     campiPrincipali: d.campi_principali,
     gruppiSecondari: d.gruppi_secondari ?? undefined,
     notaRange: d.nota_range ?? undefined,
@@ -46,6 +47,7 @@ export async function insertTestTemplate(t: Omit<TestTemplate,'id'|'createdAt'|'
     categoria: t.categoria,
     scala_default: t.scalaDefault,
     mostra_categoria_descrittiva: t.mostraCategoriaDescrittiva,
+    layout_tabelle_secondarie: t.layoutTabelleSecondarie,
     campi_principali: t.campiPrincipali,
     gruppi_secondari: t.gruppiSecondari,
     nota_range: t.notaRange,
@@ -68,6 +70,7 @@ export async function insertTestTemplate(t: Omit<TestTemplate,'id'|'createdAt'|'
     categoria: data.categoria,
     scalaDefault: data.scala_default,
     mostraCategoriaDescrittiva: data.mostra_categoria_descrittiva ?? undefined,
+    layoutTabelleSecondarie: data.layout_tabelle_secondarie ?? undefined,
     campiPrincipali: data.campi_principali,
     gruppiSecondari: data.gruppi_secondari ?? undefined,
     notaRange: data.nota_range ?? undefined,
@@ -91,6 +94,7 @@ export async function updateTestTemplate(id: string, patch: Partial<TestTemplate
   if (patch.categoria !== undefined) payload.categoria = patch.categoria
   if (patch.scalaDefault !== undefined) payload.scala_default = patch.scalaDefault
   if (patch.mostraCategoriaDescrittiva !== undefined) payload.mostra_categoria_descrittiva = patch.mostraCategoriaDescrittiva
+  if (patch.layoutTabelleSecondarie !== undefined) payload.layout_tabelle_secondarie = patch.layoutTabelleSecondarie
   if (patch.campiPrincipali !== undefined) payload.campi_principali = patch.campiPrincipali
   if (patch.gruppiSecondari !== undefined) payload.gruppi_secondari = patch.gruppiSecondari
   if (patch.notaRange !== undefined) payload.nota_range = patch.notaRange
@@ -138,6 +142,7 @@ export async function duplicaTestTemplate(t: TestTemplate): Promise<TestTemplate
     categoria: t.categoria,
     scalaDefault: t.scalaDefault,
     mostraCategoriaDescrittiva: t.mostraCategoriaDescrittiva,
+    layoutTabelleSecondarie: t.layoutTabelleSecondarie,
     campiPrincipali: t.campiPrincipali,
     gruppiSecondari: t.gruppiSecondari,
     notaRange: t.notaRange,

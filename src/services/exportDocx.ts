@@ -662,7 +662,26 @@ export async function esportaDocx({ testo, data, nomeStudio, anagrafica, profess
         narrativaSpezzata[sezioneCorrente] = righeAccumulate.join('\n').trim()
       }
 
-      // 1. Aggiungi la tabella principale del test
+      const raggruppato = inDinamica.template.layoutTabelleSecondarie === 'raggruppato'
+      const gruppiConDati = (inDinamica.template.gruppiSecondari || []).map(gruppo => ({
+        gruppo,
+        secValidi: gruppo.campi.filter(c => inDinamica!.risultato.punteggiSecondari?.[c.key] !== undefined && inDinamica!.risultato.punteggiSecondari![c.key] !== ''),
+      })).filter(g => g.secValidi.length > 0)
+
+      const testoPerGruppo = (gruppo: { key: string; label: string }): string => {
+        const chiaviGruppo = [
+          gruppo.label.toLowerCase(),
+          gruppo.key.toLowerCase(),
+          gruppo.label.replace(/\(.*?\)/g, '').trim().toLowerCase(), // es: "scale sindromiche (cbcl)" -> "scale sindromiche"
+        ]
+        for (const chiave of chiaviGruppo) {
+          const chiaveTrovata = Object.keys(narrativaSpezzata).find(k => k === chiave || k.includes(chiave) || chiave.includes(k))
+          if (chiaveTrovata) return narrativaSpezzata[chiaveTrovata]
+        }
+        return ''
+      }
+
+      // 1. Tabella principale del test (identica nei due layout)
       if (Object.keys(inDinamica.risultato.punteggi || {}).length > 0) {
         blocchi.push(makeTestTable(inDinamica.template, inDinamica.risultato))
         if (inDinamica.risultato.includiNotaRange !== false && inDinamica.template.notaRange) {
@@ -687,44 +706,41 @@ export async function esportaDocx({ testo, data, nomeStudio, anagrafica, profess
         blocchi.push(emptyLine(60))
       }
 
-      // 2. Aggiungi subito la narrativa generale / iniziale (se presente)
-      const testoGenerale = narrativaSpezzata['generale'] || ''
-      if (testoGenerale) {
-        blocchi.push(...markdownToParagraphs(testoGenerale))
-        blocchi.push(emptyLine(60))
-      }
-
-      // 3. Aggiungi le tabelle secondarie ciascuna seguita immediatamente dalla sua narrativa
-      if (inDinamica.template.gruppiSecondari && inDinamica.risultato.punteggiSecondari) {
-        for (const gruppo of inDinamica.template.gruppiSecondari) {
-          const secValidi = gruppo.campi.filter(c => inDinamica!.risultato.punteggiSecondari![c.key] !== undefined && inDinamica!.risultato.punteggiSecondari![c.key] !== '')
-          if (secValidi.length > 0) {
+      if (raggruppato) {
+        // 2. Tutte le tabelle secondarie insieme, una dopo l'altra, senza narrativa in mezzo
+        for (const { gruppo, secValidi } of gruppiConDati) {
+          blocchi.push(makeSecondaryTestTable(gruppo.label, secValidi, inDinamica.risultato.punteggiSecondari as Record<string, string | number>))
+          blocchi.push(emptyLine(60))
+        }
+        // 3. Tutte le narrative insieme dopo: generale, poi una per gruppo
+        const testoGenerale = narrativaSpezzata['generale'] || ''
+        if (testoGenerale) {
+          blocchi.push(...markdownToParagraphs(testoGenerale))
+          blocchi.push(emptyLine(60))
+        }
+        for (const { gruppo } of gruppiConDati) {
+          const testoGruppo = testoPerGruppo(gruppo)
+          if (testoGruppo) {
+            blocchi.push(...markdownToParagraphs(testoGruppo))
             blocchi.push(emptyLine(60))
-            const tabellaSecondaria = makeSecondaryTestTable(gruppo.label, secValidi, inDinamica.risultato.punteggiSecondari as Record<string, string | number>)
-            blocchi.push(tabellaSecondaria)
+          }
+        }
+      } else {
+        // 2. Narrativa generale / iniziale (se presente), subito dopo la tabella principale
+        const testoGenerale = narrativaSpezzata['generale'] || ''
+        if (testoGenerale) {
+          blocchi.push(...markdownToParagraphs(testoGenerale))
+          blocchi.push(emptyLine(60))
+        }
+        // 3. Ogni tabella secondaria seguita immediatamente dalla sua narrativa (comportamento storico)
+        for (const { gruppo, secValidi } of gruppiConDati) {
+          blocchi.push(emptyLine(60))
+          blocchi.push(makeSecondaryTestTable(gruppo.label, secValidi, inDinamica.risultato.punteggiSecondari as Record<string, string | number>))
+          blocchi.push(emptyLine(60))
+          const testoGruppo = testoPerGruppo(gruppo)
+          if (testoGruppo) {
+            blocchi.push(...markdownToParagraphs(testoGruppo))
             blocchi.push(emptyLine(60))
-            
-            // Cerchiamo se c'è della narrativa per questo gruppo specifico nella mappa degli spezzettati
-            const chiaviGruppo = [
-              gruppo.label.toLowerCase(),
-              gruppo.key.toLowerCase(),
-              gruppo.label.replace(/\(.*?\)/g, '').trim().toLowerCase() // es: "scale sindromiche (cbcl)" -> "scale sindromiche"
-            ]
-            
-            let testoGruppo = ''
-            for (const chiave of chiaviGruppo) {
-              // Cerca corrispondenza esatta o parziale
-              const chiaveTrovata = Object.keys(narrativaSpezzata).find(k => k === chiave || k.includes(chiave) || chiave.includes(k))
-              if (chiaveTrovata) {
-                testoGruppo = narrativaSpezzata[chiaveTrovata]
-                break
-              }
-            }
-            
-            if (testoGruppo) {
-              blocchi.push(...markdownToParagraphs(testoGruppo))
-              blocchi.push(emptyLine(60))
-            }
           }
         }
       }
