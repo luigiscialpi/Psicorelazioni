@@ -1099,6 +1099,7 @@ export default function GestioneTest() {
   const {
     templates,
     loading,
+    erroreCaricamento,
     showForm,
     formInitial,
     editingTemplateId,
@@ -1114,18 +1115,30 @@ export default function GestioneTest() {
     accordionAperto,
   } = state
 
+  const [retryTick, setRetryTick] = useState(0)
+
   useEffect(() => {
+    let cancellato = false
     Promise.all([
       getTestTemplates(),
       getProfiloProfessionista(),
       getTemplateRilevati(),
     ]).then(([t, prof, rilevati]) => {
+      if (cancellato) return
       dispatch({
         type: 'LOAD_DATA_SUCCESS',
         payload: { templates: t, profilo: prof, suggerimentiProfilo: rilevati },
       })
+    }).catch((e: any) => {
+      if (cancellato) return
+      console.error('Errore nel caricamento iniziale di Gestione Test:', e)
+      dispatch({
+        type: 'LOAD_DATA_ERROR',
+        payload: 'Errore nel caricamento dei template: ' + (e?.message || String(e)),
+      })
     })
-  }, [])
+    return () => { cancellato = true }
+  }, [retryTick])
 
   function precompilaDaSuggerimento(nome: string) {
     dispatch({
@@ -1445,6 +1458,23 @@ export default function GestioneTest() {
             <p style={{ color: "var(--text-muted)", fontSize: 13 }}>
               Caricamento template…
             </p>
+          </div>
+        ) : erroreCaricamento ? (
+          <div
+            className="card"
+            style={{ textAlign: "center", padding: "32px 20px" }}
+          >
+            <AlertTriangle size={22} color="var(--danger)" style={{ marginBottom: 8 }} />
+            <p style={{ color: "var(--danger)", fontSize: 13, marginBottom: 12, lineHeight: 1.5 }}>
+              {erroreCaricamento}
+            </p>
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              onClick={() => { dispatch({ type: 'RETRY_LOAD_DATA' }); setRetryTick(x => x + 1) }}
+            >
+              Riprova
+            </button>
           </div>
         ) : (
           <div className="card" style={{ marginBottom: 16 }}>

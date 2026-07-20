@@ -419,6 +419,7 @@ export function formTemplateReducer(state: FormTemplateState, action: FormTempla
 export type GestioneTestState = {
   templates: TestTemplate[]
   loading: boolean
+  erroreCaricamento: string
   showForm: boolean
   formInitial: FormState | undefined
   editingTemplateId: string | null
@@ -436,6 +437,8 @@ export type GestioneTestState = {
 
 export type GestioneTestAction =
   | { type: 'LOAD_DATA_SUCCESS'; payload: { templates: TestTemplate[]; profilo: ProfiloProfessionista | null; suggerimentiProfilo: TemplateRilevatoItem[] } }
+  | { type: 'LOAD_DATA_ERROR'; payload: string }
+  | { type: 'RETRY_LOAD_DATA' }
   | { type: 'SET_SUGGERIMENTI'; payload: string[] }
   | { type: 'OPEN_CREATE_FORM' }
   | { type: 'OPEN_EDIT_FORM'; payload: { initial: FormState; id: string } }
@@ -457,6 +460,7 @@ export type GestioneTestAction =
 export const GESTIONE_TEST_INIT: GestioneTestState = {
   templates: [],
   loading: true,
+  erroreCaricamento: '',
   showForm: false,
   formInitial: undefined,
   editingTemplateId: null,
@@ -481,6 +485,19 @@ export function gestioneTestReducer(state: GestioneTestState, action: GestioneTe
         profilo: action.payload.profilo,
         suggerimentiProfilo: action.payload.suggerimentiProfilo,
         loading: false,
+        erroreCaricamento: '',
+      }
+    case 'LOAD_DATA_ERROR':
+      return {
+        ...state,
+        loading: false,
+        erroreCaricamento: action.payload,
+      }
+    case 'RETRY_LOAD_DATA':
+      return {
+        ...state,
+        loading: true,
+        erroreCaricamento: '',
       }
     case 'SET_SUGGERIMENTI':
       return {

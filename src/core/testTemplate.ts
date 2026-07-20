@@ -93,6 +93,25 @@ export const TestTemplateSchema = z.object({
   formule: z.array(FormulaCalcoloSchema).optional(),  // Formule di calcolo per indici sintetici/totale
 });
 
+// ⚠️ Nonostante il JSON Schema richiesto a Gemini dichiari "colonne" come semplice
+// array di stringhe, in produzione il modello a volte restituisce oggetti (es.
+// { nome: "Percentile" } o { name: "Percentile" }) invece di stringhe pure — un
+// comportamento osservato realmente (causava un ZodError non gestito e uno spinner
+// di caricamento bloccato in Gestione Test). Questo preprocess normalizza in modo
+// tollerante un elemento oggetto con proprietà "nome"/"name" stringa nel suo valore
+// invece di far fallire la validazione: stesso spirito del preprocess già usato in
+// ColonnaTestSchema, ma nella direzione opposta (oggetto -> stringa invece che
+// stringa -> oggetto).
+const ColonnaGeneratedSchema = z.preprocess((val) => {
+  if (typeof val === 'string') return val
+  if (val && typeof val === 'object') {
+    const obj = val as Record<string, unknown>
+    if (typeof obj.nome === 'string') return obj.nome
+    if (typeof obj.name === 'string') return obj.name
+  }
+  return val
+}, z.string().min(1));
+
 // Sottoinsieme di TestTemplate che ha senso far generare a un LLM: niente
 // campi gestiti dall'app (id, builtIn, attivo, schemaVersion, timestamp) né formule,
 // che restano configurazione manuale in "Gestione Test". Le colonne sono incluse ma
@@ -103,7 +122,7 @@ export const GeneratedTestTemplateSchema = TestTemplateSchema.omit({
   id: true, builtIn: true, attivo: true, schemaVersion: true, createdAt: true, updatedAt: true,
   colonne: true, formule: true,
 }).extend({
-  colonne: z.array(z.string().min(1)).optional(),
+  colonne: z.array(ColonnaGeneratedSchema).optional(),
 });
 
 // Estrazione tipi TypeScript dagli schemi Zod
